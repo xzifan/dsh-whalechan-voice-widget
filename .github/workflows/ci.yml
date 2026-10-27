@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18, 20, 22]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install backend dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Run backend tests
+        run: npm test
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Run frontend tests
+        run: npm run test:web
+
+      - name: Build web bundle
+        run: npm run build
+
+      - name: Verify package contents
+        run: npm run pack:check

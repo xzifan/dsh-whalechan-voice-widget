@@ -1,0 +1,16 @@
+:root{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;font-synthesis:none;text-rendering:optimizeLegibility;-webkit-font-smoothing:antialiased;font-size:14px}
+body{margin:0}
+button,input,textarea{-webkit-tap-highlight-color:transparent}
+audio{display:block;width:100%;min-width:0;max-width:100%}
+.voice-input-meter span{transition:height 80ms linear}
+.voice-message{display:flex;flex-direction:column;align-items:flex-start;max-width:100%;min-width:0;padding-bottom:2px}
+.voice-message-user{align-items:flex-end}
+.voice-message-audio{position:relative;z-index:1;display:flex;align-items:center;justify-content:space-between;gap:20px;max-width:100%;min-height:46px;padding:11px 16px;border:1px solid var(--border);border-radius:16px 16px 16px 5px;background:var(--card);color:var(--card-foreground);font-size:15px;box-shadow:0 2px 5px #00000005}
+.voice-message-user .voice-message-audio{flex-direction:row-reverse;border-color:transparent;border-radius:16px 16px 5px 16px;background:var(--primary);color:var(--primary-foreground)}
+.voice-message-transcript{position:relative;max-width:min(100%,36rem);min-width:0;margin-top:-5px;margin-left:9px;padding:13px 13px 10px;border:1px solid var(--border);border-radius:4px 13px 13px 13px;background:var(--background);color:var(--foreground);font-size:13px;line-height:1.7;overflow-wrap:anywhere}
+.voice-message-user .voice-message-transcript{margin-left:0;margin-right:9px;border-radius:13px 4px 13px 13px;background:color-mix(in srgb,var(--primary) 5%,var(--background))}
+.voice-message-caption{display:flex;align-items:center;gap:4px;margin-bottom:4px;font-size:10px;line-height:1.4;color:var(--muted-foreground)}
+.voice-message-transcript p{margin:0;white-space:pre-wrap}
+.voice-message-audio.is-recording .voice-message-wave{animation:voice-wave-pulse 1s ease-in-out infinite}
+@keyframes voice-wave-pulse{50%{opacity:.4;transform:scaleY(.7)}}
+@media(prefers-reduced-motion:reduce){.voice-input-meter span{transition:none}.voice-message-wave{animation:none!important}}

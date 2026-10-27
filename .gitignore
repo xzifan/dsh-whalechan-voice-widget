@@ -1,0 +1,12 @@
+node_modules/
+web/node_modules/
+*.tgz
+.env
+*.env
+
+.DS_Store
+.tools/
+.npm-cache-statistics/
+*.silk
+*.aiff
+*.wav

@@ -1,0 +1,9 @@
+- insert:
+    - id: voice-workbench
+      name: dsh-voice-workbench
+      config:
+        minimaxKeyFile: '~/.dsh/secrets/minimax.env'
+        minimaxRegion: cn
+        stateDir: '~/.dsh/storages/voice-workbench-preview'
+        asrBaseUrl: ''
+        chatBaseUrl: ''

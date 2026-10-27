@@ -1,0 +1,271 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { createService } from '../src/service.js'
+import { createRealtimeSession, readEnvKey, realtimeDefaults, toolDefinitions } from '../src/realtime-service.js'
+
+const readSchema = { name: 'read', description: 'Native read', parameters: { type: 'object', properties: { file_path: { type: 'string' }, offset: { type: 'integer', minimum: 1 }, limit: { type: 'integer', maximum: 2000 } }, required: ['file_path'], additionalProperties: false } }
+
+// A fake WebSocket that records sends and lets the test inject server events.
+function makeFakeSocket() {
+  const instances = []
+  class FakeSocket {
+    constructor(url, opts) {
+      this.url = url; this.opts = opts; this.readyState = 1
+      this.handlers = {}; this.sent = []
+      instances.push(this)
+    }
+    on(event, fn) { this.handlers[event] = fn }
+    send(data) { this.sent.push(JSON.parse(data)) }
+    close() { this.readyState = 3; this.handlers.close?.() }
+    emit(event) { this.handlers.message?.(Buffer.from(JSON.stringify(event))) }
+    emitRaw(type, payload) { this.emit({ type, ...payload }) }
+  }
+  FakeSocket.instances = instances
+  return FakeSocket
+}
+
+test('native audio audit waits for response.done, counts exact decoded bytes and isolates responses', () => {
+  const FakeSocket = makeFakeSocket(), emitted = []
+  const session = createRealtimeSession({ settings: { ...realtimeDefaults(), use_tts_voice: false }, key: 'k', executeTool: async () => ({}), emit: e => emitted.push(e), WebSocketCtor: FakeSocket })
+  session.connect()
+  const socket = FakeSocket.instances[0]
+  const audit = () => emitted.filter(e => e.type === 'audit' && e.record.kind === 'response').map(e => e.record)
+  socket.emitRaw('response.created', { response: { id: 'a' } })
+  socket.emitRaw('response.audio_transcript.done', { response_id: 'a', transcript: 'hello' })
+  assert.equal(audit().length, 0)
+  // 48002 is padded base64: encoded length * 3/4 would overcount.
+  socket.emitRaw('response.audio.delta', { response_id: 'a', delta: Buffer.alloc(48002).toString('base64') })
+  socket.emitRaw('response.done', { response: { id: 'a', status: 'completed' } })
+  socket.emitRaw('response.done', { response: { id: 'a', status: 'completed' } })
+  socket.emitRaw('response.audio.delta', { response_id: 'a', delta: Buffer.alloc(48000).toString('base64') })
+  assert.equal(audit().length, 1); assert.equal(audit()[0].audioDurationSeconds, 48002 / 48000)
+  assert.equal(audit()[0].audioOutput, true)
+  socket.emitRaw('response.created', { response: { id: 'b' } })
+  socket.emitRaw('response.text.done', { response_id: 'b', text: 'text only' })
+  socket.emitRaw('response.done', { response: { id: 'b', status: 'completed' } })
+  assert.equal(audit()[1].audioOutput, false); assert.equal(audit()[1].audioDurationSeconds, undefined)
+  socket.emitRaw('response.created', { response: { id: 'c' } })
+  socket.emitRaw('response.audio.delta', { response_id: 'c', delta: Buffer.alloc(24000).toString('base64') })
+  session.cancel()
+  assert.equal(audit()[2].status, 'cancelled'); assert.equal(audit()[2].audioDurationSeconds, 0.5)
+  session.dispose()
+  assert.equal(audit().length, 3)
+})
+
+test('readEnvKey reads DASHSCOPE_API_KEY without ever exposing it elsewhere', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'whale-rt-key-'))
+  const keyFile = join(dir, 'bailian.env')
+  await writeFile(keyFile, 'export DASHSCOPE_API_KEY="sk-test-1234567890abcdef"\nBAILIAN_REGION=cn-beijing\n', 'utf8')
+  const key = await readEnvKey(keyFile)
+  assert.equal(key, 'sk-test-1234567890abcdef')
+  await rm(dir, { recursive: true, force: true })
+})
+
+test('session.update payload carries voice, tools and smart_turn; start returns no key', () => {
+  const FakeSocket = makeFakeSocket()
+  const emitted = []
+  const session = createRealtimeSession({
+    settings: { ...realtimeDefaults(), enabled: true, voice: 'voc_abc', turn_mode: 'smart_turn', instructions: '自然口语', language: 'ja' },
+    nativeTools: [readSchema], key: 'sk-secret-key', executeTool: async () => ({}), emit: e => emitted.push(e), WebSocketCtor: FakeSocket,
+  })
+  session.connect()
+  const socket = FakeSocket.instances[0]
+  assert.match(socket.url, /model=qwen-audio-3\.1-realtime-plus/)
+  assert.equal(socket.opts.headers.Authorization, 'Bearer sk-secret-key')
+  socket.emitRaw('session.created', {})
+  const update = socket.sent.find(m => m.type === 'session.update')
+  assert.ok(update)
+  assert.equal(update.session.voice, 'voc_abc')
+  assert.deepEqual(update.session.turn_detection, { type: 'smart_turn' })
+  assert.equal(update.session.output_audio.language, 'ja')
+  assert.ok(update.session.tools.some(t => t.function.name === 'read'))
+  assert.deepEqual(update.session.tools.find(t => t.function.name === 'read').function.parameters, readSchema.parameters)
+  assert.ok(update.session.tools.some(t => t.function.name === 'synth_tts'))
+  assert.ok(update.session.instructions.startsWith('自然口语'))
+  assert.match(update.session.instructions, /只有主人下一轮明确肯定/)
+  // No raw key ever emitted to frontend.
+  assert.ok(emitted.every(e => JSON.stringify(e).includes('sk-secret-key') === false))
+})
+
+test('audio delta, transcripts, done and closed events are sanitized and forwarded', () => {
+  const FakeSocket = makeFakeSocket()
+  const emitted = []
+  const session = createRealtimeSession({ settings: { ...realtimeDefaults(), use_tts_voice: false }, key: 'k', executeTool: async () => ({}), emit: e => emitted.push(e), WebSocketCtor: FakeSocket })
+  session.connect()
+  const socket = FakeSocket.instances[0]
+  socket.emitRaw('response.audio.delta', { delta: 'aGVsbG8=' })
+  socket.emitRaw('response.audio_transcript.delta', { delta: 'こん' })
+  socket.emitRaw('response.audio_transcript.done', { transcript: 'こんにちは' })
+  socket.emitRaw('conversation.item.input_audio_transcription.delta', { text: '主人' })
+  socket.emitRaw('input_audio_buffer.speech_started', {})
+  socket.emitRaw('input_audio_buffer.speech_stopped', { reason: null })
+  socket.emitRaw('response.done', { response: { status: 'completed' } })
+  socket.close()
+  assert.ok(emitted.some(e => e.type === 'audio' && e.data === 'aGVsbG8='))
+  assert.ok(emitted.some(e => e.type === 'transcript-delta' && e.text === 'こん'))
+  assert.ok(emitted.some(e => e.type === 'transcript-done' && e.text === 'こんにちは'))
+  assert.ok(emitted.some(e => e.type === 'user-transcript-delta' && e.text === '主人'))
+  assert.ok(emitted.some(e => e.type === 'speech-started'))
+  assert.ok(emitted.some(e => e.type === 'done' && e.status === 'completed'))
+  assert.ok(emitted.some(e => e.type === 'closed'))
+})
+
+test('function_call triggers executeTool and writes back function_call_output then response.create', async () => {
+  const FakeSocket = makeFakeSocket()
+  const emitted = []
+  let executed = null
+  const session = createRealtimeSession({
+    settings: { ...realtimeDefaults(), tools: [] }, nativeTools: [readSchema], key: 'k',
+    executeTool: async (name, args) => { executed = { name, args }; return { content: '文件内容' } },
+    emit: e => emitted.push(e), WebSocketCtor: FakeSocket,
+  })
+  session.connect()
+  const socket = FakeSocket.instances[0]
+  socket.emitRaw('response.output_item.done', { item: { type: 'function_call', call_id: 'call_1', name: 'read', arguments: '{"file_path":"/a/b.txt"}' } })
+  socket.emitRaw('response.done', { response: { status: 'completed' } })
+  // runTool is async; give it a tick.
+  await new Promise(r => setTimeout(r, 10))
+  assert.deepEqual(executed, { name: 'read', args: { file_path: '/a/b.txt' } })
+  assert.ok(emitted.some(e => e.type === 'tool-start' && e.callId === 'call_1' && e.name === 'read'))
+  assert.ok(emitted.some(e => e.type === 'tool-end' && e.callId === 'call_1' && e.ok === true))
+  const output = socket.sent.find(m => m.type === 'conversation.item.create' && m.item?.type === 'function_call_output')
+  assert.ok(output)
+  assert.equal(output.item.call_id, 'call_1')
+  assert.ok(socket.sent.some(m => m.type === 'response.create'))
+})
+
+test('tool errors are sanitized and marked not-ok without leaking raw content', async () => {
+  const FakeSocket = makeFakeSocket()
+  const emitted = []
+  const session = createRealtimeSession({
+    settings: { ...realtimeDefaults(), tools: [] }, nativeTools: [readSchema], key: 'k',
+    executeTool: async () => { throw new Error('Authorization: Bearer sk-topsecret should be hidden') },
+    emit: e => emitted.push(e), WebSocketCtor: FakeSocket,
+  })
+  session.connect()
+  const socket = FakeSocket.instances[0]
+  socket.emitRaw('response.output_item.done', { item: { type: 'function_call', call_id: 'c', name: 'read', arguments: '{}' } })
+  await new Promise(r => setTimeout(r, 10))
+  const end = emitted.find(e => e.type === 'tool-end')
+  assert.equal(end.ok, false)
+  const output = socket.sent.find(m => m.type === 'conversation.item.create' && m.item?.type === 'function_call_output')
+  // The thrown message should be wrapped in {error:...} (not the raw thrown string).
+  assert.doesNotMatch(output.item.output, /sk-topsecret/)
+})
+
+test('audio append forwards input_audio_buffer.append with base64 and bounds size', () => {
+  const FakeSocket = makeFakeSocket()
+  const session = createRealtimeSession({ settings: realtimeDefaults(), key: 'k', executeTool: async () => ({}), emit: () => {}, WebSocketCtor: FakeSocket })
+  session.connect()
+  const socket = FakeSocket.instances[0]
+  session.appendAudio('AAAA')
+  assert.ok(socket.sent.some(m => m.type === 'input_audio_buffer.append' && m.audio === 'AAAA'))
+  // Oversized base64 rejected.
+  session.appendAudio('x'.repeat(3 * 1024 * 1024 + 1))
+  assert.equal(socket.sent.filter(m => m.type === 'input_audio_buffer.append').length, 1)
+})
+
+test('cancel, response.create, commit, and dispose emit correct client events', () => {
+  const FakeSocket = makeFakeSocket()
+  const session = createRealtimeSession({ settings: realtimeDefaults(), key: 'k', executeTool: async () => ({}), emit: () => {}, WebSocketCtor: FakeSocket })
+  session.connect()
+  const socket = FakeSocket.instances[0]
+  session.createResponse(); session.commit(); session.cancel()
+  assert.ok(socket.sent.some(m => m.type === 'response.create'))
+  assert.ok(socket.sent.some(m => m.type === 'input_audio_buffer.commit'))
+  assert.ok(socket.sent.some(m => m.type === 'response.cancel'))
+  session.dispose()
+  assert.equal(socket.readyState, 3)
+})
+
+test('toolDefinitions never fabricates native schemas and preserves provided parameters', () => {
+  assert.deepEqual(toolDefinitions(['read', 'glob', 'bash', 'run_code', 'constructor']), [])
+  const native = { name: 'custom_tool', description: 'Native custom tool', parameters: { type: 'object', properties: { mode: { enum: ['a', 'b'] } }, required: ['mode'], additionalProperties: false } }
+  const defs = toolDefinitions(['synth_tts'], [native, { name: 'missing_schema' }])
+  assert.deepEqual(defs.map(d => d.function.name), ['synth_tts', 'custom_tool'])
+  assert.deepEqual(defs[1].function.parameters, native.parameters)
+  defs[1].function.parameters.required.push('other')
+  assert.deepEqual(native.parameters.required, ['mode'])
+})
+
+test('Realtime rejects unknown and unselected calls before invoking the executor', async () => {
+  const FakeSocket = makeFakeSocket()
+  const executed = []
+  const session = createRealtimeSession({ settings: { ...realtimeDefaults(), tools: [] }, nativeTools: [readSchema], key: 'k', executeTool: async name => executed.push(name), emit() {}, WebSocketCtor: FakeSocket })
+  session.connect()
+  const socket = FakeSocket.instances[0]
+  for (const name of ['write', 'unknown', 'synth_tts']) socket.emitRaw('response.output_item.done', { item: { type: 'function_call', name, call_id: name, arguments: '{}' } })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(executed, [])
+  assert.equal(socket.sent.filter(m => m.item?.type === 'function_call_output' && JSON.parse(m.item.output).error).length, 3)
+  session.dispose()
+})
+
+test('service exposes selected schemas and snapshots each session allowlist and workspace', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'whale-rt-selection-'))
+  const keyFile = join(dir, 'test.env')
+  await writeFile(keyFile, 'DASHSCOPE_API_KEY=test-key')
+  const FakeSocket = makeFakeSocket(), executed = []
+  const writeSchema = { name: 'write', description: 'Native write', parameters: { type: 'object', properties: { file_path: { type: 'string' }, content: { type: 'string' } }, required: ['file_path', 'content'] } }
+  const service = createService({ stateDir: dir }, {
+    realtimeWebSocket: FakeSocket,
+    resolveModelCredential: async provider => ({ key: 'test-key', source: 'provider', provider }),
+    catalog: async () => ({ tools: [readSchema, writeSchema], currentWorkspace: process.cwd(), toolExecutionAvailable: true }),
+    runTool: async (name, args, options) => { executed.push({ name, args, workspace: options.workspace }); return { ok: true } },
+  })
+  t.after(async () => {
+    await service.dispose()
+    await rm(dir, { recursive: true, force: true })
+  })
+  const initial = (await service.handle('GET', '/api/config')).body.settings
+  assert.equal(initial.tools_configured, false)
+  const settings = { ...initial, tts_profiles: { ...initial.tts_profiles, qwen: { ...initial.tts_profiles?.qwen, voice: 'longanhuan_v3.1' } }, enabled_tools: ['read'], tools_configured: true, workspace: dir, realtime: { ...initial.realtime, key_file: keyFile, instructions: 'Test' } }
+  const catalog = (await service.handle('POST', '/api/catalog')).body
+  assert.deepEqual(catalog.tools[0].parameters, readSchema.parameters)
+  assert.equal(catalog.toolExecutionAvailable, true)
+  await service.handle('PUT', '/api/config', { settings })
+  const started = await service.handle('POST', '/api/realtime/start', { settings })
+  const sessionId = started.body.sessionId
+  assert.deepEqual((await service.handle('POST', '/api/realtime/playback', { sessionId, kind: 'main', active: true })).body, { ok: true })
+  for (const patch of [{ kind: 'unknown', active: true }, { kind: 'main', active: 'true' }]) {
+    await assert.rejects(service.handle('POST', '/api/realtime/playback', { sessionId, ...patch }), error => error.status === 400)
+  }
+  await assert.rejects(service.handle('POST', '/api/realtime/playback', { sessionId: 'missing', kind: 'main', active: true }), error => error.status === 404)
+  const first = FakeSocket.instances[0]
+  first.emitRaw('session.created', {})
+  const defs = first.sent.find(m => m.type === 'session.update').session.tools
+  assert.deepEqual(defs.find(d => d.function.name === 'read').function.parameters, readSchema.parameters)
+  assert.ok(!defs.some(d => d.function.name === 'write'))
+  assert.ok(defs.some(d => d.function.name === 'synth_tts'))
+  await service.handle('PUT', '/api/config', { settings: { ...settings, workspace: process.cwd(), enabled_tools: ['write'] } })
+  await service.handle('POST', '/api/realtime/start')
+  const second = FakeSocket.instances[1]
+  second.emitRaw('session.created', {})
+  assert.ok(second.sent.find(m => m.type === 'session.update').session.tools.some(d => d.function.name === 'write'))
+  const invoke = (socket, name, callId, args = {}) => socket.emitRaw('response.output_item.done', { item: { type: 'function_call', name, call_id: callId, arguments: JSON.stringify(args) } })
+  invoke(first, 'write', 'first-write')
+  invoke(first, 'read', 'first-read', { file_path: '/test', offset: 7 })
+  invoke(second, 'read', 'second-read')
+  invoke(second, 'write', 'second-write', { file_path: '/test', content: 'test' })
+  invoke(second, 'unknown', 'unknown')
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(executed, [
+    { name: 'read', args: { file_path: '/test', offset: 7 }, workspace: dir },
+    { name: 'write', args: { file_path: '/test', content: 'test' }, workspace: process.cwd() },
+  ])
+  await service.handle('PUT', '/api/config', { settings: { ...settings, enabled_tools: [] } })
+  await service.handle('POST', '/api/realtime/start')
+  const third = FakeSocket.instances[2]
+  third.emitRaw('session.created', {})
+  assert.ok(third.sent.find(m => m.type === 'session.update').session.tools.every(d => !['read', 'write'].includes(d.function.name)))
+  invoke(third, 'read', 'third-read')
+  invoke(third, 'get_voice_config', 'internal')
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(executed.length, 2)
+  assert.equal(JSON.parse(third.sent.find(m => m.item?.call_id === 'internal').item.output).provider, 'qwen')
+  assert.equal((await service.handle('GET', '/api/config')).body.settings.tools_configured, true)
+  await assert.rejects(service.handle('POST', '/api/realtime/start', { settings: { ...settings, enabled_tools: ['missing_tool'] } }), error => error.status === 400)
+})
