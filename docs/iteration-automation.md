@@ -96,14 +96,21 @@ J1 迭代循环（每小时/每 4 小时）       J2 patch 发布（工作日 16
 | 推送失败 → 记 `pending_push_version`，退出码 6 | `release.sh` | 下一班次只补推送，不会重复 bump |
 | dsh 子进程 setsid 脱离 | `restart-dsh.sh` | 调用方（cron 工具）不会因继承管道而挂死 |
 
-### 3.3.1 已知运维限制：GitHub 推送
+### 3.3.1 推送：系统代理要让 git 知道
 
-本机当前 **`github.com:443` 不可达**（`api.github.com` 返回 200，22 端口可达，但 `~/.ssh/id_ed25519` 没有注册到 GitHub 账号，`ssh -T git@github.com` 返回 publickey denied）。因此：
+本机系统代理是 `127.0.0.1:7897`（HTTP / HTTPS / SOCKS 都启用了）。实测：`curl` 直连 `github.com:443` 超时，走代理返回 200。而 **git 不会自动读取 macOS 的系统代理设置**，默认直连，于是表现为 `Operation timed out` / `Error in the HTTP2 framing layer` / `Empty reply from server` 三种不同报错。
 
-- 发布可以完整走到"部署成功"，但 `git push` 会超时 ~75s 后失败，脚本退出码 6 并在 state 里记 `pending_push_version`。
-- 每个后续班次会**只重试推送**，不会重新发版；补推成功后自动清除标记。
-- 两个可选的修复：① 让 443 可达（VPN/代理）；② 把已有公钥注册到账号：`gh auth refresh -h github.com -s admin:public_key` 然后 `gh ssh-key add ~/.ssh/id_ed25519.pub --title mac`（需要交互确认）。
-- 在修复之前，本仓库会持续 `ahead`，GitHub 上看不到 tag 与发布提交。
+仓库内已配置（只影响本仓库，不动全局）：
+
+```sh
+git config --local http.proxy http://127.0.0.1:7897
+git config --local http.version HTTP/1.1        # 代理链路上 HTTP/2 容易 framing 报错
+git config --local credential.helper '!gh auth git-credential'   # 复用 gh 的 token，不弹密码
+```
+
+- 想让所有仓库生效，把 `--local` 换成 `--global`。
+- 前提是代理客户端在运行；没开时推送会失败，脚本记 `pending_push_version` 并在后续班次重试，不会卡住发版。
+- 代理软件换端口（现在 7897）时要同步改这条 config。
 
 ### 3.4 注册作业（Hermes cron）
 

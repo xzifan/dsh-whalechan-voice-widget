@@ -75,6 +75,12 @@
 
 **还欠什么**
 
-- 推送：`v0.6.1` 只在本机，`github.com:443` 不通；state 里 `pending_push_version=0.6.1`，每个班次会自动补推，直到成功。
 - P0 剩余三项在 BACKLOG 顶部，由 J1 下一轮开始做。
-- `/health` 端点（realtime 状态、工具数）未实现，目前用 config 接口 200 判断挂载。
+- `/health` 已实现并接入发布校验，但要等下一个补丁版本（明天 16:00 的 0.6.2）才在运行实例上生效。
+
+## 2026-10-28 · 推送修复：git 没走系统代理
+
+- 现象：`git push` 分别报过 `Operation timed out`、`Error in the HTTP2 framing layer`、`Empty reply from server`。
+- 根因不是 HTTP vs SSH，而是 macOS 系统代理（`127.0.0.1:7897`）git 不认：`curl` 直连 443 超时、走代理 200，git 默认直连。
+- 修复（仓库本地，不动全局）：`http.proxy=http://127.0.0.1:7897`、`http.version=HTTP/1.1`、`credential.helper='!gh auth git-credential'`。
+- 结果：`main` 推到 `f67b4cd`，`v0.6.0` / `v0.6.1` 两个 tag 已上远端；`release.sh` 的 pending-push 分支真实跑通并把 state 的 `pushed` 改回 true。
