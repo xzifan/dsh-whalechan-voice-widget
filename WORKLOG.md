@@ -116,3 +116,12 @@
 - 验证：`bash -n scripts/release.sh` 通过；`npm pack --pack-destination "$(pwd)/artifacts/releases" --dry-run` 解析到 `dsh-voice-workbench-0.6.1.tgz`（431.9 kB），未落盘；`git status` 中 root 依旧没有 `*.tgz`，`artifacts/releases/` 里 36 个归档未被动过。
 - 测试：后端 279 全绿 / 前端 100 全绿 / `npm run build` 成功（仅 rolldown 既有的 `use client` 警告）。
 - 规划子代理：未使用（单脚本机械改动，2 文件）。
+
+## 2026-10-28 · 根目录调试音频归档到 `artifacts/debug-audio/`
+
+- 条目：P0「根目录 4 个调试音频（`whaleA/B-realtime-{en,ja}.silk`）移入 `artifacts/`」。
+- 改动：`mkdir -p artifacts/debug-audio`，把 4 个 `.silk`（18.7K / 24.3K / 16.7K / 23.4K，共 83 KB）全部 `mv` 进去；根目录现已无 `*.silk`。用 `mv` 而不是复制后再删，避免在 cron 无审批环境里碰删除类命令（上一张票里 `rm -rf`、`find -delete` 都被策略拦截过）。
+- 影响面：零 git 改动 —— 这 4 个文件本来就被 `.gitignore` 的 `*.silk` 覆盖，从未进过版本库，`artifacts/` 也整体被忽略。所以本轮的实质收益是「仓库根目录干净」，不是「减少提交体积」。
+- 引用核对：全仓库 grep `whale[AB]-realtime` / `realtime-(en|ja)\.silk` 在可见文件里命中 0（源码、脚本、文档都不读这 4 个文件）。唯一命中在 `.tools/bailian-voice-lab/manifest.json`，其 `jaQqFile`/`enQqFile` 指向 `.tools/bailian-voice-lab/` 下的同名副本，不是根目录这 4 个 —— 移动后仍然有效，未改路径。
+- 测试：后端 279 全绿 / 前端 100 全绿 / `npm run build` 成功（仅 rolldown 既有的 `use client` 指令警告）。
+- 规划子代理：未使用（纯文件归档，无源码改动）。
