@@ -42,6 +42,13 @@ say() { printf '%s\n' "$*" | tee -a "$LOG"; }
 step() { say ""; say "== $* =="; }
 die() { say "FAILED: $*"; say "{\"ok\":false,\"slot\":\"$SLOT\",\"reason\":\"$*\"}"; exit "${2:-5}"; }
 
+# ---- 迭代作业正在改代码时不要发版（工作区会脏、语义会混） ----
+if [ -f "$ROOT/.work.lock" ]; then
+  say "iteration job is running (.work.lock) — deferring release"
+  echo "{\"ok\":true,\"skipped\":\"iteration-running\"}"
+  exit 3
+fi
+
 # ---- 单实例锁（macOS 没有 flock，用 mkdir 原子性） ----
 LOCK="$ROOT/.release.lock"
 if [ -d "$LOCK" ]; then

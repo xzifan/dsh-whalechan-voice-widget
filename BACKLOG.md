@@ -22,8 +22,8 @@
 ## P2 · 结构性改进
 
 - [ ] 火山引擎 Realtime：给出接入时间点，或从声音设置下拉里移除 WorkInProgress 项
-- [ ] 拆分 `src/service.js`(592 行) 与 `src/realtime-service.js`(558 行)：会话生命周期 / 工具桥接 / 配置读写分层
-- [ ] 首字延迟、打断响应、TTS 合成耗时进 `statistics` 聚合（p50/p95），把延迟风险变成指标
+- [ ] [plan] 拆分 `src/service.js`(592 行) 与 `src/realtime-service.js`(558 行)：会话生命周期 / 工具桥接 / 配置读写分层
+- [ ] [plan] 首字延迟、打断响应、TTS 合成耗时进 `statistics` 聚合（p50/p95），把延迟风险变成指标
 - [ ] 审计容量策略：2000 条 / 10 MiB 之外的按周归档或导出
 
 ## 需要产品决策（迭代作业不得自行处理）
