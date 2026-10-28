@@ -14,8 +14,11 @@ export function useVoicePresets({onApplied,provider='qwen'}) {
   activeProvider.current=provider
   function clearAudio(){player.current?.stop();playingId.current=null;setGreeting(null);setPlayback({})}
   useEffect(()=>{
+    // cleanup 里要读的是「卸载那一刻」的值，所以转发 ref 对象本身；直接写
+    // revision.current 会被 exhaustive-deps 判为「该值可能已经变了」。
+    const rev=revision,req=request,plr=player
     mounted.current=true
-    return()=>{mounted.current=false;revision.current++;request.current?.abort();player.current?.stop()}
+    return()=>{mounted.current=false;rev.current++;req.current?.abort();plr.current?.stop()}
   },[])
   useEffect(()=>{revision.current++;request.current?.abort();clearAudio()},[provider])
   function load(rows) {

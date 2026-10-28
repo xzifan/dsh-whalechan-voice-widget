@@ -31,7 +31,7 @@ export function StatisticsView() {
       if (request === generation.current && cause.name !== 'AbortError') setError(cause.message || '读取统计失败')
     } finally {if (request === generation.current) setLoading(false)}
   }, [range])
-  useEffect(() => {void load(); return () => {generation.current++; controller.current?.abort()}}, [load])
+  useEffect(() => {const gen = generation, ctl = controller; void load(); return () => {gen.current++; ctl.current?.abort()}}, [load])
   const number = value => data ? formatAuditNumber(value) : '—'
   const maxCount = data ? Math.max(1, ...Object.values(data.counts)) : 1
   return <div className="w-full min-w-0 space-y-5" aria-busy={loading}>

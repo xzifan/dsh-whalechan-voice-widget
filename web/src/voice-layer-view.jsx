@@ -19,7 +19,7 @@ function ProviderCredentials({provider,label,status,disabled,onCheck,onSave}){
   const [editing,setEditing]=useState(false),[busy,setBusy]=useState(''),[hasKey,setHasKey]=useState(false),[message,setMessage]=useState('')
   const input=useRef(null),request=useRef(null),active=useRef(true)
   const clear=()=>{if(input.current)input.current.value='';setHasKey(false)}
-  useEffect(()=>{active.current=true;return()=>{active.current=false;request.current?.abort();if(input.current)input.current.value=''}},[])
+  useEffect(()=>{const field=input.current;active.current=true;return()=>{active.current=false;request.current?.abort();if(field)field.value=''}},[])
   const run=async(kind)=>{
     if(busy)return
     const key=kind==='save'?input.current?.value.trim():undefined

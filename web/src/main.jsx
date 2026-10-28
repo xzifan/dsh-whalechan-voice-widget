@@ -247,16 +247,21 @@ function App() {
     if(mq){if(mq.addEventListener)mq.addEventListener('change',apply);else mq.addListener?.(apply)}
     return()=>{if(mq){if(mq.removeEventListener)mq.removeEventListener('change',apply);else mq.removeListener?.(apply)}}
   },[])
+  /* eslint-disable react-hooks/exhaustive-deps -- 只在挂载时加载一次配置/目录/设备列表：
+     loadConfig、loadCatalog、refreshAudioInputs 都是每次渲染重建的普通函数，放进 deps
+     会让这个 effect 每帧重跑（重新拉配置 + 重挂 devicechange 监听），与意图相反。 */
   useEffect(()=>{
+    const generation=rtStartGeneration
     mounted.current=true;rtMounted.current=true;void loadConfig();void loadCatalog();void refreshAudioInputs()
     if(globalThis.navigator?.mediaDevices?.addEventListener)globalThis.navigator.mediaDevices.addEventListener('devicechange',refreshAudioInputs)
     return()=>{
       mounted.current=false;rtMounted.current=false
-      rtStartGeneration.current++;rtStartAttempt.current?.controller.abort();rtStartAttempt.current=null
+      generation.current++;rtStartAttempt.current?.controller.abort();rtStartAttempt.current=null
       const rsid=rtSession.current;rtSession.current=null;rtStopPolling();rtUploader.current?.stop();rtUploader.current=null;rtStopPlayback();rtMic.current?.stop();rtMic.current=null;void rtAudioCtx.current?.close().catch(()=>{})
       if(rsid)void api('realtime/end',{sessionId:rsid}).catch(()=>{})
     }
   },[])
+  /* eslint-enable react-hooks/exhaustive-deps */
   return <CompanionView {...{voicePresets,providerCredentials,checkProviderCredentials,saveProviderCredential,settings,change,fieldErrors,validationWarnings,checkingConfig,checkAllConfig,dirty,saved,configBusy:configBusy||(voicePresets.busy?'处理音色中':''),catalog,catalogBusy,catalogError,loadCatalog,notice,setNotice,saveConfig,loadConfig,rt,rtStart,rtStop,rtRetryPlayback,audioInputs,audioDeviceId,setAudioDeviceId,refreshAudioInputs}}/>
 }
 createRoot(document.getElementById('root')).render(<App/> )

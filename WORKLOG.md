@@ -234,3 +234,19 @@
 - 测试：后端 **292**（288 + 4）/ 前端 **100** / `npm run build` 成功 / `npm run lint` 0 问题 / `npm run format:check` 通过。
 - 未提交 `dist/`：本轮没改 `src`/`web/src`，build 后 `dist/` 无 diff。
 - 下次可做：BACKLOG 里「`package-lock.json` 的 `packages[""].engines` 对齐」（现已确认上次重生成 lock 时已自动同步，下轮先核验再决定是否划掉）。
+
+## 2026-10-28 · 接 `eslint-plugin-react-hooks`（J1 迭代班次）
+
+- 条目：P1「接 `eslint-plugin-react-hooks` 覆盖 `rules-of-hooks` / `exhaustive-deps`」。只做这一条，其它条目没动。
+- 规划子代理：未使用。边界先量后定——装包跑一遍探针就把「要改几个文件」从猜测变成「5 条 warning / 0 条 error」，全是机械修法，派只读子代理只会复述这 5 行。
+- 版本核实：`npm view eslint-plugin-react-hooks` → 7.1.1，peer 为 `^3 || … || ^9 || ^10.0.0`，与仓库的 eslint 10.13.0 相容，`npm i -D` 无 `--legacy-peer-deps`、无 ERESOLVE。
+- **只开两条核心规则，不用 `configs.flat.recommended`**：那份预设除了 basic 两条还叠了 React Compiler 规则集，实测本仓库会新增 **13 条 error**（`set-state-in-effect` ×11、`refs` ×1、`purity` ×1）。那 11 条要求把「effect 里 setState」改成派生状态/事件驱动，是 effect 结构重构，不是补门禁的量。所以配置里显式写 `plugins: {'react-hooks': reactHooks}` + 两条规则，并在注释里记下这 13 条与原因。
+- 严重度取舍：`rules-of-hooks` = **error**（调用顺序错是运行时崩溃，必须拦）；`exhaustive-deps` = **warn**（存量 effect 的依赖不全要逐个确认意图，先观不拦，否则门禁上线当天就红）。
+- 5 条 warning 逐条修（都属「为了让新门禁基线归零」，不是顺手改别的）：
+  - 4 条 `ref value ... will likely have changed by cleanup`：cleanup 里读的是「卸载那一刻」的值，正解是在 effect 顶部转发 **ref 对象本身**（`const rev=revision`），不是把 `.current` 快照化。`use-voice-presets.js` / `statistics-view.jsx` / `main.jsx` 的 `rtStartGeneration` 三处同改；`voice-layer-view.jsx` 那处是真的 DOM 节点，按规则建议在 effect 里取 `const field=input.current`。
+  - 1 条 `missing dependency: 'loadConfig'`（`main.jsx` 挂载 effect）：`loadConfig`/`loadCatalog`/`refreshAudioInputs` 都是每次渲染重建的普通函数，塞进 deps 会让这个 effect 每帧重跑（重拉配置 + 重挂 `devicechange`）。改成 `/* eslint-disable … -- 理由 */ … /* eslint-enable */` 包住这一个 effect，理由是「挂载只跑一次」而不是「懒得补」。要真修得先把三个 loader 提成 `useCallback` 并核对各自依赖，那是另一件事。
+- 元测试：`test/lint-config.test.js` 新增第 5 条，用 ESLint API 跑合成 `.jsx`（条件调用 `useState` + `useEffect` 缺 `flag` 依赖），断言 `rules-of-hooks` 恰好 1 条且 severity=2、`exhaustive-deps` 恰好 1 条且 severity=1 且提示点名 `flag`。变异验证：删掉配置里 `'react-hooks/rules-of-hooks': 'error'` 那行 → 5 条测试恰好红 1 条；还原后 5/5 绿。
+- 测试：后端 **293**（292 + 1）/ 前端 **100** / `npm run build` 成功 / `npm run lint` **0 问题 0 警告** / `npm run format:check` 通过。
+- 未提交 `dist/`：`web/src` 有改动，build 后 bundle hash 变了（`index-BjJ6wBA5.js` → `index-BjUZrPR-.js`），按仓库惯例构建产物随发版重建，本轮 `git checkout -- dist` 还原。
+- 下次可做：把上表那 13 条 compiler 规则（`set-state-in-effect` ×11、`refs`、`purity`）单独立一条「effect 结构重构」的 `[plan]` 条目——它是这批 error 的唯一来源，且需要逐个确认「该 state 是否本该是派生值」。另外 3 条已排队条目（全仓 Prettier 重排、husky+lint-staged、`prefer-const` 收紧）本轮未动。
+

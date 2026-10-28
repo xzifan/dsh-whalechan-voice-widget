@@ -63,3 +63,34 @@ test('eslint counts JSX element names as references, so .jsx needs no react plug
   assert.equal(unused.length,1,`JSX 里的组件没被算作引用：${unused.map(m=>m.message).join(' / ')}`)
   assert.match(unused[0].message,/'Dead'/)
 })
+
+test('eslint wires react-hooks: conditional hook is an error, missing dep is a warning',async()=>{
+  // 锁的是「hooks 门禁真的接上了」，不是配置文件里的字面量：用 ESLint API 跑一段
+  // 必然违规的合成代码。哪天插件被移除/规则名写错，这里先红。
+  const pkg=JSON.parse(await read('../package.json'))
+  assert.ok(pkg.devDependencies?.['eslint-plugin-react-hooks'],'devDependencies 缺少 eslint-plugin-react-hooks')
+  const {ESLint}=await import('eslint')
+  const root=fileURLToPath(new URL('..',import.meta.url))
+  const eslint=new ESLint({cwd:root})
+  const code=[
+    "import {useEffect,useState} from 'react'",
+    'export default function Probe({flag}){',
+    '  if(flag){const [flagState]=useState(0);void flagState}',
+    '  const [value,setValue]=useState(0)',
+    '  useEffect(()=>{setValue(flag?1:0)},[])',
+    '  return <b>{value}</b>',
+    '}',
+  ].join('\n')
+  const [result]=await eslint.lintText(code,{filePath:join(root,'web','src','__hooks-gate-probe.jsx')})
+  const reported=result.messages.map(message=>`${message.ruleId}: ${message.message}`).join(' | ')||'(无)'
+  const hooks=result.messages.filter(message=>message.ruleId==='react-hooks/rules-of-hooks')
+  assert.equal(hooks.length,1,`条件调用 hook 没被抓到，实际报告：${reported}`)
+  // error 而非 warn：hooks 调用顺序错了是运行时崩溃，必须挡住
+  assert.equal(hooks[0].severity,2,'rules-of-hooks 必须是 error')
+  const deps=result.messages.filter(message=>message.ruleId==='react-hooks/exhaustive-deps')
+  assert.equal(deps.length,1,`缺失依赖没被抓到，实际报告：${reported}`)
+  // warn 而非 error：存量 effect 依赖不全需要逐个确认意图，门禁先观不拦
+  assert.equal(deps[0].severity,1,'exhaustive-deps 必须是 warn')
+  assert.match(deps[0].message,/'flag'/,`依赖提示没点名 flag：${deps[0].message}`)
+})
+
