@@ -105,3 +105,14 @@
 - 测试：后端 279 全绿 / 前端 100 全绿 / `npm run build` 成功（只有 rolldown 既有的 `use client` 指令警告）。
 - 规划子代理：未使用（机械条目，改动未跨 3 文件）。
 - 遗留：`release.sh` 仍把 `npm pack` 输出写到仓库根（167 行 `$PACKDIR`、218 行 `$ROOT`），已开新票，否则历史 tgz 会重新堆回来。
+
+## 2026-10-28 · 发布脚本打包产物改落 `artifacts/releases/`
+
+- 条目：P0「`release.sh` 把 `npm pack` 输出写到仓库根 → 统一改到 `artifacts/releases/`，并同步 `.release-state.json` 的 `last_tarball`」。
+- 改动：`scripts/release.sh` 新增 `RELDIR="$ROOT/artifacts/releases"` 变量；正式打包段改为 `mkdir -p "$RELDIR"` → 先 `rm -f "$TGZ"`（同版本重跑时避免 pack 失败却复用上次的 tgz）→ `npm pack --pack-destination "$RELDIR"`，`TGZ` 指向新目录；`--dry-run` 分支仍用 `mktemp -d`（会自动清理，且不往仓库里落文件），未改。
+- `.release-state.json` 的 `last_tarball` 从仓库根改指 `artifacts/releases/dsh-voice-workbench-0.6.1.tgz`（已确认该文件存在）。该文件被 gitignore，只影响本机运行时状态。
+- 文档：`docs/iteration-automation.md` 幂等/并发表加一行说明打包产物位置，避免以后有人按 root 路径找包。
+- 影响面：1 处变量 + 打包 3 行 + 1 行文档，未改任何对外行为；`dsh plugin add "$TGZ"` 用绝对路径，路径变化不影响安装。
+- 验证：`bash -n scripts/release.sh` 通过；`npm pack --pack-destination "$(pwd)/artifacts/releases" --dry-run` 解析到 `dsh-voice-workbench-0.6.1.tgz`（431.9 kB），未落盘；`git status` 中 root 依旧没有 `*.tgz`，`artifacts/releases/` 里 36 个归档未被动过。
+- 测试：后端 279 全绿 / 前端 100 全绿 / `npm run build` 成功（仅 rolldown 既有的 `use client` 警告）。
+- 规划子代理：未使用（单脚本机械改动，2 文件）。

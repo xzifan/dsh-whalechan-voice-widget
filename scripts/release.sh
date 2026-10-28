@@ -35,6 +35,9 @@ DOW="$(date +%u)"          # 1=Mon .. 7=Sun
 STAMP="$(date +%Y%m%dT%H%M%S)"
 STATE="$ROOT/.release-state.json"
 LOGDIR="$ROOT/.release-logs"
+# 打包产物统一落在 artifacts/releases/（.gitignore 已忽略 /artifacts/），
+# 否则每发一版就往仓库根堆一个 400KB 的 tgz，root 会重新变脏。
+RELDIR="$ROOT/artifacts/releases"
 LOG="$LOGDIR/${STAMP}-${SLOT}.log"
 mkdir -p "$LOGDIR"
 
@@ -214,8 +217,10 @@ for path, keys in (("package.json", None), ("package-lock.json", ("packages", ""
     open(path, "a", encoding="utf-8").write("\n")
 print("version ->", ver)
 PY
-TGZ="$ROOT/dsh-voice-workbench-${NEXT_VERSION}.tgz"
-npm pack --pack-destination "$ROOT" >>"$LOG" 2>&1 || die "npm pack failed"
+mkdir -p "$RELDIR" || die "cannot create $RELDIR"
+TGZ="$RELDIR/dsh-voice-workbench-${NEXT_VERSION}.tgz"
+rm -f "$TGZ"   # 同版本重跑时先清掉旧包，避免 pack 失败却复用了上一次的 tgz
+npm pack --pack-destination "$RELDIR" >>"$LOG" 2>&1 || die "npm pack failed"
 [ -f "$TGZ" ] || die "expected tarball missing: $TGZ"
 say "packed: $(basename "$TGZ") ($(du -h "$TGZ" | cut -f1))"
 

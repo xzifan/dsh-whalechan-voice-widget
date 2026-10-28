@@ -93,6 +93,7 @@ J1 迭代循环（每小时/每 4 小时）       J2 patch 发布（工作日 16
 | 审计文件 10 分钟内被写过 → 推迟重启 | `release.sh` | 不在用户通话中途重启 dsh |
 | 测试红 → 退出码 2，不 bump 不提交 | `release.sh` | 坏的不会进 main |
 | `.release-logs/<ts>-<slot>.log` | `release.sh` | 每次运行的完整输出 |
+| `npm pack` 产物落 `artifacts/releases/`（不是仓库根） | `release.sh` | root 不再每发一版多一个 400KB tgz；`.gitignore` 已忽略 `/artifacts/` |
 | 推送失败 → 记 `pending_push_version`，退出码 6 | `release.sh` | 下一班次只补推送，不会重复 bump |
 | dsh 子进程 setsid 脱离 | `restart-dsh.sh` | 调用方（cron 工具）不会因继承管道而挂死 |
 
