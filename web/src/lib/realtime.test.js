@@ -313,7 +313,6 @@ test('micErrorMessage maps DOMException names to friendly Chinese text', async (
 
 test('listAudioInputs returns [] without mediaDevices', async () => {
   const {listAudioInputs} = await import('./realtime.js')
-  const saved = globalThis.navigator
   // node has no navigator.mediaDevices -> should be []
   const list = await listAudioInputs()
   assert.ok(Array.isArray(list))

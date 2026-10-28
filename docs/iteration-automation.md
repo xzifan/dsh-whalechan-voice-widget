@@ -34,7 +34,7 @@
 6. **e2e 冒烟进 CI**（2026-10-28 完成）：CI 增加独立 `browser-smoke` job —— `setup-python` + `playwright install --with-deps chromium`，build 后跑 `npm run test:browser`（即 `test/browser-smoke.py`）。原脚本写在 UI 重构之前（依赖「小鲸鱼娘在这里。」标题、音色三角、`/debug`、`/tune` 这些已不存在的入口），本轮按现 UI 重写为挂载冒烟：宿主页面挂真实 `lib/client.js` → iframe 载 `dist/web` → 侧边栏导航 → 设置保存回环 → 实时会话（合成麦克风、mock 事件流含工具时间线）→ 结束并释放麦克风 → 110/390px 无横向溢出。其余 7 个 `browser-*.py` 仍基于旧 UI（部分还要求 `PLAYWRIGHT_CHROMIUM_EXECUTABLE`），已在 BACKLOG 里单独立项。
 7. **健康检查端点**：加 `GET /api/voice-workbench/health`（返回版本、已加载工具数、TTS provider、realtime 连接状态）。现在发布后只能用 `curl /` 猜 bundle hash，判断不了插件是否真的挂载。
 8. **覆盖率门槛**（2026-10-28 完成）：`npm run test:coverage`（后端 `src/`，行/分支/函数 96/83/92）与 `npm run test:coverage:web`（前端 `web/src/`，90/86/89），CI 里作为 Node 22 leg 的独立步骤，低于下限直接红。**没有**直接沿用整体聚合值：不圈 include 时后端报告会把 `web/src/lib/*` 一并计入（`filler-playback` 25%），那样设出来的下限其实在管前端。`--test-coverage-*` 要 Node ≥22.8，所以只在 22 leg 上跑，20/24 leg 仍跑全量单测。
-9. **lint / format**：ESLint flat config + Prettier，接进 CI 和 `prepack`。当前没有任何静态检查，纯靠测试兜底。
+9. **lint / format**（2026-10-28 完成）：新增 `eslint.config.js`（零 config 包的 ESM flat config：`eslint` + `@eslint/js` + `globals`；只查正确性、不接管格式，所以不需要 `eslint-config-prettier`）+ `.prettierrc.json` / `.prettierignore`，CI 加独立 `lint` job（Node 22 单 leg），`prepack: npm run lint` 让 `npm pack` 与 `--dry-run` 都过 lint。**Prettier 没有全仓重排**（实测 116 文件 / 22k 行 churn，远超单轮预算）：`.prettierignore` 当迁移账本，生成物永久忽略、未迁移目录逐行列出，`npm run format:check` 今天只校验 10 个已对齐文件，迁移 = 删一行账本 + `npm run format`。
 10. **真实链路夜间冒烟**（可选、限流）：每日一次对百炼 TTS 发一句 10 字文本、对 Realtime 建连 5 秒即断。mock 测不出凭据过期、协议字段变更。
 
 ### P2 — 月度改进

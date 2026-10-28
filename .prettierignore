@@ -1,0 +1,21 @@
+# 生成物与第三方：永不格式化
+node_modules/
+dist/
+web/dist/
+artifacts/
+.tools/
+.npm-cache-statistics/
+.release-logs/
+package-lock.json
+web/package-lock.json
+
+# 尚未迁移到 Prettier 的范围 = 迁移账本：迁完一段删一行，删光即全仓对齐。
+# 现在 CI 只校验 json / yml 与少量已对齐的配置。
+src/
+lib/
+test/
+web/src/
+web/index.html
+scripts/
+*.md
+docs/

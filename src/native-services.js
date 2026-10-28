@@ -18,7 +18,7 @@ function get(ctx, key) {
  * chat and no TTS here. This adapter exposes the DSH tool execution bridge,
  * the tool catalog, and optional short fillers via a direct default-model call.
  */
-export function createNativeServices(ctx, config = {}) {
+export function createNativeServices(ctx, _config = {}) {
   const toolConversation = createAgentConversation(ctx)
   const filler = createConversationFiller(ctx)
   let disposed = false

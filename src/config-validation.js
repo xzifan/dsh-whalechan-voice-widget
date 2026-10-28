@@ -20,6 +20,7 @@ export function configIssues(settings, context = {}) {
   const s = settings
 
   function path(field, value, label) {
+    // eslint-disable-next-line no-control-regex -- 路径校验需要拒绝控制字符
     if (typeof value !== 'string' || value.length > 2048 || /[\u0000-\u001f]/.test(value)) { fail(field, `${label}路径格式无效`); return }
     const text = value.trim(); if (!text || text.startsWith('~/')) return
     const windows = /^[A-Za-z]:[\\/]/.test(text) || /^(?:\\\\|\/\/)[^\\/]+[\\/][^\\/]+/.test(text) || /^[\\/](?![\\/])/.test(text)

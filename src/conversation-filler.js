@@ -91,6 +91,7 @@ export function createConversationFiller(ctx, { timeoutMs = 4000 } = {}) {
       try { output = JSON.parse([...blocks.values()].map(block => block.text).join('').trim()) } catch { return '' }
       if (typeof output !== 'string') return ''
       const result = output.trim()
+      // eslint-disable-next-line no-control-regex -- 输出清洗需要拦下控制字符
       if (result.length > MAX_OUTPUT || /[\r\n\x00-\x1f]/.test(result)) return ''
       if (reason === 'interrupt' && ((result.match(/\p{Script=Han}/gu) || []).length > 12 || (result.match(/[A-Za-z]+(?:['’-][A-Za-z]+)*/g) || []).length > 4)) return ''
       if (Array.isArray(previousFillers) && previousFillers.some(value => typeof value === 'string' && value.trim() === result)) { outcome = { status: 'silent', code: 'REPEATED' };return '' }

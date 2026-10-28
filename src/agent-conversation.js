@@ -10,7 +10,7 @@ function service(ctx, name) { try { return ctx.get?.(name) } catch { return unde
 export function safeToolValue(value, depth = 0) {
   if (depth > 5) return '[内容已截断]'
   if (typeof value === 'string') return value.slice(0, 6000)
-    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, 'Bearer [已隐藏]')
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [已隐藏]')
     .replace(/\b(?:sk-|sk_|api_)[A-Za-z0-9_-]{16,}/g, '[已隐藏]')
     .replace(/((?:[A-Za-z0-9_-]*(?:api[_-]?key|secret|token|password|authorization|cookie|credential)[A-Za-z0-9_-]*)["']?\s*[:=]\s*)[^\r\n,;}]+/gi, '$1[已隐藏]')
   if (Array.isArray(value)) return value.slice(0, 30).map(item => safeToolValue(item, depth + 1))

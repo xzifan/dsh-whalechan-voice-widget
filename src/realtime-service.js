@@ -22,7 +22,7 @@ const MAX_AUDIO_BYTES = 24 * 1024 * 1024
 
 const safeCode = value => String(value || 'unknown').replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 80)
 const redactText = value => String(value ?? '').slice(0, 1000)
-  .replace(/Bearer\s+[A-Za-z0-9._~+\/-]+=*/gi, 'Bearer [已隐藏]')
+  .replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [已隐藏]')
   .replace(/\b(?:sk-|sk_|api_)[A-Za-z0-9_-]{16,}/g, '[已隐藏]')
   .replace(/((?:[A-Za-z0-9_-]*(?:api[_-]?key|secret|token|password|authorization|cookie|credential)[A-Za-z0-9_-]*)["']?\s*[:=]\s*)[^\r\n,;}]+/gi, '$1[已隐藏]')
 

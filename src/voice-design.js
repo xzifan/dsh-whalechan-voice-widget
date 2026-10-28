@@ -1,5 +1,4 @@
 import { numericUsage } from './audit-log.js'
-import { createRequire } from 'node:module'
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 

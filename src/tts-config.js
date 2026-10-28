@@ -81,6 +81,7 @@ export function ttsIssues(settings,context={},options={}){
   const path=profile.key_file
   if(typeof path==='string'){
    const text=path.trim(),win=/^[A-Za-z]:[\\/]/.test(text)||/^(?:\\\\|\/\/)[^\\/]+[\\/][^\\/]+/.test(text)||/^[\\/](?![\\/])/.test(text),posix=text.startsWith('/')
+   // eslint-disable-next-line no-control-regex -- 凭据路径校验需要拒绝控制字符
    if(/[\u0000-\u001f]/.test(path)||(text&&!text.startsWith('~/')&&!(context.platform==='win32'?win:context.platform?posix:win||posix)))fail(`${prefix}.key_file`,'凭据须为服务端绝对路径或以 ~/ 开头')
   }
   if(profile.protocol!=='mimo-chat'){

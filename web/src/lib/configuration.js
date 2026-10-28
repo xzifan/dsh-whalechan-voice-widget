@@ -3,13 +3,14 @@
 // src/config-validation.js is no longer referenced here.
 const TOOL_NAME = /^[\w./:@-]{1,180}$/
 
-export function configIssues(settings = {}, context = {}, target = 'all') {
+export function configIssues(settings = {}, _context = {}, target = 'all') {
   const errors = {}
   const fail = (field, message) => { if (!errors[field]) errors[field] = message }
   if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return { settings: '配置格式不正确' }
   const s = settings
   if (target === 'all') {
     if (typeof s.system_prompt !== 'string' || s.system_prompt.length > 8000) fail('system_prompt', '补充提示词须为不超过8000字的文本')
+    // eslint-disable-next-line no-control-regex -- 工作区路径校验需要拒绝控制字符
     if (typeof s.workspace === 'string' && (s.workspace.length > 2048 || /[\u0000-\u001f]/.test(s.workspace))) fail('workspace', '工作区路径格式无效')
     if (!Array.isArray(s.enabled_tools) || s.enabled_tools.length > 128 || s.enabled_tools.some(name => typeof name !== 'string' || !TOOL_NAME.test(name))) fail('enabled_tools', '可选工具列表格式无效，最多选择128个')
   }

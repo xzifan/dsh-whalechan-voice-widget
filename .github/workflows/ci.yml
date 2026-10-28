@@ -52,6 +52,28 @@ jobs:
       - name: Verify package contents
         run: npm run pack:check
 
+  lint:
+    # 静态门禁：只跑一次就够，放进 matrix 会在三个 leg 上重复三遍
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      # --ignore-scripts：安装阶段不跑 prepack，lint 由下面的显式步骤负责
+      - name: Install dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Prettier
+        run: npm run format:check
+
   browser-smoke:
     # e2e gate: the real plugin bundle mounting inside a host page, driven by a
     # synthetic microphone against fully mocked plugin APIs (no network calls).

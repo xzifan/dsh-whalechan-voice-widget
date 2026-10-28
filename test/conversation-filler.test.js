@@ -153,7 +153,7 @@ test('outcome callback fires exactly once with safe classifications', async () =
   const aborted = new AbortController();aborted.abort()
   for (const [h, input, expected] of [
     [harness(), {}, 'generated'],
-    [harness([delta('\"\"'), stop]), {}, 'silent'],
+    [harness([delta('""'), stop]), {}, 'silent'],
     [harness([delta('bad JSON'), stop]), {}, 'invalid'],
     [harness([new Error('do not expose this secret')]), {}, 'error'],
     [harness(), { signal: aborted.signal }, 'cancelled'],

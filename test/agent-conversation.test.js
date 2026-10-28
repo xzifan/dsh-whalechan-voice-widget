@@ -1,8 +1,5 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync } from 'node:fs'
-import { createRequire } from 'node:module'
-const runtimeRoot = process.env.DSH_RUNTIME_ROOT || '/Applications/DSH Desktop.app/Contents/Resources/app'
 import { createAgentConversation, conversationWorkspace, safeToolValue } from '../src/agent-conversation.js'
 
 function harness() {
@@ -17,7 +14,6 @@ function harness() {
             state.created++
             const listeners = new Map()
             const agent = { id: options.sessionId, cancel() {} }
-            const emit = (name, ...args) => { for (const cb of listeners.get(name) || []) cb(...args) }
             const scope = {
               on(name, cb) { const cbs = listeners.get(name) || []; cbs.push(cb); listeners.set(name, cbs) },
               systemPrompt: { section() {} },
@@ -30,7 +26,6 @@ function harness() {
               },
             }
             await options.setup(scope, agent)
-            const children = [...listeners.keys()]
             return { agent, async dispose() { state.disposed++ } }
           },
         },

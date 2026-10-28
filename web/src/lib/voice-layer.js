@@ -43,7 +43,6 @@ export function normalizeVoiceLayer(realtime = {}) {
   const r = realtime && typeof realtime === 'object' ? realtime : {}
   return {
     enabled: r.enabled !== false,
-    model: r.model || '',
     api_host: r.api_host || '',
     credential_source: 'provider',
     voice: r.voice || '',

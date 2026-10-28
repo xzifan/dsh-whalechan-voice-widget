@@ -173,3 +173,19 @@
 - 规划子代理：未使用——条目是 CI 配置类、预估 4 文件 ~30 行，实际边界（include 该圈多大、Node 20 不认参数）靠本地实跑一眼看出，只读规划子代理拿不到这些输出。
 - 下次可做：`package-lock.json` 的 `packages[""].engines` 仍是 `>=18`（BACKLOG 里下一条，已排队）。
 
+## 2026-10-28 · ESLint(flat) + Prettier 进 CI 与 prepack
+
+- 条目：P1 的「ESLint(flat) + Prettier 接入 CI 与 prepack」。只做这一条，其它条目一律没动。
+- 规划子代理：**用了**（只读）。该条跨 4 个配置位点 + 21 处源码命中，且「哪条规则能在现仓库真通过」只能靠实跑回答——子代理在仓库镜像里装 eslint 10.13 + prettier 3.9 实测后才给出结论。采纳其方案，后续步骤已作为新 `- [ ]` 写回 BACKLOG。
+- 关键实测（决定方案边界，不是估计）：不配 globals 直接上 `recommended` → 323 条 / 50 文件，其中 277 条是 `no-undef` 假阳性；给了 node/browser 两组 globals 但把 .jsx 一起交给 espree → 310 条，288 条假 `no-unused-vars` 全来自 33 个 .jsx（espree 不把 JSX 里的标识符算作引用）。所以 `files` 只收 `**/*.js` / `**/*.mjs`，`.jsx` 留给 `eslint-plugin-react` 那一轮。
+- 21 条基线逐条处理：5 处控制字符正则（工作区/凭据路径、API Key、模型输出清洗）是有意匹配控制字符，加行内 `no-control-regex` disable + 中文理由；2 处 Bearer 正则里的 `\/` 去掉（字符类内语义等价）；1 处测试字符串 `\"` → `"`；6 处未使用 import/变量；`web/src/lib/voice-layer.js` 的 `model` 键写了两遍，前一行被后一行覆盖——删前者，行为不变（`no-dupe-keys` 抓到的真 bug）。
+- Prettier 的定位是这轮最需要判断的地方。全仓 `--check` 实测 **116/116 全部不通过、churn 22,321 行**（+16,797 / −5,524），比单轮 200 行预算大两个数量级；「只查改动文件」（lint-staged 类）在零 baseline 时等价于「谁碰 legacy 文件谁整文件重排」，更有害。最终把 `.prettierignore` 当**迁移账本**：生成物永久忽略，`src/`/`lib/`/`test/`/`web/src/`/`docs/`/`*.md`/`scripts/` 暂列为未迁移，CI 今天只校验 10 个已对齐文件，天然常绿；迁移 = 从账本删一行 + `npm run format`，一段一提交。为此顺手对齐了 3 个已在范围内但不合规的文件（`web/components.json`、`web/jsconfig.json`、`web/vite.config.js`，纯空白 / JSON 展开，无行为变化）。
+- prepack 用 `npm run lint`：`prepare` 会在每次本地 `npm install` 和目录/git 安装时触发，`prepublishOnly` 不覆盖 `npm pack`，都不合适。实测 `npm run pack:check` 仍 31 文件、约 0.9s，tarball 里没有新增配置文件（`files` 白名单未变）。
+- 门禁的元测试：`test/lint-config.test.js` 3 条断言（scripts+devDeps 与 runtime 依赖隔离、CI 里确实有 lint/format 步骤、eslint/prettier 配置存在且忽略 node_modules）。只做文本断言、不 `import` 配置，避免 `npm test` 在没装 devDependencies 的环境里炸。变异验证：删掉 ci.yml 的 `run: npm run lint` → 恰好 1 条红；还原 → 全绿。
+- 改动：新增 `eslint.config.js`(43) / `.prettierrc.json`(8) / `.prettierignore`(21) / `test/lint-config.test.js`(42)；修改 `.github/workflows/ci.yml`(+22，独立 lint job)、`package.json`(+4 scripts / +4 devDependencies)、9 个 src+test 文件、4 个 web 文件（多为 1~3 行）。手写 diff ≈194 行；`package-lock.json` +1012 行是 `npm i -D` 生成物。
+- 测试：后端 287 全绿（284 + 3 新元测试）/ 前端 100 全绿 / `npm run build` 成功 / `npm run lint` 0 问题 / `npm run format:check` 通过 / 两个覆盖率门槛都没被击穿。
+- 副作用（下轮确认即可）：重生成 lock 时 npm 顺手把 `packages[""].engines` 从 `>=18` 同步成 `^20.19.0 || >=22.12.0`，即 BACKLOG 里「对齐 package-lock 的 engines」那条实测已被这一步解决。
+- 未提交 `dist/`：`npm run build` 产的 bundle 与「删掉死键」等价，而仓库只在发版时 `git add dist`（历史里 dist 仅 initial commit 动过），故 `git checkout -- dist` 还原，免得一个 lint 提交里夹带 400KB 打包产物。
+- 已知小缺口：ESLint 10 的 engines 是 `^20.19.0 || ^22.13.0 || >=24`，仓库下限定在 22.12.0，Node 22.12.x 装依赖会收到 EBADENGINE **警告**（不是失败）；CI 的 20/22/24 leg 全部满足。
+- 下次可做：`eslint-plugin-react` 把 33 个 .jsx 纳入 lint（已排进 BACKLOG）。
+

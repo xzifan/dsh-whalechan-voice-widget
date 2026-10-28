@@ -39,8 +39,12 @@
     "test:coverage": "node --test --experimental-test-coverage --test-coverage-include=\"src/**/*.js\" --test-coverage-lines=96 --test-coverage-branches=83 --test-coverage-functions=92 test/*.test.js",
     "test:coverage:web": "node --test --experimental-test-coverage --test-coverage-include=\"web/src/**/*.js\" --test-coverage-lines=90 --test-coverage-branches=86 --test-coverage-functions=89 web/src/lib/*.test.js",
     "test:browser": "python3 test/browser-smoke.py",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "build": "npm --prefix web run build",
-    "pack:check": "npm pack --dry-run"
+    "pack:check": "npm pack --dry-run",
+    "prepack": "npm run lint"
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.5"
@@ -57,5 +61,11 @@
         "@deepseek-ai/dsh-client-ui-sidebar"
       ]
     }
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.13.0",
+    "globals": "^17.13.0",
+    "prettier": "^3.9.10"
   }
 }
