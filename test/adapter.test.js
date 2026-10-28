@@ -5,6 +5,8 @@ import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {apply,Config} from '../src/index.js'
 
+const clientSource=async()=>(await readFile(new URL('../lib/client.js',import.meta.url),'utf8')).replace(/\s+/g,'')
+
 test('adapter registers authenticated exact APIs and cleans every registration',async()=>{
   const routes=[],statics=[],effects=[];let disposed=0
   const ctx={
@@ -38,16 +40,17 @@ test('adapter registers authenticated exact APIs and cleans every registration',
   }
   const playback=routes.find(r=>r.path==='/api/voice-workbench/realtime/playback')
   assert.deepEqual(playback.methods,['POST'])
-  assert.match(await readFile(new URL('../lib/client.js',import.meta.url),'utf8'), /'\/api\/realtime\/playback':\['POST'\]/)
+  // 比对前先折叠空白：Prettier 会在 `:` 后加空格，源码排版不该让路由断言变红。
+  assert.match(await clientSource(), /'\/api\/realtime\/playback':\s*\['POST'\]/)
   const statistics=routes.find(r=>r.path==='/api/voice-workbench/statistics')
   assert.deepEqual(statistics.methods,['POST'])
-  assert.match(await readFile(new URL('../lib/client.js',import.meta.url),'utf8'), /'\/api\/statistics':\['POST'\]/)
+  assert.match(await clientSource(), /'\/api\/statistics':\s*\['POST'\]/)
   const stats=await statistics.fetch(new Request('http://localhost/api/voice-workbench/statistics',{method:'POST',body:'{}'}))
   assert.equal(stats.status,200)
   assert.equal((await stats.json()).total,0)
   const invalidStats=await statistics.fetch(new Request('http://localhost/api/voice-workbench/statistics',{method:'POST',body:'{"since":2,"until":1}'}))
   assert.equal(invalidStats.status,400)
-  const client=await readFile(new URL('../lib/client.js',import.meta.url),'utf8')
+  const client=await clientSource()
   for(const suffix of ['sessions','messages']) {
     const route=routes.find(r=>r.path==='/api/voice-workbench/history/'+suffix)
     assert.deepEqual(route.methods,['POST'])

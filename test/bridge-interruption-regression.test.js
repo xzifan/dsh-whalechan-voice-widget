@@ -6,6 +6,19 @@ import {createPlaybackReporter} from '../web/src/lib/filler-playback.js'
 import {createPreviewPlayer} from '../web/src/lib/preview-playback.js'
 
 const source=await readFile(new URL('../lib/client.js',import.meta.url),'utf8')
+// Locate the admission guard by its condition and cut to its matching brace, so the
+// substitution survives Prettier re-wrapping the block across lines (`;return}` anchor rots).
+const ADMISSION_GUARD=/if\s*\(counts\[lane\]\s*>=\s*limits\[lane\]\)\s*\{/
+function replaceAdmissionGuard(code){
+ const start=code.search(ADMISSION_GUARD)
+ assert.ok(start>=0,'lib/client.js 里找不到 counts[lane]>=limits[lane] 准入判断')
+ let depth=0
+ for(let i=code.indexOf('{',start);i<code.length;i++){
+  if(code[i]==='{')depth++
+  else if(code[i]==='}'&&--depth===0)return code.slice(0,start)+'if(pending.size>=10)return'+code.slice(i+1)
+ }
+ return code
+}
 function bridge(legacyAdmission=false){
  const origin='http://localhost:3080',requests=[],replies=[],listeners=new Set()
  let component,plugin,cleanup
@@ -13,7 +26,7 @@ function bridge(legacyAdmission=false){
  const React={useRef:()=>({current:{contentWindow:child}}),useState:()=>['',()=>{}],useEffect(fn){cleanup=fn()},createElement(){return {}}}
  const window={__ModuleLoader__:{load({factory}){plugin=factory(()=>React)}},addEventListener(_,fn){listeners.add(fn)},removeEventListener(_,fn){listeners.delete(fn)}}
  // Reconstruct only the pre-fix admission policy, leaving routing/fetch behavior identical.
- const code=legacyAdmission?source.replace(/if\(counts\[lane\]>=limits\[lane\]\)\{[^\n]+;return\}/,'if(pending.size>=10)return'):source
+ const code=legacyAdmission?replaceAdmissionGuard(source):source
  if(legacyAdmission)assert.ok(code.includes('if(pending.size>=10)return'))
  vm.runInNewContext(code,{window,document:{baseURI:origin+'/'},URL,AbortController,fetch(url,init){return new Promise(resolve=>requests.push({path:new URL(url).pathname,init,resolve}))}})
  plugin.apply({slots:{inject(_,fn){fn()},register(slot,fn){if(slot.name==='main')component=fn}}});component()

@@ -62,9 +62,10 @@ export function createConversationFiller(ctx, { timeoutMs = 4000 } = {}) {
       }))
       controller.signal.throwIfAborted()
       // Keep the prepared config intact: DSH rejects changes at stream dispatch.
-      iterator = call.stream({ ...call.config, system: SYSTEM, tools: [], signal: controller.signal,
+      const stream = call.stream({ ...call.config, system: SYSTEM, tools: [], signal: controller.signal,
         messages: [{ id: randomUUID(), role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: input }] }],
-      })[Symbol.asyncIterator]()
+      })
+      iterator = stream[Symbol.asyncIterator]()
       const blocks = new Map()
       let finish, chunks = 0
       while (true) {

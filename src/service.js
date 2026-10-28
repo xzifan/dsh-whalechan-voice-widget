@@ -469,8 +469,9 @@ export function createService(config = {}, dependencies = {}) {
     if (path === '/api/credentials/save') {
       requireValue(body && typeof body === 'object' && !Array.isArray(body) && Object.keys(body).every(key => ['provider', 'key'].includes(key)), '凭据保存请求格式无效')
       requireValue(Object.hasOwn(credentialLabels, body.provider), '不支持的凭据提供方')
-      // eslint-disable-next-line no-control-regex -- API Key 校验需要拒绝控制字符
+      /* eslint-disable no-control-regex -- API Key 校验需要拒绝控制字符 */
       requireValue(typeof body.key === 'string' && body.key.trim().length > 0 && body.key.length <= 8192 && !/[\u0000-\u0020\u007f]/.test(body.key.trim()), '请输入有效的 API Key')
+      /* eslint-enable no-control-regex */
       requireValue(typeof dependencies.configureModelCredential === 'function', '当前宿主不支持保存凭据，请在 DSH 模型设置中配置', 503)
       audit.addSecret(body.key.trim())
       try { await dependencies.configureModelCredential(body.provider, body.key.trim()) }
