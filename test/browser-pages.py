@@ -5,6 +5,8 @@ No network, no voice calls, nothing written into the repo tree.
 """
 import asyncio
 import json
+import re
+import time
 
 from playwright.async_api import expect
 
@@ -34,6 +36,16 @@ MESSAGES = {
 }
 
 
+AUDIT_BASE = 1793110000000
+AUDIT_RECORDS = [
+    {'id': str(seq), 'seq': seq, 'at': AUDIT_BASE - (120 - seq) * 60000,
+     'kind': 'response' if seq % 2 else 'synthesis', 'status': 'completed', 'text': '测试日志 ' + str(seq),
+     'provider': 'bailian' if seq % 2 else 'minimax', 'model': 'test-model', 'sessionId': 'session-a',
+     'messageId': 'message-' + str(seq), 'usage': {'total_tokens': seq}}
+    for seq in range(120, 0, -1)
+]
+
+
 async def statistics(harness, frame):
     """Metric formatting, range filter, 500 -> retry, empty state, storage banner, 390px layout."""
     state = {'mode': 'normal', 'windows': []}
@@ -54,6 +66,8 @@ async def statistics(harness, frame):
     assert state['windows'] == [], state['windows']
     await frame.get_by_label('统计时间范围').click()
     await frame.get_by_role('option', name='最近 24 小时', exact=True).click()
+    # `12,580` 首屏就已可见，不能拿它当「新范围请求已落地」的信号，否则会读到空的 windows
+    assert await until(lambda: bool(state['windows'])), state['windows']
     await expect(frame.get_by_text('12,580', exact=True)).to_be_visible()
     assert 86399000 <= state['windows'][-1] <= 86401000, state['windows']
     state['mode'] = 'error'
@@ -144,6 +158,99 @@ async def history(harness, frame):
     return {'history': True}
 
 
+async def audit(harness, frame):
+    """Pagination via `before`, column filters, sidebar/header sync, reset, detail sheet, 390px layout."""
+    state = {'requests': []}
+
+    async def audit_route(method, body):
+        state['requests'].append(body)
+        kind, search = body.get('kind'), (body.get('search') or '').lower()
+        filters = body.get('columnFilters') or {}
+
+        def matched(record):
+            if kind and record['kind'] != kind:
+                return False
+            haystack = ' '.join(str(record.get(key, '')) for key in ('text', 'sessionId', 'messageId')).lower()
+            if search and search not in haystack:
+                return False
+            # status 是枚举精确匹配，其余列按子串匹配（与后端一致）
+            return all(record.get(key, '') == value if key == 'status' else value.lower() in str(record.get(key, '')).lower()
+                       for key, value in filters.items())
+
+        matches = [record for record in AUDIT_RECORDS if matched(record)]
+        before = body.get('before')
+        eligible = [record for record in matches if before is None or record['seq'] < before]
+        rows = eligible[:100]
+        return {'records': rows, 'total': len(matches), 'hasMore': len(eligible) > 100,
+                'nextBefore': rows[-1]['seq'] if rows else None}
+
+    harness.routes['audit'] = audit_route
+    await harness.nav('日志审计')
+    # 会话记录页留下的 messageId 深链接会让审计页带着 search 打开，先重置回全量
+    await frame.get_by_role('button', name='重置筛选').click()
+    await expect(frame.locator('tbody tr')).to_have_count(100)
+    await expect(frame.get_by_text('已加载 100 条', exact=True)).to_be_visible()
+    await expect(frame.get_by_text('匹配 120 条', exact=False)).to_be_visible()
+    opening = state['requests'][-1]
+    assert opening['columnFilters'] == {} and 'before' not in opening and 'search' not in opening, opening
+    await frame.get_by_role('button', name=re.compile('^查看.*详情$')).first.click()
+    await expect(frame.get_by_role('heading', name='审计记录详情')).to_be_visible()
+    await expect(frame.get_by_text('完整标识', exact=True)).to_be_visible()
+    await harness.page.keyboard.press('Escape')
+    await expect(frame.get_by_role('heading', name='审计记录详情')).to_be_hidden()
+    # 续页：请求必须带 before（首屏 100 条是 seq 120..21），列表要追加而不是整页替换
+    await frame.get_by_role('button', name='加载更早记录', exact=True).click()
+    await expect(frame.locator('tbody tr')).to_have_count(120)
+    await expect(frame.get_by_text('已加载 120 条', exact=True)).to_be_visible()
+    older = state['requests'][-1]
+    assert older['before'] == 21 and older['columnFilters'] == {} and 'search' not in older, older
+    await frame.get_by_role('button', name='提供方筛选菜单', exact=True).click()
+    await frame.get_by_label('提供方表头筛选').fill('bailian')
+    await expect(frame.locator('tbody tr')).to_have_count(60)
+    await expect(frame.get_by_role('button', name='清除提供方筛选', exact=True)).to_be_visible()
+    filtered = state['requests'][-1]
+    # 改筛选 = 重新分页：不能带着上一页的 before
+    assert filtered['columnFilters'] == {'provider': 'bailian'} and 'before' not in filtered, filtered
+    await harness.page.keyboard.press('Escape')
+    kinds = frame.get_by_role('complementary', name='日志类型筛选')
+    await kinds.get_by_role('button', name='语音合成', exact=True).click()
+    await expect(kinds.get_by_role('button', name='语音合成', exact=True)).to_have_attribute('aria-pressed', 'true')
+    # 侧边栏与表头下拉是同一份 query.kind，两边必须同步
+    await expect(frame.get_by_label('类型表头筛选')).to_have_attribute('title', '筛选类型：语音合成')
+    await expect(frame.get_by_text('没有匹配的日志，请放宽表头筛选或重置条件。')).to_be_visible()
+    assert state['requests'][-1]['kind'] == 'synthesis', state['requests'][-1]
+    await frame.get_by_role('button', name='重置筛选').click()
+    await expect(frame.locator('tbody tr')).to_have_count(100)
+    cleared = state['requests'][-1]
+    # 重置要连列筛选一起清空，不能只清搜索框
+    assert cleared['columnFilters'] == {} and 'kind' not in cleared and 'before' not in cleared and 'search' not in cleared, cleared
+    await expect(frame.get_by_label('类型表头筛选')).to_have_attribute('title', '筛选类型：全部类型')
+    await expect(frame.get_by_role('button', name='清除提供方筛选', exact=True)).to_have_count(0)
+    await frame.get_by_label('状态表头筛选').click()
+    await frame.get_by_role('option', name='失败', exact=True).click()
+    await expect(frame.get_by_text('没有匹配的日志，请放宽表头筛选或重置条件。')).to_be_visible()
+    assert state['requests'][-1]['columnFilters'] == {'status': 'failed'}, state['requests'][-1]
+    await frame.get_by_role('button', name='重置筛选').click()
+    await expect(frame.locator('tbody tr')).to_have_count(100)
+    await frame.get_by_label('时间表头筛选').click()
+    await frame.get_by_role('option', name='最近1小时', exact=True).click()
+    assert await until(lambda: any('since' in body for body in state['requests'])), [b for b in state['requests'] if 'since' in b]
+    ranged = next(body for body in state['requests'] if 'since' in body)
+    assert abs(ranged['since'] - (time.time() * 1000 - 3600000)) < 120000, ranged
+    await expect(frame.get_by_label('时间表头筛选')).to_have_attribute('title', '筛选时间：最近1小时')
+    for label in ['内容', '会话 ID', '消息 ID', '模型']:
+        await frame.get_by_role('button', name=label + '筛选菜单', exact=True).click()
+        await expect(frame.get_by_label(label + '表头筛选', exact=True)).to_be_visible()
+        await harness.page.keyboard.press('Escape')
+        await expect(frame.get_by_label(label + '表头筛选', exact=True)).to_be_hidden()
+    await harness.page.set_viewport_size({'width': 390, 'height': 844})
+    await expect(frame.get_by_role('button', name='重置筛选')).to_be_visible()
+    bounds = await harness.child.evaluate("()=>({width:innerWidth,scroll:document.documentElement.scrollWidth})")
+    assert bounds['scroll'] <= bounds['width'] + 2, bounds
+    await harness.page.set_viewport_size({'width': 1440, 'height': 1000})
+    return {'audit': True}
+
+
 async def read_value(frame, label, wanted, timeout=5.0, interval=0.1):
     """轮询输入框直到等于 wanted——`expect(...).to_have_value` 在 1.60 的 async API 里不可 await。"""
     loop = asyncio.get_running_loop()
@@ -174,6 +281,7 @@ async def main():
         frame = await harness.start()
         results = await statistics(harness, frame)
         results.update(await history(harness, frame))
+        results.update(await audit(harness, frame))
         assert not harness.errors, harness.errors
         print(json.dumps({**results, 'pageErrors': harness.errors}))
     finally:

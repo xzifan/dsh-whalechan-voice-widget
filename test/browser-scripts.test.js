@@ -48,3 +48,22 @@ test('会话记录断言已并入 browser-pages.py，没有独立的 browser-his
     'browser-pages.py 必须走 browser_harness.Harness（宿主页 -> client.js -> iframe），不能直连 dist/web',
   )
 })
+
+// 日志审计页（BACKLOG「浏览器页断言 S4」）同样并入 browser-pages.py；旧脚本里的列标题点击循环
+// 恒真、3080 探活只是读线上状态，都随文件一起删掉。
+test('日志审计断言已并入 browser-pages.py，没有独立的 browser-audit-table.py', () => {
+  assert.equal(
+    existsSync(join(TEST_DIR, 'browser-audit-table.py')),
+    false,
+    'test/browser-audit-table.py 已按 BACKLOG 并入 browser-pages.py；要加审计页断言请改那一处',
+  )
+  const pages = readFileSync(join(TEST_DIR, 'browser-pages.py'), 'utf8')
+  for (const signal of ['加载更早记录', '重置筛选', '审计记录详情', 'before', 'columnFilters']) {
+    assert.ok(pages.includes(signal), `browser-pages.py 缺少「${signal}」断言，审计页分页/筛选的回归就没人看了`)
+  }
+  assert.equal(
+    pages.includes('127.0.0.1:3080'),
+    false,
+    '审计页断言不该去探 3080 线上实例：那是环境状态，不是构建产物',
+  )
+})
