@@ -1,6 +1,7 @@
 import { resolveBreezeLanguage } from './breeze-voices.js'
 import { createFillerCoordinator } from './filler-coordinator.js'
-import { VOICE_CONFIRMATION_RULES, spokenText } from './voice-candidate.js'
+import { spokenText } from './voice-candidate.js'
+import { appendRequiredRules } from './persona.js'
 import { createRequire } from 'node:module'
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -235,7 +236,7 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
         : turnMode === 'smart_turn' ? { type: 'smart_turn' } : null,
     }
     if (session.turn_detection === null) delete session.turn_detection
-    session.instructions = (settings.instructions?.trim() || realtimeInstructions(useTts)) + '\n\n' + VOICE_CONFIRMATION_RULES
+    session.instructions = appendRequiredRules(settings.instructions?.trim() || realtimeInstructions(useTts))
     if (tools.length) session.tools = tools
     send({ type: 'session.update', session })
   }

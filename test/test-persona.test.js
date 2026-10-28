@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert'
-import { readPersona, REQUIRED_PERSONA, SPOKEN_STYLE, assembleRealtimeInstruction } from '../src/persona.js'
+import { readPersona, REQUIRED_PERSONA, SPOKEN_STYLE, TOOL_HONESTY_RULES, appendRequiredRules, assembleRealtimeInstruction } from '../src/persona.js'
 
 test('REQUIRED_PERSONA contains identity and address rules', () => {
   assert.ok(REQUIRED_PERSONA.includes('鲸鱼娘'))
@@ -35,4 +35,31 @@ test('readPersona returns empty string when AGENTS.md missing', async () => {
   // verify it returns a string (possibly empty) without throwing.
   const result = await readPersona()
   assert.equal(typeof result, 'string')
+})
+
+test('TOOL_HONESTY_RULES forbids claiming success on a failed or empty tool result', () => {
+  assert.ok(TOOL_HONESTY_RULES.includes('结果为空'))
+  assert.ok(TOOL_HONESTY_RULES.includes('不得猜测'))
+  assert.ok(TOOL_HONESTY_RULES.includes('只有工具明确返回成功'))
+})
+
+test('assembleRealtimeInstruction always carries the honesty rule exactly once', () => {
+  for (const [persona, tts] of [['', false], ['补充人设', true]]) {
+    const text = assembleRealtimeInstruction(persona, tts)
+    assert.equal(text.split(TOOL_HONESTY_RULES).length - 1, 1)
+    assert.ok(text.includes('只有主人下一轮明确肯定'))
+  }
+})
+
+// Nightly smoke shape: a caller-supplied instruction (settings.instructions or
+// a stale client payload) must not be able to drop the honesty rule, and must
+// not receive it twice.
+test('appendRequiredRules injects the honesty rule into custom instructions once', () => {
+  const custom = '自然口语，用日语回答。'
+  const once = appendRequiredRules(custom)
+  assert.ok(once.startsWith(custom))
+  assert.equal(once.split(TOOL_HONESTY_RULES).length - 1, 1)
+  assert.equal(once.split('只有主人下一轮明确肯定').length - 1, 1)
+  assert.equal(appendRequiredRules(once), once)
+  assert.ok(appendRequiredRules('').startsWith(TOOL_HONESTY_RULES))
 })

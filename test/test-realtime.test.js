@@ -86,8 +86,23 @@ test('session.update payload carries voice, tools and smart_turn; start returns 
   assert.ok(update.session.tools.some(t => t.function.name === 'synth_tts'))
   assert.ok(update.session.instructions.startsWith('自然口语'))
   assert.match(update.session.instructions, /只有主人下一轮明确肯定/)
+  // Custom instructions must still carry the honesty rule (failed tool != success).
+  assert.match(update.session.instructions, /工具结果是唯一证据/)
+  assert.equal(update.session.instructions.split('工具结果是唯一证据').length - 1, 1)
   // No raw key ever emitted to frontend.
   assert.ok(emitted.every(e => JSON.stringify(e).includes('sk-secret-key') === false))
+})
+
+test('default (no custom) instructions also carry the honesty rule', () => {
+  const FakeSocket = makeFakeSocket()
+  const session = createRealtimeSession({ settings: { ...realtimeDefaults(), enabled: true }, key: 'k', executeTool: async () => ({}), emit: () => {}, WebSocketCtor: FakeSocket })
+  session.connect()
+  const socket = FakeSocket.instances[0]
+  socket.emitRaw('session.created', {})
+  const update = socket.sent.find(m => m.type === 'session.update')
+  assert.match(update.session.instructions, /工具结果是唯一证据/)
+  assert.match(update.session.instructions, /结果为空/)
+  assert.match(update.session.instructions, /只有主人下一轮明确肯定/)
 })
 
 test('audio delta, transcripts, done and closed events are sanitized and forwarded', () => {

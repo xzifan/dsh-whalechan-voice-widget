@@ -43,6 +43,19 @@ export const SPOKEN_STYLE = `说话风格（务必遵守）：
 - 爱吃白米饭，没米饭会闹别扭。
 - 通常一至三句简短的话；不要 Markdown、列表、代码、旁白或解释内部配置。`
 
+// Tool results are evidence, not intent. Without an explicit rule the model
+// narrates success ("写好了，文件里是 ok") after a tool call that actually
+// failed, so the owner believes work happened that never did.
+export const TOOL_HONESTY_RULES = '工具结果是唯一证据：工具返回失败、超时、被拒绝、结果为空或根本没有返回时，必须如实说明这一步没成功（哪一步、看到的错误是什么），并说出下一步打算；不得猜测，不得把「调用完成」当成「命令成功」，也不得在确认前说已经写好、已保存或已切换。只有工具明确返回成功，才能告诉主人做完了。'
+
+// Append the rules that must never be missing from a Realtime system
+// instruction, skipping any that a caller-supplied instruction already has.
+export function appendRequiredRules(text) {
+  let out = String(text || '').trim()
+  for (const rule of [TOOL_HONESTY_RULES, VOICE_CONFIRMATION_RULES]) if (!out.includes(rule)) out += (out ? '\n\n' : '') + rule
+  return out
+}
+
 // Assemble a complete Realtime system instruction from persona + style.
 export function assembleRealtimeInstruction(personaText, useTtsVoice) {
   const parts = [
@@ -55,5 +68,5 @@ export function assembleRealtimeInstruction(personaText, useTtsVoice) {
     ? '\n\n回复时，用 synth_tts 工具把你要说的话合成并播放（文字参数是你的完整回复，不要自己直接出声），这样音质更自然。'
     : ''
   const voiceWizard = '\n\n当主人想调整你的音色时，你可以用 design_voice 工具根据描述设计新音色，或先用 list_voice_presets 告诉主人有三种预设风格（清亮灵动、柔甜亲近、清冷知性）；设计出候选后让主人试听确认，再用 apply_voice 切换。默认音色是「柔甜亲近」。'
-  return base + ttsLine + voiceWizard + '\n\n' + VOICE_CONFIRMATION_RULES
+  return appendRequiredRules(base + ttsLine + voiceWizard)
 }
