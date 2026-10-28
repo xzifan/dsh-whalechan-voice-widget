@@ -9,7 +9,7 @@ import {Switch} from './components/ui/switch'
 import {Select, SelectTrigger, SelectValue, SelectContent, SelectItem} from './components/ui/select'
 import {Sheet, SheetTrigger, SheetContent, SheetHeader, SheetTitle, SheetDescription} from './components/ui/sheet'
 import {api} from './lib/core.js'
-import {auditUsage, formatAuditTime, formatAuditNumber, summarizeAuditUsage, mergeAuditRecords, auditRangeStart} from './lib/audit.js'
+import {auditUsage, formatAuditTime, formatAuditNumber, summarizeAuditUsage, mergeAuditRecords, auditRangeStart, auditOutcomeLabel, auditResultSummary} from './lib/audit.js'
 
 const kinds = {transcription: '语音转写', response: '模型回复', synthesis: '语音合成', usage: '历史独立用量', tool: '工具调用', error: '错误'}
 const statuses = {pending: '等待中', running: '进行中', streaming: '生成中', completed: '已完成', complete: '已完成', success: '成功', done: '已完成', failed: '失败', error: '错误', cancelled: '已取消', canceled: '已取消'}
@@ -40,6 +40,12 @@ function AuditRecord({record, onCopy}) {
           <h3 className="text-sm font-medium">文本内容</h3>
           <p className="whitespace-pre-wrap break-words rounded-md bg-muted/50 p-3 text-sm leading-relaxed [overflow-wrap:anywhere]">{record.text || '此记录没有文本内容'}</p>
         </section>
+        {record.kind === 'tool' && <section className="min-w-0 space-y-2">
+          <h3 className="text-sm font-medium">工具结果</h3>
+          <p className="whitespace-pre-wrap break-words rounded-md bg-muted/50 p-3 text-xs leading-relaxed [overflow-wrap:anywhere]">{auditResultSummary(record) || '未记录结果摘要'}</p>
+          <dl className="grid min-w-0 gap-2 text-xs">{[['结果', auditOutcomeLabel(record) || '未上报'], ['退出码', record.exitCode ?? '未返回']].map(([label, value]) => <div key={label} className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-2"><dt className="text-muted-foreground">{label}</dt><dd className="break-all">{value}</dd></div>)}</dl>
+          <p className="text-xs text-muted-foreground">「已完成」只表示工具调用结束，成败以上面的结果为准。</p>
+        </section>}
         <section className="min-w-0 space-y-2">
           <h3 className="text-sm font-medium">模型与音色</h3>
           <dl className="grid min-w-0 gap-2 text-xs">{[['提供方', record.provider], ['模型', record.model], ['音色', record.voice]].map(([label, value]) => <div key={label} className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-2"><dt className="text-muted-foreground">{label}</dt><dd className="break-all">{typeof value === 'object' && value !== null ? JSON.stringify(value) : value || '未返回'}</dd></div>)}</dl>
@@ -190,7 +196,7 @@ export function AuditView({initialMessageId = '', onClearMessageFilter} = {}) {
               <TableCell className="pl-4 text-xs tabular-nums text-muted-foreground">{formatAuditTime(record.at)}</TableCell>
               <TableCell className="text-xs">{kinds[record.kind] || record.kind}</TableCell>
               <TableCell className="whitespace-normal py-3"><p className="truncate text-sm" title={record.text || ''}>{record.text || (record.kind === 'usage' ? '模型用量统计' : '无文本内容')}</p><p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground" title={record.messageId || record.sessionId}>{record.messageId || record.sessionId || '未关联消息'}</p></TableCell>
-              <TableCell><span className="inline-flex items-center gap-1.5 text-xs"><span className={`size-1.5 rounded-full ${record.kind === 'error' || ['failed','error'].includes(record.status) ? 'bg-destructive' : ['completed','complete','success','done'].includes(record.status) ? 'bg-emerald-500' : 'bg-muted-foreground/50'}`}/>{statuses[record.status] || record.status || '未返回'}</span></TableCell>
+              <TableCell><span className="inline-flex items-center gap-1.5 text-xs"><span className={`size-1.5 rounded-full ${record.kind === 'error' || ['failed','error'].includes(record.status) || record.outcome === 'error' ? 'bg-destructive' : ['completed','complete','success','done'].includes(record.status) ? 'bg-emerald-500' : 'bg-muted-foreground/50'}`}/>{statuses[record.status] || record.status || '未返回'}{auditOutcomeLabel(record) && <span className="text-muted-foreground">· {auditOutcomeLabel(record)}</span>}</span></TableCell>
               <TableCell className="text-xs"><p className="truncate" title={record.model}>{record.model || '未返回'}</p><p className="mt-0.5 truncate text-[10px] text-muted-foreground">{record.provider || '未返回'}</p></TableCell>
               <TableCell className="text-right text-xs tabular-nums text-muted-foreground">{formatAuditNumber(auditUsage(record).total)}</TableCell>
               <TableCell className="px-1"><AuditRecord record={record} onCopy={copyMessageId}/></TableCell>

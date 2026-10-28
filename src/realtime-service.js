@@ -7,6 +7,7 @@ import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { numericUsage } from './audit-log.js'
+import { toolOutcome } from './tool-outcome.js'
 import { audioDurationSeconds } from './audio-duration.js'
 
 const require = createRequire(import.meta.url)
@@ -179,11 +180,12 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
     const text = content.map(part => part.text || '').join('')
     return text || content.map(part => part.transcript || '').join('')
   }
-  function finishTool(call, status, text) {
+  function finishTool(call, status, detail, outcome = status === 'completed' ? 'ok' : status === 'failed' ? 'error' : 'cancelled', exitCode) {
     if (call.finished) return
     call.finished = true
     emit({ type: 'tool-end', ...call.context, name: call.name, ok: status === 'completed', status })
-    audit('tool', call.context, status, { text: redactError(`${call.name}${text ? ': ' + text : ''}`) })
+    audit('tool', call.context, status, { outcome, ...(detail ? { resultSummary: detail } : {}),
+      ...(Number.isInteger(exitCode) ? { exitCode } : {}), text: redactError(`${call.name}${detail && status !== 'completed' ? ': ' + detail : ''}`) })
   }
   function invalidate(clearCandidate = false) {
     fillers.cancel()
@@ -269,7 +271,7 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
 
   async function runTool(call, rawArgs) {
     const { name, response } = call
-    let output, ok = true, speechText, errorText
+    let output, ok = true, speechText, errorText, evidence
     try {
       if (!allowedTools.has(name) && !(call.automatic && (response.tts || ttsActive()) && name === 'synth_tts')) throw new Error('该工具未在本次会话中启用或已不可用。')
       const args = typeof rawArgs === 'string' ? (rawArgs.trim() ? JSON.parse(rawArgs) : {}) : (rawArgs || {})
@@ -318,10 +320,13 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
         result = rest
       }
       output = JSON.stringify(result) ?? 'null'
+      // Success comes from the result itself; `completed` is only the call lifecycle.
+      evidence = toolOutcome(result)
     } catch (error) {
       if (!live(response) || call.finished) return
       ok = false
       errorText = redactError(error?.message || error)
+      evidence = { outcome: 'error' }
       output = JSON.stringify({ error: errorText })
     }
     if (!live(response) || call.finished) return
@@ -334,7 +339,8 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
       const remaining = [...response.pending].map(id => calls.get(id)).find(other => other && other.name !== 'synth_tts' && !other.finished)
       if (remaining) fillers.schedule('tool-wait', { toolName: remaining.name })
     }
-    finishTool(call, ok ? 'completed' : 'failed', errorText)
+    finishTool(call, ok ? 'completed' : 'failed', errorText || evidence?.summary,
+      ok ? evidence?.outcome : 'error', evidence?.exitCode)
     if (ok && name === 'synth_tts') {
       if (!call.prelude) response.terminal = true
       if (speechText) finalizeResponseAudit(response, 'completed', speechText, call.context)

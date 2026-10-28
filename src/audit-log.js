@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { orderConversationRows } from './conversation-order.js'
 
 const KINDS = new Set(['transcription', 'response', 'synthesis', 'usage', 'tool', 'error'])
+const OUTCOMES = new Set(['ok', 'error', 'cancelled'])
 const sensitive = /(?:api.?key|authorization|headers?|cookies?|pass.?word|secret|credential|access.?token|refresh.?token|audio|base64|url|endpoint|__proto__|constructor|prototype)/i
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value)
 
@@ -58,6 +59,19 @@ export function sanitizeAuditRecord(input = {}, secrets = []) {
   record.provider ??= 'unknown'
   record.model ??= 'unknown'
   record.status ??= 'unreported'
+  if (input.kind === 'tool') {
+    // `status` only describes the call lifecycle, so the outcome must be stated
+    // explicitly. Legacy rows without a writer-supplied outcome get one only
+    // when the status itself proves failure — a bare `completed` stays unknown.
+    const outcome = OUTCOMES.has(input.outcome) ? input.outcome
+      : ['failed', 'error'].includes(record.status) ? 'error'
+        : ['cancelled', 'canceled'].includes(record.status) ? 'cancelled' : undefined
+    if (outcome) record.outcome = outcome
+    const summary = typeof input.resultSummary === 'string' ? sanitizeAuditValue(input.resultSummary, secrets) : undefined
+    const line = typeof summary === 'string' ? summary.replace(/\s+/g, ' ').trim() : ''
+    if (line) record.resultSummary = Array.from(line).slice(0, 200).join('')
+    if (Number.isInteger(input.exitCode) && Math.abs(input.exitCode) <= 255) record.exitCode = input.exitCode
+  }
   record.usage = numericUsage(input.usage)
   record.usageAvailable = record.usage !== null
   if (typeof input.audioOutput === 'boolean') record.audioOutput = input.audioOutput
@@ -114,6 +128,7 @@ export function createAuditLog({ path, maxRecords = 2000, maxBytes = 10 * 1024 *
   const failedStatuses = new Set(['failed', 'error'])
   const searchableText = record => [
     record.text, record.id, record.sessionId, record.messageId, record.turnId, record.responseId, record.callId, record.role, record.provider, record.model, record.status, record.requestId,
+    record.outcome, record.resultSummary, record.exitCode === undefined ? '' : String(record.exitCode),
     record.voice === undefined ? '' : JSON.stringify(record.voice),
     record.usage == null ? '' : JSON.stringify(record.usage),
   ].filter(value => typeof value === 'string' && value).join('\n').toLowerCase()

@@ -29,6 +29,19 @@ export function summarizeAuditUsage(records = []) {
   return {total: known ? total : null, known, missing}
 }
 
+// 工具调用状态只说明「调用结束」，`outcome` 才是结果成败（成功 / 报错 / 取消）。
+const outcomeLabels = {ok: '工具成功', error: '工具报错', cancelled: '工具取消'}
+
+export function auditOutcomeLabel(record = {}) {
+  if (record.kind !== 'tool') return ''
+  return outcomeLabels[record.outcome] || ''
+}
+
+export function auditResultSummary(record = {}) {
+  if (record.kind !== 'tool') return ''
+  return typeof record.resultSummary === 'string' ? record.resultSummary.trim() : ''
+}
+
 export function auditTimestamp(value) {
   if (value === null || value === undefined || value === '') return null
   // Providers use both Unix seconds and JavaScript milliseconds.

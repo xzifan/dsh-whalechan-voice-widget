@@ -190,3 +190,28 @@ test('orphan usage remains visible and session/provider identity prevents incorr
   assert.equal((await store.query({kind: 'usage'})).total, 3)
   assert.equal((await store.statistics()).tokens, 17)
 })
+
+test('tool records keep an explicit outcome, a one-line summary and the exit code', async t => {
+  const {store, path} = await fixture(t)
+  await store.append({kind: 'tool', sessionId: 's', status: 'completed', text: 'bash'})
+  await store.append({kind: 'tool', sessionId: 's', status: 'failed', text: 'thrown tool'})
+  await store.append({kind: 'tool', sessionId: 's', status: 'completed', outcome: 'error', exitCode: 2,
+    resultSummary: 'ls: bad  dir\nsecond line ignored', text: 'bash'})
+  await store.append({kind: 'tool', sessionId: 's', status: 'completed', outcome: 'ok', exitCode: 400, resultSummary: 'key sk-abc123 kept'})
+  const [ok, error, failed, legacy] = (await store.query({kind: 'tool'})).records
+  // A bare `completed` proves the call finished, never that the command worked.
+  assert.equal('outcome' in legacy, false)
+  assert.equal(failed.outcome, 'error')
+  assert.equal(error.outcome, 'error')
+  assert.equal(error.resultSummary, 'ls: bad dir second line ignored')
+  assert.equal(error.exitCode, 2)
+  assert.equal(ok.outcome, 'ok')
+  assert.equal(ok.exitCode, undefined)
+  assert.equal(ok.resultSummary, 'key [redacted] kept')
+  assert.equal((await store.query({search: 'bad dir'})).total, 1)
+  assert.equal((await store.query({search: '工具'})).total, 0)
+  const reloaded = createAuditLog({path})
+  const [reloadOk, reloadError] = (await reloaded.query({kind: 'tool'})).records
+  assert.equal(reloadError.outcome, 'error'); assert.equal(reloadError.exitCode, 2)
+  assert.equal(reloadOk.resultSummary, 'key [redacted] kept')
+})

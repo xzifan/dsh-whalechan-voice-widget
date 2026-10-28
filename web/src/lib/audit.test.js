@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {auditUsage, formatAuditNumber, summarizeAuditUsage, auditTimestamp, formatAuditTime, mergeAuditRecords, auditRangeStart} from './audit.js'
+import {auditUsage, formatAuditNumber, summarizeAuditUsage, auditTimestamp, formatAuditTime, mergeAuditRecords, auditRangeStart, auditOutcomeLabel, auditResultSummary} from './audit.js'
 
 test('missing usage stays unknown while actual zero remains visible', () => {
   const unknown = {input: null, output: null, total: null}
@@ -53,6 +53,18 @@ test('cursor pages append older records without duplicating IDs or reordering ro
   const middle = {id: 'mid', text: 'middle'}
   const oldest = {id: 'old', text: 'oldest'}
   assert.deepEqual(mergeAuditRecords([newest, middle], [{...middle, text: 'duplicate'}, oldest, oldest]), [newest, middle, oldest])
+})
+
+test('tool outcome labels separate the call lifecycle from the actual result', () => {
+  assert.equal(auditOutcomeLabel({kind: 'tool', status: 'completed', outcome: 'ok'}), '工具成功')
+  assert.equal(auditOutcomeLabel({kind: 'tool', status: 'completed', outcome: 'error'}), '工具报错')
+  assert.equal(auditOutcomeLabel({kind: 'tool', status: 'cancelled', outcome: 'cancelled'}), '工具取消')
+  assert.equal(auditOutcomeLabel({kind: 'tool', status: 'completed'}), '')
+  assert.equal(auditOutcomeLabel({kind: 'tool', outcome: 'invented'}), '')
+  assert.equal(auditOutcomeLabel({kind: 'response', outcome: 'error'}), '')
+  assert.equal(auditResultSummary({kind: 'tool', resultSummary: '  ls: bad dir  '}), 'ls: bad dir')
+  assert.equal(auditResultSummary({kind: 'tool'}), '')
+  assert.equal(auditResultSummary({kind: 'error', resultSummary: 'ignored'}), '')
 })
 
 test('time range keys map to inclusive query starts and unknown keys stay unlimited', () => {

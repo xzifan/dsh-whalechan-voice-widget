@@ -284,3 +284,46 @@ test('service exposes selected schemas and snapshots each session allowlist and 
   assert.equal((await service.handle('GET', '/api/config')).body.settings.tools_configured, true)
   await assert.rejects(service.handle('POST', '/api/realtime/start', { settings: { ...settings, enabled_tools: ['missing_tool'] } }), error => error.status === 400)
 })
+
+test('a completed tool call whose result failed is audited with outcome, exit code and summary', async () => {
+  const FakeSocket = makeFakeSocket(), emitted = []
+  const session = createRealtimeSession({
+    settings: { ...realtimeDefaults(), tools: [] }, nativeTools: [readSchema], key: 'k',
+    executeTool: async () => ({ stdout: '', stderr: 'ls: /private: Permission denied\nsecond line', exit_code: 2 }),
+    emit: e => emitted.push(e), WebSocketCtor: FakeSocket,
+  })
+  session.connect()
+  const socket = FakeSocket.instances[0]
+  socket.emitRaw('response.output_item.done', { item: { type: 'function_call', call_id: 'call_1', name: 'read', arguments: '{}' } })
+  socket.emitRaw('response.done', { response: { status: 'completed' } })
+  await new Promise(resolve => setTimeout(resolve, 10))
+  const end = emitted.find(e => e.type === 'tool-end' && e.callId === 'call_1')
+  // `completed` stays the call lifecycle: the model still received the output.
+  assert.equal(end.status, 'completed')
+  const record = emitted.find(e => e.type === 'audit' && e.record.kind === 'tool').record
+  assert.equal(record.status, 'completed')
+  assert.equal(record.outcome, 'error')
+  assert.equal(record.exitCode, 2)
+  assert.equal(record.resultSummary, 'ls: /private: Permission denied second line')
+  session.dispose()
+})
+
+test('a successful tool call records an ok outcome with the first line of its output', async () => {
+  const FakeSocket = makeFakeSocket(), emitted = []
+  const session = createRealtimeSession({
+    settings: { ...realtimeDefaults(), tools: [] }, nativeTools: [readSchema], key: 'k',
+    executeTool: async () => ({ content: [{ type: 'text', text: '文件内容\n第二行' }], exit_code: 0 }),
+    emit: e => emitted.push(e), WebSocketCtor: FakeSocket,
+  })
+  session.connect()
+  const socket = FakeSocket.instances[0]
+  socket.emitRaw('response.output_item.done', { item: { type: 'function_call', call_id: 'call_2', name: 'read', arguments: '{}' } })
+  socket.emitRaw('response.done', { response: { status: 'completed' } })
+  await new Promise(resolve => setTimeout(resolve, 10))
+  const record = emitted.find(e => e.type === 'audit' && e.record.kind === 'tool').record
+  assert.equal(record.outcome, 'ok')
+  assert.equal(record.exitCode, 0)
+  assert.equal(record.resultSummary, '文件内容 第二行')
+  assert.equal(record.text, 'read')
+  session.dispose()
+})
