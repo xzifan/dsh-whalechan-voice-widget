@@ -24,7 +24,7 @@ export function apply(ctx,config) {
   ctx.effect(()=>()=>Promise.all([service.dispose(),native.dispose?.()]))
   for(const [suffix,methods] of [['health',['GET']],['credentials/status',['POST']],['credentials/save',['POST']],['voice-presets/save',['POST']],['voice-presets/generate',['POST']],['voice-presets/apply',['POST']],['voice-presets/greeting',['POST']],['history/sessions',['POST']],['history/messages',['POST']],['statistics',['POST']],['audit',['POST']],['config',['GET','PUT']],['catalog',['POST']],['models/check',['POST']],['config/check',['POST']],['realtime/start',['POST']],['realtime/audio',['POST']],['realtime/commit',['POST']],['realtime/response',['POST']],['realtime/cancel',['POST']],['realtime/end',['POST']],['realtime/events',['POST']],['realtime/playback',['POST']]]) {
     ctx.effect(()=>ctx.connection.fetch.register({
-      path:'/api/voice-workbench/'+suffix,methods,requestBody:suffix==='config'?'buffered':'streaming',
+      path:'/api/voice-workbench/'+suffix,methods,requestBody:(suffix==='config'||suffix==='health')?'buffered':'streaming',
       async fetch(request) {
         try {
           let body={}

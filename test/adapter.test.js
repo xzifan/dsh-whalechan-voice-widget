@@ -17,6 +17,8 @@ test('adapter registers authenticated exact APIs and cleans every registration',
   assert.equal(routes.length,23)
   const health=routes.find(r=>r.path==='/api/voice-workbench/health')
   assert.deepEqual(health.methods,['GET'])
+  // GET 路由必须走 buffered：宿主的 streaming 模式会让 GET 在到达插件前就返回 400（实测过）。
+  assert.equal(health.requestBody,'buffered')
   const healthResponse=await health.fetch(new Request('http://localhost/api/voice-workbench/health'))
   assert.equal(healthResponse.status,200)
   const healthBody=await healthResponse.json()
@@ -62,7 +64,8 @@ test('adapter registers authenticated exact APIs and cleans every registration',
   assert.ok(routes.every(r=>r.path.startsWith('/api/voice-workbench/')))
   const config=routes.find(r=>r.path.endsWith('/config'))
   assert.equal(config.requestBody,'buffered')
-  assert.ok(routes.filter(r=>r!==config).every(r=>r.requestBody==='streaming'))
+  // 只有 GET 路由用 buffered；POST 一律 streaming。
+  assert.ok(routes.filter(r=>r!==config&&r!==health).every(r=>r.requestBody==='streaming'))
   const response=await config.fetch(new Request('http://localhost/api/voice-workbench/config'))
   assert.equal(response.status,200)
   const loaded=await response.json()
