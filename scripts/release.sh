@@ -74,7 +74,8 @@ BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 if [ "$SLOT" = "minor" ] && [ "$DOW" != "6" ] && [ "$FORCE" -eq 0 ]; then
   die "minor releases are scheduled for Saturday (today is dow=$DOW); use --force to override"
 fi
-DIRTY="$(git status --porcelain --untracked-files=no | grep -v '^?? ' | head -20 || true)"
+# CHANGELOG.md 允许由调用方（发布作业）先写入 [Unreleased] 段落后再调脚本，所以不算脏改动
+DIRTY="$(git status --porcelain --untracked-files=no | grep -vE '^.. CHANGELOG\.md$' | head -20 || true)"
 if [ -n "$DIRTY" ] && [ "$FORCE" -eq 0 ]; then
   say "$DIRTY"
   die "working tree has uncommitted changes; commit or clean first"
@@ -195,31 +196,22 @@ if [ "$DEPLOY" -eq 1 ]; then
   dsh plugin --profile web add "$TGZ" --ignore-scripts >>"$LOG" 2>&1 || die "dsh plugin add failed"
 
   step "restart dsh web"
-  OLD_PID="$(pgrep -f 'dsh web' | head -1 || true)"
-  [ -n "$OLD_PID" ] && kill "$OLD_PID" 2>/dev/null && say "stopped pid $OLD_PID"
-  sleep 2
-  WEBLOG="$HOME/.dsh/logs/web-$STAMP.log"
-  mkdir -p "$(dirname "$WEBLOG")"
-  ( cd "$HOME" && nohup dsh web --no-open >"$WEBLOG" 2>&1 & )
-  say "waiting for :3080 ..."
-  for _ in $(seq 1 45); do
-    if curl -fsS -o /dev/null "http://127.0.0.1:3080/" 2>/dev/null; then break; fi
-    sleep 1
-  done
-  curl -fsS -o /dev/null "http://127.0.0.1:3080/" || die "dsh web did not come back on :3080"
-  TOKEN="$(grep -o 'token=[A-Za-z0-9_-]*' "$WEBLOG" | head -1 || true)"
-  say "dsh web is up (log: $WEBLOG ${TOKEN:+| $TOKEN})"
+  OUT="$(bash "$ROOT/scripts/restart-dsh.sh" 2>&1)"; RC=$?
+  say "$OUT"
+  [ "$RC" -eq 0 ] || die "dsh web restart failed (see log above)"
+  WEBLOG="$(printf '%s' "$OUT" | grep -o '/[^ ]*web-[0-9T]*\.log' | head -1)"
+  TOKEN="$(printf '%s' "$OUT" | grep -o 'token=[A-Za-z0-9_-]*' | head -1)"
 
   step "verify installed build"
   INST="$(node -p "require('$HOME/.dsh/profiles/web/node_modules/dsh-voice-workbench/package.json').version" 2>/dev/null || echo missing)"
   [ "$INST" = "$NEXT_VERSION" ] || die "installed version $INST != $NEXT_VERSION"
-  ASSET="$(basename "$(ls dist/web/assets/*.js | head -1)")"
-  if curl -fsS "http://127.0.0.1:3080/" | grep -q "$ASSET"; then
-    say "served page references current bundle ($ASSET)"
-  else
-    say "WARN: served page does not reference $ASSET — check the sidebar plugin manually"
-  fi
-  say "installed version: $INST"
+  JAR="$(mktemp)"; rm -f "$JAR"
+  curl -s -c "$JAR" -b "$JAR" -o /dev/null "http://127.0.0.1:3080/?$TOKEN"
+  API_CODE="$(curl -s -b "$JAR" -o "$LOGDIR/api-check.json" -w '%{http_code}' "http://127.0.0.1:3080/api/voice-workbench/config")"
+  rm -f "$JAR"
+  [ "$API_CODE" = "200" ] || die "voice-workbench config API returned $API_CODE (plugin not mounted?)"
+  grep -q '"settings"' "$LOGDIR/api-check.json" || die "config API response missing settings"
+  say "installed version: $INST | config API: 200 ok"
 fi
 
 # ---- 9. 提交 + tag + push ----
