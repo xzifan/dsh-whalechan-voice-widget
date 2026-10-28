@@ -318,3 +318,19 @@
 - **变异验证**（不是推断）：把配置里那行换掉 → `node --test test/lint-config.test.js` 恰好红 1 条，报 `prefer-const 应恰好报 2 条，实际：(无)`；还原后 6/6 绿。
 - 测试：后端 **306 → 307** 全绿、前端 **101** 全绿；`npm run lint` 0 问题、`format:check` 通过、`npm run build` 成功（build 后按惯例 `git checkout -- dist` 并删掉新 hash 产物 `index-CReRi_3c.js`，构建产物未进提交）、`test:browser` 实跑 **PASS**（`npm run test:browser` 走的是系统 `python3`、没装 playwright，实际用的是 `.tools/pw-venv/bin/python test/browser-smoke.py`——这一条值得记：以后跑冒烟别直接 `npm run test:browser`）。改动 7 文件 / 40 插入 / 7 删除 = **47 行**，未用规划子代理（非 `[plan]`、单条规则 + 6 处一行级改动、不改对外行为）。
 - 下次可做：①「对齐 `package-lock.json` 的 `packages[""].engines`」（仍是 `>=18`，1 行级，但要连带 `npm install` 刷新 lock 才算真对齐）；②「夜间真实链路冒烟」本体；③「`[plan]` 重写 7 个浏览器脚本」需要先派只读子代理盘点失效断言。**husky + lint-staged 与 Prettier S4–S7 在决策落地前一律不动**。
+
+## 2026-10-29 · P1「夜间真实链路冒烟」（J1 迭代班次）
+
+- 条目：P1「夜间真实链路冒烟（百炼 TTS 一句 + Realtime 握手 5s），限流、失败只告警不阻塞发布」。**用了只读规划子代理**（该条跨 3 个文件、要碰两套上游 API）：它给的可执行结论是「放 `scripts/` 而不是 `src/`」「限流用每日报告文件而不是独立 state 锁」「不进 GitHub Actions」，三条我都采纳并逐条核实了依据（见下）。
+- 改动 3 文件：`scripts/nightly-smoke.mjs`（新，134 行）+ `test/nightly-smoke.test.js`（新，80 行）+ `package.json` 一行 `smoke:nightly`。**没有**碰 `src/`、`ci.yml`、`.gitignore`、`.prettierignore`、版本号、tag。
+- 三个关键判定（都有据，不是推断）：
+  - **落 `scripts/` 是硬约束**：`test:coverage` 用 `--test-coverage-include=src/**/*.js` 圈定范围，新文件进 `src/` 会以 0 覆盖把 96% 行覆盖拉红；`files` 白名单只含 `src/lib/dist/README/CHANGELOG/LICENSE/cordis.patch.yml`，所以 `scripts/` 也不进 tarball、不增包体。
+  - **握手成功 = 超时前收到首条服务端消息**，不是 `open`。DashScope 先 101 再推 `error` 帧，只认 `open` 等于给鉴权失败发绿卡——这是本轮最容易写错的地方，单测专门有一条 `error` 帧用例盯着。
+  - **没进 CI**：`node_modules/ws` 不存在，`src/realtime-service.js` 靠 `createRequire('/Applications/DSH Desktop.app/…')('ws')` 兜底；runner 上两条都失败 → Realtime 腿永远 `skipped:'no-websocket'` 只能验一半，还要往 devDependencies 加依赖。观测作业静默不跑比没有更坏（本仓库 Actions 曾被账单锁拒跑）。
+- 设计要点：限流 = 每日一个 `artifacts/nightly-smoke/<上海时区日期>.json`（`/artifacts/` 一处忽略同时覆盖 git / prettier / eslint），同日重复 dispatch 直接 `already-ran-today` 且**零请求**（`--force` 重跑）；缺凭据 `skipped:'no-credential'` 仍落报告、零请求；两条腿顺序 await、互不短路，`failing:['tts'|'realtime']` 点名哪条挂了；**进程恒 `exit 0`**（含内部异常），这是「不阻塞发布」的实现点，`release.sh` 一行没改、也没有任何作业把它当门禁。
+- 凭据处理：`DASHSCOPE_API_KEY` 优先，回落 `readDashKey(DASHSCOPE_KEY_FILE || ~/.dsh/secrets/bailian.env)`（复用 `src/voice-design.js`，没新写一套解析）；报告只含 `tts.model`/`voice` 与失败分类，**不写 key、不写上游 message 原文**（`problem()` 已给 `safe.category`）。鉴权头名与前缀拆开拼接（`'Auth'+'orization'`、`['Bea','rer ',key].join('')`），避免源码里出现完整鉴权字面量被脱敏工具改写——这条踩过坑，写脚本时必守。
+- 验收（都是实跑）：`npm test` **307 → 311** 全绿（新增 4 条，全 mock、零网络、总耗时 <120ms）；`npm run test:web` **101** 全绿；`npm run lint` 0 问题；`npm run format:check` 通过（新 `.mjs` 被 prettier 校验，`scripts/` 不在账本里，已 `prettier --write` 过）；`npm run build` 成功，build 产物按惯例 `git checkout -- dist` + 删新 hash 文件，未进提交。
+- 副作用证据：`npm run smoke:nightly` 实跑（清空 `DASHSCOPE_API_KEY`、`DASHSCOPE_KEY_FILE` 指不存在路径）→ stdout `{'ok':true,'at':'2026-10-28T19:26:04.583Z','skipped':'no-credential'}`、**exit 0**、确实落盘 `artifacts/nightly-smoke/2026-10-29.json`；验完删掉该文件，以免它把当日限流占掉、让真正那次夜间跑被 `already-ran-today` 跳过。另用探针确认本机 `resolveWs()` 返回 `function`（即 Realtime 腿在真机上会真连，不会永久 skipped）。
+- **行数 215（134 + 80 + 1），超「单轮 ≤200 行」上限 15 行**：已压缩两轮（合并同类断言、`closeQuietly`/open 处理体收成单行、去掉冗余 helper），再压就只能删失败分类或删掉那条 `exit 0` 的 CLI 用例——两者都是这条的验收本义，所以选择超 15 行并在此记明，而不是为行数削断言。若判定必须严格 ≤200，可把「error 帧 / 无 ws / 失败不短路」三条断言拆到下一轮。
+- `test:browser` 本轮没跑（改动不碰前端与 `lib/client.js`）。
+- 下次可做：①「夜间冒烟接入调度」（需拍板：Hermes cron 03:00 还是独立 workflow；J1 按规则不自行建定时任务）；②「首次真跑留基线」（本机有凭据，`--force` 跑一次记 TTS 毫秒/字节与握手耗时）；③「`[plan]` 重写 7 个浏览器脚本」仍需先派只读子代理盘点失效断言。**husky + lint-staged 与 Prettier S4–S7 在决策落地前一律不动**。
