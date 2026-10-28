@@ -55,6 +55,29 @@ if ! mkdir "$LOCK" 2>/dev/null; then
 fi
 trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
 
+# ---- 0.5 上次已提交但推送失败：只补推送，不重复发版 ----
+PENDING_PUSH=""
+if [ -f "$STATE" ]; then
+  PENDING_PUSH="$(python3 -c 'import json,sys
+try: print(json.load(open(sys.argv[1])).get("pending_push_version") or "")
+except Exception: print("")' "$STATE" 2>/dev/null)"
+fi
+if [ -n "$PENDING_PUSH" ] && [ "$FORCE" -eq 0 ]; then
+  step "retry pending push v$PENDING_PUSH"
+  if git push origin main >>"$LOG" 2>&1 && git push origin "v$PENDING_PUSH" >>"$LOG" 2>&1; then
+    python3 -c 'import json,sys,datetime
+p=sys.argv[1]; st=json.load(open(p)); st.pop("pending_push_version",None)
+st["pushed"]=True; st["updated_at"]=datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+json.dump(st,open(p,"w"),ensure_ascii=False,indent=1)' "$STATE"
+    say "push ok for v$PENDING_PUSH"
+    echo "{\"ok\":true,\"version\":\"$PENDING_PUSH\",\"pushed\":1,\"retried_push\":true}"
+    exit 0
+  fi
+  say "push still failing (network or credentials) — retry on the next slot"
+  echo "{\"ok\":false,\"version\":\"$PENDING_PUSH\",\"pending_push\":true}"
+  exit 6
+fi
+
 # ---- 0. 幂等：今天同一 slot 已发布过就不再重复 ----
 if [ -f "$STATE" ] && [ "$FORCE" -eq 0 ]; then
   LAST_DATE="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("last_release_date",""))' "$STATE" 2>/dev/null)"
@@ -227,7 +250,7 @@ PUSHED=0
 if git push origin main >>"$LOG" 2>&1 && git push origin "v${NEXT_VERSION}" >>"$LOG" 2>&1; then
   PUSHED=1; say "pushed main + v${NEXT_VERSION}"
 else
-  say "WARN: push failed — release is local only (fix remote, then: git push origin main --tags)"
+  say "WARN: push failed — 版本已提交并部署，但未推送；下一班次只补推送"
 fi
 
 # ---- 10. 记账 ----
@@ -241,9 +264,19 @@ except Exception:
 st.update({"last_release_date": day, "last_slot": slot, "last_version": ver,
            "last_tarball": tgz, "pushed": pushed == "1",
            "updated_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds")})
+if pushed == "1":
+    st.pop("pending_push_version", None)
+else:
+    st["pending_push_version"] = ver
 json.dump(st, open(path, "w"), ensure_ascii=False, indent=1)
-print("state updated")
+print("state updated" + ("" if pushed == "1" else " (pending push)"))
 PY
+
+if [ "${PUSHED}" -eq 0 ]; then
+  say "版本 v${NEXT_VERSION} 已在本地完成并部署，推送待重试（网络或凭据问题）"
+  echo "{\"ok\":false,\"version\":\"$NEXT_VERSION\",\"slot\":\"$SLOT\",\"deployed\":$DEPLOY,\"pushed\":0,\"pending_push\":true}"
+  exit 6
+fi
 
 step "done"
 echo "{\"ok\":true,\"version\":\"$NEXT_VERSION\",\"slot\":\"$SLOT\",\"deployed\":$DEPLOY,\"pushed\":$PUSHED,\"log\":\"$LOG\"}"
