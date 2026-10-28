@@ -347,3 +347,12 @@
 - **行数 292（+236 / −56），超「单轮 ≤200 行」**：150 行是共享 harness（计划估 +110，实测 150，多出的主要是 docstring 与"按 url 认 iframe / 临时目录 fixture"两处修正），74 行是 pages 统计段（计划 +60，多出 3 条新断言）。要严格 ≤200 只能把统计段拆到下一轮、只留 harness——但那样 harness 当轮无人调用（等于新增死文件），所以选择超限并记明。
 - 顺带记一条运维事实：`npm run test:browser` 走系统 `python3`，本机没装 playwright；实际跑要用 `.tools/pw-venv/bin/python test/browser-*.py`。CI 里是 `setup-python@v5` + `pip install playwright`，所以 `npm run test:browser:pages` 在 CI 上能直接跑。
 - 下次可做：BACKLOG 新增的「删除 `browser-platform.py`」（43 行纯删除，最快）与「浏览器页断言 S3：会话记录并入 `browser-pages.py`」。**husky + lint-staged 与 Prettier S4–S7 在决策落地前一律不动**。
+
+## 2026-10-29 · P1「删除 `test/browser-platform.py`」（J1 迭代班次）
+
+- 条目：P1「删除 `test/browser-platform.py`」。上一个 `- [ ]`（husky + lint-staged）带 ⛔ 阻塞待决策标记、前置是文末「Prettier 是否豁免 200 行」，按规则跳过，本轮做排在它下面的这一条。未用规划子代理（单文件删除，5 分钟量级）。
+- 改动：`git rm test/browser-platform.py`（−43 行）+ 新增 `test/browser-scripts.test.js`（+33 行，1 条元测试）。没有碰 `src/`、`web/src/`、`lib/`、`package.json`、CI、版本号。
+- **为什么删就够、不需要改断言**：这个脚本的 7 条断言全部建立在「设置 → 模型配置 tab → 准备本地识别模型 / 语音识别方式 → 本地 SenseVoice」这条**产品已刻意下架**的前端 ASR 路径上（`web/src` 里已无这些入口），而它又不在 `package.json` / CI 里，属于永久腐烂的死脚本；为它恢复 tab 是明确禁止的方向。删掉它不损失任何当前有效覆盖——现役浏览器门禁是 `test:browser`（smoke）与 `test:browser:pages`（统计段），两者都走「宿主页 → `lib/client.js` → iframe → 桥」的真实路径。
+- **补一条防回归**（本轮唯一新增代码）：纯删除没有护栏，将来很容易有人「为了让旧断言变绿」把 tab 复活，或把同类死断言搬进别的脚本。`test/browser-scripts.test.js` 断言三件事：①`test/browser-platform.py` 不存在；②`test/*.py` 里不出现 `模型配置` / `准备本地识别模型` / `语音识别方式` 三个已下架入口；③`test/*.py` 数量 > 0（否则删空后 ① ② 会变成空转）。**变异验证**：用 `git show HEAD:test/browser-platform.py` 临时还原文件 → 恰好红 1 条（`AssertionError ... true !== false`，指向 ①），删回后 312 全绿。
+- 验收（都是实跑）：`npm test` 311 → **312** 全绿、`npm run test:web` **101** 全绿、`npm run lint` 0 问题、`npm run format:check` 通过、`npm run build` 成功（build 后按惯例 `git checkout -- dist/` 并删掉新 hash 产物 `index-CReRi_3c.js`，未进提交）。
+- 下次可做：①「浏览器页断言 S3：会话记录并入 `browser-pages.py`」（下一个可做条目，harness 已就位）；②顺手记录一个本轮**没有动**的死读点：`web/src/lib/configuration.js:24` 的 `capabilities.localAsr?.platform` 兜底分支——前端 ASR 下架后后端已不再返回该字段，属于死代码，但它在前端配置派生函数里、删除要先确认 `models.asr.platform` 在无 ASR 时是否为空，够单独一条，未在本轮顺手改。**husky + lint-staged 与 Prettier S4–S7 在决策落地前一律不动**。
