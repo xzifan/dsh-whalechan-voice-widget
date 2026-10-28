@@ -39,6 +39,7 @@
     "test:coverage": "node --test --experimental-test-coverage --test-coverage-include=\"src/**/*.js\" --test-coverage-lines=96 --test-coverage-branches=83 --test-coverage-functions=92 test/*.test.js",
     "test:coverage:web": "node --test --experimental-test-coverage --test-coverage-include=\"web/src/**/*.js\" --test-coverage-lines=90 --test-coverage-branches=86 --test-coverage-functions=89 web/src/lib/*.test.js",
     "test:browser": "python3 test/browser-smoke.py",
+    "test:browser:pages": "python3 test/browser-pages.py",
     "smoke:nightly": "node scripts/nightly-smoke.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",

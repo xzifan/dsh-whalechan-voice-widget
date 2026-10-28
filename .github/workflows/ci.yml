@@ -114,3 +114,6 @@ jobs:
 
       - name: Plugin mount smoke (fake microphone, mock APIs)
         run: npm run test:browser
+
+      - name: Page assertions (statistics, mock APIs)
+        run: npm run test:browser:pages
