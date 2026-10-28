@@ -16,7 +16,7 @@ web/package-lock.json
 # 会同时命中 `web/src/`，删一行就一次放出 61 个文件 / 约 12k 行，没法增量迁移。
 # `docs/` 与 `scripts/` 不列在这里：前者只有 .md，markdown 已于 S2 全部迁移；后者
 # 只有 .sh/.py，Prettier 没有对应 parser，列进来是 0 文件空操作。
+# `lib/` 已于 S3 迁移完成（只有 `lib/client.js` 一个文件），因此不再列在账本里。
 /src/
-/lib/
 /web/src/
 /test/
