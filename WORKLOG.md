@@ -24,13 +24,22 @@
 
 - `release.sh --dry-run`：279/100 测试通过、build 通过、pack 到临时目录，未改版本未提交。
 - 端到端：`git clone --bare` 造本地 bare origin，克隆一份工作区，跑真实 `release.sh --slot patch`（不含 `--deploy`），成功产出 0.6.1：CHANGELOG 自动补段落、package.json/package-lock 版本同步、提交、`v0.6.1` tag、push 到 bare origin。第二次运行输出 `already-released` 并退出 0（幂等生效）。
-- 未验证：`--deploy` 分支（安装 tgz + 重启 dsh web + 健康检查）没有在真机跑过，避免中断当前 dsh 会话；上线前需要人工跑一次 `--deploy`。
+- 当时未验证：`--deploy` 分支（安装 tgz + 重启 + 挂载校验）——已在下一节真机补测并通过。
 
-**还欠什么**
+## 2026-10-28 · 真机部署演练 + 第一个正式版本 0.6.1
 
-- P0 四项（见 BACKLOG），第一条由 J1 在下一轮直接做。
-- 部署后验证目前只能 curl 首页比对 bundle 文件名，`/health` 端点还没做。
-- `--deploy` 分支仍未在真机跑过，第一次真实执行就是 2026-10-28 16:00 的 patch 作业。
+**演练步骤（全部在真机执行）**
+
+1. `npm pack` → 安装 0.6.0 到 `dsh web` profile（覆盖原来的 0.21.0）→ 重启 → `config` 接口 200、QQ bot 重连。
+2. 抽出 `scripts/restart-dsh.sh` 单独验证：父 shell 退出后进程存活、cwd 保持 `$HOME`、`application` 可用。
+3. 写 `[Unreleased]` 段落后跑真实 `./scripts/release.sh --slot patch --deploy` → 0.6.1：279+100 测试、build、打包、安装、重启、校验、commit、tag；仅 push 失败。
+
+**演练暴露并修掉的两个真实缺陷**
+
+- **挂起 420s**：`restart-dsh.sh` 最初在 release.sh 里用 `OUT=$(bash ...)` 捕获输出，后台启动的 dsh 继承了管道写端，命令替换一直等 EOF。真机第一次跑就卡死在"重启"这一步，还把 dsh 停在了半路。改为写临时文件 + `restart-dsh.sh` 内部用 `subprocess.Popen(start_new_session=True, close_fds=True)`，实测 1.9s 返回。
+- **推送失败仍算发版成功**：原逻辑只打 WARN，state 仍记当天已发布，导致后续班次直接跳过、永远不会补推。改为记 `pending_push_version` 并退出 6，下一班次只补推送不重复 bump。
+
+**当前线上状态**：dsh web pid 28814，插件 0.6.1，config 接口 200，QQ bot ready，tag `v0.6.0` / `v0.6.1`，本地领先 origin 7 个提交。
 
 **已注册的定时作业**（2026-10-28，Hermes cron）
 
@@ -41,3 +50,9 @@
 | voice-workbench · minor 发布 | `14db9e4ea4c6` | `0 16,18 * * 6` |
 
 同时补了基线 tag `v0.6.0`（指向 `97a0845 Initial commit`，仅本地，未 push）。补 tag 后 `release.sh --dry-run` 显示"自 v0.6.0 以来 2 个 commit → 0.6.1"，改动区间判断恢复正常。
+
+**还欠什么**
+
+- 推送：`v0.6.1` 只在本机，`github.com:443` 不通；state 里 `pending_push_version=0.6.1`，每个班次会自动补推，直到成功。
+- P0 剩余三项在 BACKLOG 顶部，由 J1 下一轮开始做。
+- `/health` 端点（realtime 状态、工具数）未实现，目前用 config 接口 200 判断挂载。

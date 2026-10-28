@@ -93,6 +93,17 @@ J1 迭代循环（每小时/每 4 小时）       J2 patch 发布（工作日 16
 | 审计文件 10 分钟内被写过 → 推迟重启 | `release.sh` | 不在用户通话中途重启 dsh |
 | 测试红 → 退出码 2，不 bump 不提交 | `release.sh` | 坏的不会进 main |
 | `.release-logs/<ts>-<slot>.log` | `release.sh` | 每次运行的完整输出 |
+| 推送失败 → 记 `pending_push_version`，退出码 6 | `release.sh` | 下一班次只补推送，不会重复 bump |
+| dsh 子进程 setsid 脱离 | `restart-dsh.sh` | 调用方（cron 工具）不会因继承管道而挂死 |
+
+### 3.3.1 已知运维限制：GitHub 推送
+
+本机当前 **`github.com:443` 不可达**（`api.github.com` 返回 200，22 端口可达，但 `~/.ssh/id_ed25519` 没有注册到 GitHub 账号，`ssh -T git@github.com` 返回 publickey denied）。因此：
+
+- 发布可以完整走到"部署成功"，但 `git push` 会超时 ~75s 后失败，脚本退出码 6 并在 state 里记 `pending_push_version`。
+- 每个后续班次会**只重试推送**，不会重新发版；补推成功后自动清除标记。
+- 两个可选的修复：① 让 443 可达（VPN/代理）；② 把已有公钥注册到账号：`gh auth refresh -h github.com -s admin:public_key` 然后 `gh ssh-key add ~/.ssh/id_ed25519.pub --title mac`（需要交互确认）。
+- 在修复之前，本仓库会持续 `ahead`，GitHub 上看不到 tag 与发布提交。
 
 ### 3.4 注册作业（Hermes cron）
 
