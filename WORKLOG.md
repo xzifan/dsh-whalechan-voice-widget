@@ -28,6 +28,16 @@
 
 **还欠什么**
 
-- P0 五项（见 BACKLOG），其中"对齐 0.6.0 + 打 v0.6.0 tag"是开自动发版的前置。
+- P0 四项（见 BACKLOG），第一条由 J1 在下一轮直接做。
 - 部署后验证目前只能 curl 首页比对 bundle 文件名，`/health` 端点还没做。
-- cron 作业尚未注册，等确认 cadence（J1 先 4 小时还是直接每小时）。
+- `--deploy` 分支仍未在真机跑过，第一次真实执行就是 2026-10-28 16:00 的 patch 作业。
+
+**已注册的定时作业**（2026-10-28，Hermes cron）
+
+| 作业 | ID | 计划 |
+| --- | --- | --- |
+| voice-workbench · 迭代循环 | `44914f72f670` | `17 */4 * * *`（每 4 小时） |
+| voice-workbench · patch 发布 | `a29ae4b46645` | `0 16,18 * * 1-5` |
+| voice-workbench · minor 发布 | `14db9e4ea4c6` | `0 16,18 * * 6` |
+
+同时补了基线 tag `v0.6.0`（指向 `97a0845 Initial commit`，仅本地，未 push）。补 tag 后 `release.sh --dry-run` 显示"自 v0.6.0 以来 2 个 commit → 0.6.1"，改动区间判断恢复正常。
