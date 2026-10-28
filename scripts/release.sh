@@ -63,7 +63,37 @@ fi
 if ! mkdir "$LOCK" 2>/dev/null; then
   say "another release is running (lock: $LOCK)"; exit 4
 fi
-trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
+
+# ---- 失败回滚 ----
+# ROLLBACK_STATE: 0 = 还没改任何被跟踪文件；1 = 已快照（失败时还原）；2 = 已提交（不能还原）
+ROLLBACK_STATE=0
+BACKUP=""
+SNAPSHOT_FILES=(package.json package-lock.json CHANGELOG.md)
+INSTALLED=0
+
+cleanup() {
+  rc=$?
+  if [ "$ROLLBACK_STATE" -eq 1 ]; then
+    if [ -f "$ROOT/scripts/release-rollback.sh" ]; then
+      rb="$(bash "$ROOT/scripts/release-rollback.sh" "$BACKUP" "$ROOT" 2>&1 || true)"
+      say "ROLLBACK (exit $rc): ${rb:-rollback script produced no output}"
+    else
+      # 回滚脚本本身缺失（被裁剪的产物/半拷贝）时不能静默放弃还原，就地 cp 回去
+      say "ROLLBACK (exit $rc): helper missing, falling back to inline restore"
+      for f in "${SNAPSHOT_FILES[@]}"; do
+        [ -f "$BACKUP/$f" ] && cp -p "$BACKUP/$f" "$ROOT/$f"
+      done
+      git -C "$ROOT" reset -q -- "${SNAPSHOT_FILES[@]}" 2>/dev/null || true
+    fi
+    if [ "$INSTALLED" -eq 1 ]; then
+      say "WARN: dsh web profile 已装入版本，源码已回滚 —— 需人工决定重装旧包或重跑发版"
+    fi
+  fi
+  [ -n "$BACKUP" ] && rm -rf "$BACKUP"
+  rmdir "$LOCK" 2>/dev/null || true
+  exit "$rc"
+}
+trap cleanup EXIT
 
 # ---- 0.5 上次已提交但推送失败：只补推送，不重复发版 ----
 PENDING_PUSH=""
@@ -177,6 +207,16 @@ if [ "$DRY" -eq 1 ]; then
   exit 0
 fi
 
+# ---- 5.5 改文件前的快照（失败时唯一能还原到的东西） ----
+# 从这里开始改被跟踪文件：任何一步失败（changelog / bump / pack / install / restart / health）
+# 都还原，否则会留下「版本号已 bump 但没提交」的半成品，下一次发版的干净工作区检查会一直拦下来。
+BACKUP="$(mktemp -d)" || die "cannot create snapshot dir"
+for f in "${SNAPSHOT_FILES[@]}"; do
+  cp -p "$ROOT/$f" "$BACKUP/$f" || die "cannot snapshot $f"
+done
+ROLLBACK_STATE=1
+say "snapshot taken: ${SNAPSHOT_FILES[*]} -> $BACKUP"
+
 # ---- 6. CHANGELOG: [Unreleased] -> 版本段落 ----
 step "changelog"
 python3 - "$NEXT_VERSION" "$TODAY" <<'PY' >>"$LOG" 2>&1 || die "changelog update failed"
@@ -248,6 +288,7 @@ PY
     fi
   fi
   dsh plugin --profile web add "$TGZ" --ignore-scripts >>"$LOG" 2>&1 || die "dsh plugin add failed"
+  INSTALLED=1
 
   step "restart dsh web"
   # 不能用 $(...) 捕获：后台启动的 dsh 会继承管道写端，命令替换会一直等到超时。
@@ -285,6 +326,8 @@ fi
 step "commit and tag"
 git add package.json package-lock.json CHANGELOG.md dist
 git commit -m "chore(release): v${NEXT_VERSION} (${SLOT})" >>"$LOG" 2>&1 || die "git commit failed"
+# 已进历史：此后失败（tag/push）只能靠 pending_push 补偿，不能再回滚工作区
+ROLLBACK_STATE=2
 git tag -a "v${NEXT_VERSION}" -m "v${NEXT_VERSION} (${SLOT})" || die "git tag failed"
 PUSHED=0
 if git push origin main >>"$LOG" 2>&1 && git push origin "v${NEXT_VERSION}" >>"$LOG" 2>&1; then

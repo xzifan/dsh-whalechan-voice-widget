@@ -15,7 +15,7 @@
 
 ## P0 · 发布健壮性
 
-- [ ] `release.sh` 失败回滚：中途失败（install/restart/health 断言）时把 package.json、package-lock.json、CHANGELOG 的 `[Unreleased]` 段还原，避免留下半成品状态
+- [x] `release.sh` 失败回滚：中途失败（install/restart/health 断言）时把 package.json、package-lock.json、CHANGELOG 的 `[Unreleased]` 段还原，避免留下半成品状态（2026-10-28：新增 `scripts/release-rollback.sh`（独立可测的还原器：三文件 `cmp` 后 `cp -p` 还原 + `git reset -- <三个路径>` 把改动撤出暂存区，返回 0/5）+ `release.sh` 的 `trap cleanup EXIT`（替换原来只 `rmdir` 锁的 trap）。`ROLLBACK_STATE` 三态：0 未改文件 → 1 已快照（step 5.5，在 `step "changelog"` 之前）→ 2 已提交（`git commit` 成功后关掉，否则 tag/push 失败会把已进历史的版本号还原）。回滚脚本自身缺失时走内联 `cp` 兜底（不能静默放弃）；`INSTALLED=1` 后回滚会额外 WARN「profile 已装入新版本但源码已回滚，需人工重装旧包或重跑」——文件回滚修不了已部署的构建。`dist/` 不回滚（构建产物，下次发布重建）。4 条新测试（真跑 git 仓库：还原 + 暂存区清空、幂等、快照缺失时 exit 5 且不改文件、脚本快照先于改文件/提交后关回滚的顺序断言）；另用抽取真实 cleanup 块的探针脚本跑通「trap→还原→释放锁→exit 5」两条路径。后端 292 / 前端 100 全绿，build / lint / format:check 通过）
 
 ## P1 · 自动验证能力
 

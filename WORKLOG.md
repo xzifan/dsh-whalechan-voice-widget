@@ -220,3 +220,17 @@
 - 未提交 `dist/`：`release.sh` 在发版时才 `git add … dist`（第 266 行），本提交按惯例 `git checkout -- dist` 还原，免得夹带 500KB 打包产物。
 - 下次可做：接 `eslint-plugin-react-hooks`（peer 已到 `eslint ^10.0.0`）补 `rules-of-hooks` / `exhaustive-deps`——已作为新条目排进 BACKLOG，本轮不动。
 
+
+## 2026-10-28 · `release.sh` 失败回滚（J1 迭代班次）
+
+- 条目：P0「`release.sh` 失败回滚」。只做这一条，其它条目没动。
+- 规划子代理：未使用——条目就是 `scripts/release.sh` 一个脚本，实际边界（在哪一步开始改文件、提交后还能不能回滚）读一遍脚本就能定，派只读子代理只会复述已有的 322 行。
+- 边界先定：回滚只负责「改到一半的被跟踪文件」，装到 dsh 里那一份不管。实测发现这是两条完全不同的失败面——`dsh plugin add` 成功、`restart`/`health` 失败时，profile 里已经是新版本，文件回滚只能把源码退回去，于是留下「源码 0.6.2 / 部署 0.6.3」。所以 `INSTALLED=1` 之后回滚会额外打一行 WARN 让人决定重装旧包还是重跑，而不是假装一切都回去了。
+- 实现：`scripts/release-rollback.sh`（新的独立还原器，`cmp` 相同则跳过写入、`cp -p` 还原、`git reset --` 撤出暂存区，快照不完整时 exit 5 且零写入）；`release.sh` 用单个 `cleanup` 函数替换原来只 `rmdir` 锁的 EXIT trap，`ROLLBACK_STATE` 三态 0/1/2，快照点放在 `step "changelog"` **之前**（step 5.5），`git commit` 成功后立刻置 2。
+- 两个自己踩到的坑：
+  - 「只还原工作区」不够。`git add` 在 `git commit` 之前，commit 失败后改动留在暂存区，下一次发版的「工作区必须干净」检查（`release.sh` 第 110 行）会一直红，人看到的是「有个可疑的已暂存改动」而不是「上次发版失败过」。所以还原必须连带 `git reset`。
+  - 回滚器缺失时 `|| true` 会把回滚失败吞掉。探针第一次跑就撞上了（模拟环境里没有 `scripts/`）：日志只有一句 `No such file or directory`，文件一个都没还原，退出码照样是 5，从外部看和「回滚成功」一模一样。改成 `[ -f helper ]` 分支，缺失时内联 `cp` 兜底。
+- 验证：4 条新测试真跑 git 仓库（还原 + 暂存区清空 + `status` 干净、二次调用幂等、空/缺失快照 exit 5 且不动文件、脚本内「快照先于改文件 / 提交后关回滚 / 兜底分支存在」的顺序断言）；另写了探针脚本把 `release.sh` 里**真实的** `cleanup` 块抽出来执行，两条路径（有/无 helper）各 8 项断言全 PASS：exit 5、三文件还原、暂存区清空、`.release.lock` 释放、日志有 `ROLLBACK` 与 WARN。首版断言「快照先于 `step "changelog"`」是红的，暴露出快照其实写在 section 标题之后——顺序断言抓到了真问题，不是形式主义。
+- 测试：后端 **292**（288 + 4）/ 前端 **100** / `npm run build` 成功 / `npm run lint` 0 问题 / `npm run format:check` 通过。
+- 未提交 `dist/`：本轮没改 `src`/`web/src`，build 后 `dist/` 无 diff。
+- 下次可做：BACKLOG 里「`package-lock.json` 的 `packages[""].engines` 对齐」（现已确认上次重生成 lock 时已自动同步，下轮先核验再决定是否划掉）。
