@@ -67,50 +67,91 @@ export function createAgentConversation(ctx) {
     return structuredClone(await catalogPromise)
   }
   /**
-   * Execute a single tool directly through the DSH agent tool registry, without
-   * running a full LLM turn. Mounts the agent preset, restricts to exactly the
-   * named tool, then invokes `tools.execute()` — which still runs the complete
-   * approval + guard + dispatch pipeline (never bypassing policy). Returns the
-   * sanitized, JSON-serializable result.
+   * 每个实时语音会话复用一个工具 agent。
+   *
+   * 早期实现是「每次工具调用新建一个 agent 再销毁」，导致跨步骤的工具组合全部失效：
+   * `read` 之后 `edit` 会报 "file has not been read"，因为读过的状态属于上一个 agent。
+   * 复用同一个 agent 后，read→edit、grep→read、todo_write→… 才有意义。
    */
-  async function runTool(name, args, { workspace, signal }) {
+  const toolSessions = new Map() // key -> { handle, tools, agent, cwd, allow, chain, lastUsed }
+  const TOOL_SESSION_TTL_MS = 30 * 60 * 1000
+
+  function pruneToolSessions() {
+    const now = Date.now()
+    for (const [key, entry] of toolSessions) {
+      if (now - entry.lastUsed > TOOL_SESSION_TTL_MS) {
+        void release(entry.handle)
+        toolSessions.delete(key)
+      }
+    }
+  }
+
+  async function openToolSession({ cwd, allow }) {
+    const presets = service(ctx, 'agentPresets'), agents = service(ctx, 'agents')
+    const preset = await presets.resolve()
+    if (preset.broken) throw failure('DSH 默认 Agent 预设不可用，请检查预设配置。')
+    const selection = service(ctx, 'agentDefaultModel')?.currentSelection?.()
+    if (!selection?.provider || !selection?.model) throw failure('请先在 DSH 中配置默认对话模型。')
+    let capturedTools, capturedAgent
+    const handle = await agents.create({
+      sessionId: `voice-workbench-tool-${randomUUID()}`,
+      agentOptions: { provider: selection.provider, model: selection.model, maxTokens: 2048 },
+      meta: { cwd, agentPreset: preset.id },
+      setup: async (agentCtx, agent) => {
+        await presets.mount(agentCtx, preset.id)
+        agentCtx.tools.presentAs('native')
+        const known = new Set(agentCtx.tools.schemas(agent).map(tool => tool.name))
+        const allowed = allow.filter(name => known.has(name))
+        if (!allowed.length) throw failure('该工具已不可用，请刷新工具列表重新选择。', 400)
+        agentCtx.tools.restrict({ allow: allowed })
+        capturedTools = agentCtx.tools; capturedAgent = agent
+      },
+    })
+    handles.add(handle)
+    if (!capturedTools) throw failure('工具执行未就绪。', 502)
+    return { handle, tools: capturedTools, agent: capturedAgent, cwd, allow, chain: Promise.resolve(), lastUsed: Date.now() }
+  }
+
+  /**
+   * Execute a tool through the DSH agent tool registry without running an LLM turn.
+   * The mounted agent is reused per voice session and every call still goes through
+   * the full approval + guard + dispatch pipeline (policy is never bypassed).
+   */
+  async function runTool(name, args, { workspace, signal, sessionKey = 'default', allow = [] } = {}) {
     if (typeof name !== 'string' || !name || EXCLUDED.test(name)) throw failure('该工具不能用于实时语音会话。', 400)
     if (!available()) throw failure('当前 DSH 尚未提供原生工具服务；可先关闭工具继续聊天。')
     const cwd = await conversationWorkspace(workspace)
-    let handle
-    try {
-      const presets = service(ctx, 'agentPresets'), agents = service(ctx, 'agents')
-      const preset = await presets.resolve()
-      if (preset.broken) throw failure('DSH 默认 Agent 预设不可用，请检查预设配置。')
-      const selection = service(ctx, 'agentDefaultModel')?.currentSelection?.()
-      if (!selection?.provider || !selection?.model) throw failure('请先在 DSH 中配置默认对话模型。')
-      let capturedTools, capturedAgent
-      handle = await agents.create({
-        sessionId: `voice-workbench-tool-${randomUUID()}`, signal,
-        agentOptions: { provider: selection.provider, model: selection.model, maxTokens: 2048 },
-        meta: { cwd, agentPreset: preset.id },
-        setup: async (agentCtx, agent) => {
-          await presets.mount(agentCtx, preset.id)
-          agentCtx.tools.presentAs('native')
-          const known = new Set(agentCtx.tools.schemas(agent).map(tool => tool.name))
-          if (!known.has(name)) throw failure('该工具已不可用，请刷新工具列表重新选择。', 400)
-          agentCtx.tools.restrict({ allow: [name] })
-          capturedTools = agentCtx.tools; capturedAgent = agent
-        },
-      })
-      handles.add(handle)
-      if (!capturedTools) throw failure('工具执行未就绪。', 502)
-      // Execute the single tool through the full policy pipeline (approval + guards + dispatch).
-      const result = await capturedTools.execute({ name, arguments: args, agent: capturedAgent, signal })
-      if (result.isError) {
-        const message = result.error?.message || '工具执行失败'
-        throw failure(String(message).slice(0, 1000), 502)
-      }
-      return safeToolValue(result.value !== undefined ? result.value : result.content)
-    } finally {
-      await release(handle)
+    pruneToolSessions()
+
+    let entry = toolSessions.get(sessionKey)
+    if (!entry || entry.cwd !== cwd) {
+      if (entry) { void release(entry.handle); toolSessions.delete(sessionKey) }
+      entry = await openToolSession({ cwd, allow: allow.length ? allow : [name] })
+      toolSessions.set(sessionKey, entry)
     }
+    if (!entry.allow.includes(name)) throw failure('该工具未在本次会话中启用。', 400)
+
+    entry.lastUsed = Date.now()
+    const run = entry.chain.then(() => entry.tools.execute({ name, arguments: args, agent: entry.agent, signal }))
+    entry.chain = run.then(() => {}, () => {})
+    const result = await run
+    if (result?.isError) {
+      const message = result.error?.message || '工具执行失败'
+      throw failure(String(message).slice(0, 1000), 502)
+    }
+    return safeToolValue(result?.value !== undefined ? result.value : result?.content)
   }
-  async function dispose() { await Promise.allSettled([...handles].map(release)) }
-  return { catalog, runTool, dispose }
+
+  async function releaseToolSession(key) {
+    const entry = toolSessions.get(key)
+    if (!entry) return
+    toolSessions.delete(key)
+    await release(entry.handle)
+  }
+
+  async function dispose() {
+    toolSessions.clear()
+    await Promise.allSettled([...handles].map(release))
+  }
+  return { catalog, runTool, releaseToolSession, dispose }
 }

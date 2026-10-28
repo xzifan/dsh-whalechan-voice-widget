@@ -134,10 +134,11 @@ export function createService(config = {}, dependencies = {}) {
     return Object.fromEntries(await Promise.all(providers.map(async provider => [provider, await credentialStatus(provider)])))
   }
 
-  async function runSingleTool(name, args, workspace) {
+  async function runSingleTool(name, args, workspace, context = {}) {
     requireValue(typeof dependencies.runTool === 'function', '当前 DSH 尚未提供原生工具服务，可先关闭工具继续聊天。', 503)
     const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 60000); timer.unref?.()
-    try { return await dependencies.runTool(name, args, { workspace, signal: controller.signal }) }
+    // sessionKey 让同一场语音会话复用同一个 DSH 工具 agent，否则 read→edit 这类跨步骤组合会丢状态。
+    try { return await dependencies.runTool(name, args, { workspace, signal: controller.signal, sessionKey: context.sessionKey, allow: context.allow }) }
     finally { clearTimeout(timer) }
   }
 
@@ -418,7 +419,7 @@ export function createService(config = {}, dependencies = {}) {
       }
     }
     requireValue(allowedTools.has(name), '该工具未在本次会话中启用。', 400)
-    return runSingleTool(name, args, workspace)
+    return runSingleTool(name, args, workspace, { sessionKey: context?.sessionId, allow: [...allowedTools] })
   }
 
   async function handle(method, path, body = {}, externalSignal) {
@@ -590,6 +591,7 @@ export function createService(config = {}, dependencies = {}) {
       const record = realtimeSessions.get(sid)
       if (path === '/api/realtime/end') {
         if (record) { record.session.dispose(); record.closed = true; realtimeSessions.delete(sid) }
+        await dependencies.releaseToolSession?.(sid)
         return { body: { ok: true } }
       }
       requireValue(record, '实时语音会话不存在或已结束', 404)

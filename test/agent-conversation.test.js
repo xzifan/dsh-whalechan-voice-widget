@@ -56,8 +56,29 @@ test('runTool executes a single named tool through the full policy pipeline', as
   assert.deepEqual(result, { ok: true, echo: { file_path: '/a/b.txt' } })
   assert.deepEqual(state.restricted, { allow: ['read'] })
   assert.equal(state.executed.name, 'read')
+  assert.equal(state.created, 1)
+  await native.releaseToolSession('default')
   assert.equal(state.disposed, 1)
   await native.dispose()
+})
+
+test('one voice session reuses a single tool agent so read→edit keeps its state', async () => {
+  const { native, state } = harness()
+  state.schemas = ['read', 'edit', 'glob']
+  const signal = new AbortController().signal
+  const opts = { workspace: process.cwd(), signal, sessionKey: 's1', allow: ['read', 'edit'] }
+  await native.runTool('read', { file_path: '/x.txt' }, opts)
+  await native.runTool('edit', { file_path: '/x.txt', old_string: 'a', new_string: 'b' }, opts)
+  // 两次调用复用同一个 agent：少了这一步，edit 会报 "file has not been read"
+  assert.equal(state.created, 1)
+  assert.deepEqual(state.restricted, { allow: ['read', 'edit'] })
+  // allow 之外的工具直接拒绝，不会悄悄换一个 agent
+  await assert.rejects(native.runTool('glob', {}, opts), e => e.status === 400)
+  // 不同语音会话互不复用
+  await native.runTool('read', {}, { workspace: process.cwd(), signal, sessionKey: 's2', allow: ['read'] })
+  assert.equal(state.created, 2)
+  await native.dispose()
+  assert.equal(state.disposed, 2)
 })
 
 test('runTool rejects excluded and unknown tools before dispatch', async () => {
