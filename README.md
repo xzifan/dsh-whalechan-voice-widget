@@ -2,21 +2,15 @@
 
 可以直接对话、语音打断、现场设计音色的鲸鱼娘语音伴侣（DSH 插件）。包名 `dsh-voice-workbench`。
 
+![待机界面](docs/screenshots/hero.png)
+
 > 变更历史见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 架构
 
-单一链路：**Qwen-Audio-Realtime 是「大脑」，出声 TTS 是「可换的声音层」。**
+![架构图](docs/images/architecture.svg)
 
-```
-麦克风 PCM → Qwen-Audio-Realtime（理解 / 回复 / 打断 / 工具调用）
-                      │  回复文字
-                      ▼
-            出声 TTS（默认 Qwen TTS，可换其他 provider）
-                      │  合成音频
-                      ▼
-                  浏览器播放 → 恢复收听
-```
+单一链路：**Qwen-Audio-Realtime 是「大脑」，出声 TTS 是「可换的声音层」。** 上方实线是每次对话的音频路径，下方四块是所有链路共用的支撑面。
 
 - **当前大脑**：`qwen-audio-3.1-realtime-plus`。用一条 WebSocket 完成语音理解、回复、语义打断（`smart_turn`，说话即可打断、嗯啊不误触发）和 Function Calling 工具调用。
 - **未来实时音频模型**：声音设置的“实时音频模型”下拉框已展示 **火山引擎 · WorkInProgress**，目前禁用、不可选择。仅作为后续接入入口，尚未实现火山引擎连接或音频协议；可在高级设置中预存共享凭据，但不代表已满足实时语音产品的全部鉴权要求。
@@ -41,6 +35,18 @@ Realtime 用量归入对应模型回复，独立 TTS 用量归入合成记录；
 左侧「使用统计」汇总全部保留日志，展示记录总数、去重会话数、转录字数、输出语音时长、Tokens、失败记录及类型分布。可筛选最近 1 小时、24 小时、7 天或全部保留记录，并手动刷新。转录按 Unicode 字符计数（不含空白、含标点）；语音时长基于实际音频或明确的服务商时长，不代表实际播放时长。缺失时长与用量标记为未知，历史无法确定是否输出音频的回复不纳入时长覆盖数。统计受日志保留上限约束，不是无限期累计账单。
 
 左侧「会话记录」按最近消息时间列出语音会话，支持搜索消息内容或会话 ID。选择会话后按时间顺序展示用户转录、模型回复、工具调用与错误状态，并可从消息跳转日志审计。同一回复的 TTS 文本按关联标识去重；历史页仅展示仍在本地保留范围内的记录，旧会话可能不完整，不保存或回放原始音频。窄屏选择会话后进入消息页，可返回列表。
+
+## 界面
+
+| 声音设置：提供方、凭据状态、三语预设与高级参数 | 使用统计：记录数、会话数、转录字数、语音时长与用量分布 |
+| --- | --- |
+| ![声音设置](docs/screenshots/settings-voice.png) | ![使用统计](docs/screenshots/statistics.png) |
+
+| 日志审计：全量记录，可按时间/类型/状态/模型组合筛选 | 会话记录：左侧会话列表，右侧按时间展开转录、回复与工具调用 |
+| --- | --- |
+| ![日志审计](docs/screenshots/audit-log.png) | ![会话记录](docs/screenshots/history.png) |
+
+截图取自真实运行实例（本机 DSH Web），不是设计稿：统计页的 420 条记录、审计页的调用状态、会话页的工具卡片都来自实际使用数据。
 
 ## 音色
 
@@ -90,6 +96,12 @@ Breeze 提示词生成/复刻入口已停用，旧版的生成、保存、应用
 - 工具调用走 DSH 原生 `tools.execute()`，保留审批、guard 与文件沙箱。
 - 鲸鱼娘人格从 `~/.dsh/AGENTS.md` 的「身份/性格/禁忌/说话风格」四个 section 读取，凭据/路径/openid 一律不进提示词。
 
+## 自动化迭代与发布
+
+![自动化流水线](docs/images/pipeline.svg)
+
+迭代与发布是两条独立的流水线：迭代作业每小时推进一个 [BACKLOG](BACKLOG.md) 条目并提交代码，但不打包、不发版；发版由工作日的 patch 作业与周六的 minor 作业执行。发版本身是确定性脚本 `scripts/release.sh`——测试不过直接退出，装完用 `GET /api/voice-workbench/health` 断言版本与就绪状态，推送失败只排队不阻塞当班次。设计与取舍见 [docs/iteration-automation.md](docs/iteration-automation.md)。
+
 ## 构建与安装
 
 需要 Node.js 22+ 和 npm。
@@ -106,7 +118,7 @@ npm pack
 在 DSH 插件管理器安装生成的包：
 
 ```sh
-dsh plugin --profile web add /绝对路径/dsh-voice-workbench-0.18.2.tgz --ignore-scripts
+dsh plugin --profile web add /绝对路径/dsh-voice-workbench-<版本>.tgz --ignore-scripts
 ```
 
 本版针对 HTTP(S) DSH Web。它是 DSH 的插件，不是另起 GUI 服务器。

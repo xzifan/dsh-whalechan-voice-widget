@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="620" viewBox="0 0 1000 620" font-family="'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',system-ui,sans-serif">
+<defs>
+  <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#2b313c"/>
+  </marker>
+</defs>
+<rect width="1000" height="620" fill="#0b0d10"/>
+<text x="32" y="46" fill="#e6edf3" font-size="19" font-weight="700">自动化：迭代循环 + 定时发布</text>
+<text x="32" y="70" fill="#8b949e" font-size="12.5">每小时推进一个改进项；工作日 16:00 发 patch，周六 16:00 发 minor</text>
+<rect x="32" y="100" width="296" height="96" rx="10" fill="#141820" stroke="#6aa9ff" stroke-opacity="0.55" stroke-width="1.2"/>
+<text x="46" y="124" fill="#e6edf3" font-size="14.5" font-weight="600">J1 迭代循环</text>
+<text x="46" y="146" fill="#8b949e" font-size="11.8" font-family="'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',system-ui,sans-serif">17 * * * *（每小时）</text>
+<text x="46" y="163" fill="#8b949e" font-size="11.8" font-family="'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',system-ui,sans-serif">[plan] 条目先派只读子代理规划</text>
+<text x="46" y="180" fill="#8b949e" font-size="11.8" font-family="'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',system-ui,sans-serif">主代理决策 → 实现 → 测试 → 提交</text>
+<rect x="352" y="100" width="296" height="96" rx="10" fill="#141820" stroke="#7ee787" stroke-opacity="0.55" stroke-width="1.2"/>
+<text x="366" y="124" fill="#e6edf3" font-size="14.5" font-weight="600">J2 patch 发布</text>
+<text x="366" y="146" fill="#8b949e" font-size="11.8" font-family="'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',system-ui,sans-serif">0 16,18 * * 1-5</text>
+<text x="366" y="163" fill="#8b949e" font-size="11.8" font-family="'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',system-ui,sans-serif">18:00 是补跑位</text>
+<text x="366" y="180" fill="#8b949e" font-size="11.8" font-family="'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',system-ui,sans-serif">当天已发则跳过</text>
+<rect x="672" y="100" width="296" height="96" rx="10" fill="#141820" stroke="#7ee787" stroke-opacity="0.55" stroke-width="1.2"/>
+<text x="686" y="124" fill="#e6edf3" font-size="14.5" font-weight="600">J3 minor 发布</text>
+<text x="686" y="146" fill="#8b949e" font-size="11.8" font-family="'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',system-ui,sans-serif">0 16,18 * * 6</text>
+<text x="686" y="163" fill="#8b949e" font-size="11.8" font-family="'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',system-ui,sans-serif">全量 npm ci 回归</text>
+<text x="686" y="180" fill="#8b949e" font-size="11.8" font-family="'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',system-ui,sans-serif">额外建 GitHub Release</text>
+<rect x="32" y="232" width="296" height="78" rx="10" fill="#141820" stroke="#6aa9ff" stroke-opacity="0.55" stroke-width="1.2" stroke-dasharray="5 4"/>
+<text x="46" y="256" fill="#e6edf3" font-size="14.5" font-weight="600">BACKLOG → 代码</text>
+<text x="46" y="278" fill="#8b949e" font-size="11.8" font-family="'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',system-ui,sans-serif">单条 ≤200 行 · 测试不全绿则回滚</text>
+<text x="46" y="295" fill="#8b949e" font-size="11.8" font-family="'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',system-ui,sans-serif">git commit，不 bump 不部署</text>
+<path d="M 180 196 L 180 228" fill="none" stroke="#2b313c" stroke-width="1.4" marker-end="url(#a)"/>
+<text x="180.0" y="208.0" fill="#8b949e" font-size="11" text-anchor="middle">取一条</text>
+<rect x="352" y="232" width="616" height="78" rx="10" fill="#141820" stroke="#7ee787" stroke-opacity="0.55" stroke-width="1.2"/>
+<text x="366" y="256" fill="#e6edf3" font-size="14.5" font-weight="600">scripts/release.sh --deploy</text>
+<text x="366" y="278" fill="#8b949e" font-size="11.8" font-family="'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',system-ui,sans-serif">测试门禁 → CHANGELOG → bump → pack → 安装 → 重启 → 健康校验 → commit/tag/push</text>
+<path d="M 500 196 L 500 228" fill="none" stroke="#2b313c" stroke-width="1.4" marker-end="url(#a)"/>
+<text x="500.0" y="208.0" fill="#8b949e" font-size="11" text-anchor="middle">发版</text>
+<text x="32" y="352" fill="#8b949e" font-size="12" font-weight="600">闸门与失败处理</text>
+<rect x="32" y="368" width="296" height="92" rx="10" fill="#141820" stroke="#ff7b72" stroke-opacity="0.55" stroke-width="1.2"/>
+<text x="46" y="392" fill="#e6edf3" font-size="14.5" font-weight="600">测试红 → 不发版</text>
+<text x="46" y="414" fill="#8b949e" font-size="11.8" font-family="'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',system-ui,sans-serif">npm test ≥279 / test:web ≥100</text>
+<text x="46" y="431" fill="#8b949e" font-size="11.8" font-family="'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',system-ui,sans-serif">退出码 2，工作区不脏</text>
+<rect x="352" y="368" width="296" height="92" rx="10" fill="#141820" stroke="#f0b429" stroke-opacity="0.55" stroke-width="1.2"/>
+<text x="366" y="392" fill="#e6edf3" font-size="14.5" font-weight="600">推送失败 → 排队</text>
+<text x="366" y="414" fill="#8b949e" font-size="11.8" font-family="'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',system-ui,sans-serif">记 pending_push_version</text>
+<text x="366" y="431" fill="#8b949e" font-size="11.8" font-family="'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',system-ui,sans-serif">下一班次只补推，不重复 bump</text>
+<rect x="672" y="368" width="296" height="92" rx="10" fill="#141820" stroke="#f0b429" stroke-opacity="0.55" stroke-width="1.2"/>
+<text x="686" y="392" fill="#e6edf3" font-size="14.5" font-weight="600">通话中 → 推迟</text>
+<text x="686" y="414" fill="#8b949e" font-size="11.8" font-family="'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',system-ui,sans-serif">审计 10 分钟内被写过</text>
+<text x="686" y="431" fill="#8b949e" font-size="11.8" font-family="'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',system-ui,sans-serif">或 .work.lock 存在（迭代在改）</text>
+<text x="32" y="478" fill="#8b949e" font-size="12" font-weight="600">产物与结果</text>
+<rect x="32" y="492" width="296" height="92" rx="10" fill="#141820" stroke="#8b949e" stroke-opacity="0.55" stroke-width="1.2"/>
+<text x="46" y="516" fill="#e6edf3" font-size="14.5" font-weight="600">state / 日志</text>
+<text x="46" y="538" fill="#8b949e" font-size="11.8" font-family="'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',system-ui,sans-serif">.release-state.json</text>
+<text x="46" y="555" fill="#8b949e" font-size="11.8" font-family="'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',system-ui,sans-serif">.release-logs/&lt;ts&gt;-&lt;slot&gt;.log</text>
+<text x="46" y="572" fill="#8b949e" font-size="11.8" font-family="'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',system-ui,sans-serif">.work.lock · .release.lock</text>
+<rect x="352" y="492" width="296" height="92" rx="10" fill="#141820" stroke="#7ee787" stroke-opacity="0.55" stroke-width="1.2"/>
+<text x="366" y="516" fill="#e6edf3" font-size="14.5" font-weight="600">健康校验</text>
+<text x="366" y="538" fill="#8b949e" font-size="11.8" font-family="'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',system-ui,sans-serif">GET /api/voice-workbench/health</text>
+<text x="366" y="555" fill="#8b949e" font-size="11.8" font-family="'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',system-ui,sans-serif">ok + version + TTS 就绪</text>
+<rect x="672" y="492" width="296" height="92" rx="10" fill="#141820" stroke="#ff9ecb" stroke-opacity="0.55" stroke-width="1.2"/>
+<text x="686" y="516" fill="#e6edf3" font-size="14.5" font-weight="600">报告</text>
+<text x="686" y="538" fill="#8b949e" font-size="11.8" font-family="'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',system-ui,sans-serif">Feishu：版本 / 测试数 / 部署结果</text>
+<text x="686" y="555" fill="#8b949e" font-size="11.8" font-family="'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',system-ui,sans-serif">失败附用例名或日志尾部</text>
+<path d="M 180 310 L 180 364" fill="none" stroke="#2b313c" stroke-width="1.4" stroke-dasharray="4 4" marker-end="url(#a)"/>
+<path d="M 500 310 L 500 364" fill="none" stroke="#2b313c" stroke-width="1.4" stroke-dasharray="4 4" marker-end="url(#a)"/>
+</svg>
