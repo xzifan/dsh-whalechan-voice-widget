@@ -160,14 +160,25 @@ if [ "$CHANGED" -eq 0 ] && [ "$FORCE" -eq 0 ]; then
   exit 0
 fi
 
-# ---- 3. dsh 忙则不重启（正在通话时打断代价高，留给下一小时） ----
-AUDIT="$HOME/.dsh/storages/voice-workbench-preview/voice-audit.jsonl"
-if [ "$DEPLOY" -eq 1 ] && [ "$DRY" -eq 0 ] && [ -f "$AUDIT" ]; then
-  IDLE=$(( $(date +%s) - $(stat -f %m "$AUDIT") ))
-  DSH_PID="$(pgrep -f 'dsh web' | head -1 || true)"
-  if [ -n "$DSH_PID" ] && [ "$IDLE" -lt 600 ]; then
-    say "dsh activity ${IDLE}s ago (voice session likely live) — postponing restart"
-    echo "{\"ok\":true,\"skipped\":\"dsh-busy\",\"retry_after_minutes\":15}"
+# ---- 3. dsh 忙则不重启 ----
+# 精确判断：/health 直接报进行中的实时会话数。早期版本用审计文件 mtime，
+# 结果刚跑完一轮测试/探针就会误判「通话中」而无限推迟。
+if [ "$DEPLOY" -eq 1 ] && [ "$DRY" -eq 0 ]; then
+  HL="$(ls -t "$HOME"/.dsh/logs/web-*.log 2>/dev/null | head -1)"
+  HTOKEN="$([ -n "$HL" ] && grep -ao 'token=[A-Za-z0-9_-]*' "$HL" | head -1)"
+  ACTIVE=""
+  if [ -n "$HTOKEN" ] && curl -fsS -o /dev/null "http://127.0.0.1:3080/" 2>/dev/null; then
+    HJ="$(mktemp)"; rm -f "$HJ"
+    curl -s -c "$HJ" -b "$HJ" -o /dev/null "http://127.0.0.1:3080/?$HTOKEN" 2>/dev/null
+    ACTIVE="$(curl -s -b "$HJ" "http://127.0.0.1:3080/api/voice-workbench/health" 2>/dev/null \
+      | python3 -c 'import json,sys
+try: print(json.load(sys.stdin).get("realtime",{}).get("activeSessions",0))
+except Exception: print("")' 2>/dev/null)"
+    rm -f "$HJ"
+  fi
+  if [ -n "$ACTIVE" ] && [ "$ACTIVE" != "0" ]; then
+    say "dsh has $ACTIVE active voice session(s) — postponing restart"
+    echo "{\"ok\":true,\"skipped\":\"dsh-busy\",\"activeSessions\":$ACTIVE}"
     exit 3
   fi
 fi
