@@ -250,3 +250,15 @@
 - 未提交 `dist/`：`web/src` 有改动，build 后 bundle hash 变了（`index-BjJ6wBA5.js` → `index-BjUZrPR-.js`），按仓库惯例构建产物随发版重建，本轮 `git checkout -- dist` 还原。
 - 下次可做：把上表那 13 条 compiler 规则（`set-state-in-effect` ×11、`refs`、`purity`）单独立一条「effect 结构重构」的 `[plan]` 条目——它是这批 error 的唯一来源，且需要逐个确认「该 state 是否本该是派生值」。另外 3 条已排队条目（全仓 Prettier 重排、husky+lint-staged、`prefer-const` 收紧）本轮未动。
 
+
+## 2026-10-28 · Prettier 全仓迁移 S1：账本归一 + `web/index.html`（J1 迭代班次）
+
+- 条目：P1「全仓 Prettier 重排（116 文件 / 约 22k 行 churn）」。**只做了第一步 S1**，全量按规划拆成 S0–S8 排进 BACKLOG，本轮没碰其它条目。
+- 规划子代理：**用了**（只读）。理由：条目跨 124 个文件、要动 `dist`/覆盖率/账本语义，属「3 个以上文件 + 需要顺序决策」，先量后动比边做边撞便宜。子代理把整树复制到 scratch 后 `--ignore-path /dev/null --write` + `git diff --numstat` 出真数字，并跑通了「格式化后 293 条测试还绿不绿」——这一步直接决定了本轮能做多少。
+- **规划挖出的真问题（不是复述）**：账本里的目录行都没有前导斜杠，gitignore 语义下 `src/` 会同时命中 `web/src/`。照原条目「逐目录删行 + npm run format」执行，删掉 `src/` 一行就是 **61 文件 / 12177 行**，删 `lib/` 会连带 `web/src/lib/`（26 文件 / 3102 行）——增量迁移根本不可控，一次就爆预算 60 倍。
+- S1 做的事：①账本目录行锚定成 `/src/` `/lib/` `/web/src/` `/test/`（前导斜杠 = 只匹配仓库根）；②删掉三条 0 文件空操作——`scripts/` 只有 .sh/.py、Prettier 无 parser，`docs/` 只有 md 已被 `*.md` 覆盖，`web/src/` 原被未锚定的 `src/` 覆盖；③放开并格式化 `web/index.html`（单行 HTML 摊成 13 行，`+12/−1`）。`.prettierignore` `+9/−7`，合计 29 行，纯配置 + 纯格式，零行为变化。
+- 未做的事（有意）：`src/` `test/` `web/src/` `lib/` 一行账本都没动。大目录需要「每轮 1 个文件」的粒度（37 个文件单文件就 >200 行，12 个连单个 hunk 都 >200，`--range-start/--range-end` 分块实测对 CSS 无效），这属流程决策，已挂 BACKLOG 的「需要产品决策」。
+- 顺手核实的两条副作用（都靠规划子代理实测，不是推断）：①格式化 `src/` 会让后端行覆盖率从 **97.79 掉到 95.27**（V8 按行归因，一行摊多行后续行记未覆盖），直接击穿 `--test-coverage-lines=96`，S7 必须同 commit 下调到 93.5；②`npm run build` 会改 4 个**被跟踪**的 `dist/` 文件（`dist/` 只在 `.prettierignore`、不在 `.gitignore`），本轮 build 后已 `git checkout -- dist/` 并删掉新 hash 产物 `index-BjUZrPR-.js`，构建产物未进提交。
+- 测试：后端 **293** / 前端 **100** / `npm run lint` 0 问题 / `npm run format:check` 通过 / `npm run build` 成功。
+- 计划文档已落盘：`docs/prettier-migration-plan.md`（churn 表、分批表、S0 预修清单、覆盖率数学、`.git-blame-ignore-revs` 做法、每步验收命令）。
+- 下次可做：BACKLOG 顶上的「Prettier 迁移 S0 预修」——4 文件约 20 行，修完 S3（`lib/client.js`）和 S7 才不会红；下一步记得先 `npm test` 确认 293 基线。

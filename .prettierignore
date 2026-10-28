@@ -11,11 +11,13 @@ web/package-lock.json
 
 # 尚未迁移到 Prettier 的范围 = 迁移账本：迁完一段删一行，删光即全仓对齐。
 # 现在 CI 只校验 json / yml 与少量已对齐的配置。
-src/
-lib/
-test/
-web/src/
-web/index.html
-scripts/
+#
+# 账本里的目录行**必须带前导斜杠**锚定到仓库根：gitignore 语义下不带斜杠的 `src/`
+# 会同时命中 `web/src/`，删一行就一次放出 61 个文件 / 约 12k 行，没法增量迁移。
+# `docs/` 与 `scripts/` 不列在这里：前者只有 .md（已被 `*.md` 覆盖），后者只有
+# .sh/.py，Prettier 没有对应 parser，列进来是 0 文件空操作。
+/src/
+/lib/
+/web/src/
+/test/
 *.md
-docs/
