@@ -9,12 +9,12 @@
 - [ ] 把根目录 36 个历史 tgz 移到 `artifacts/releases/`，删除未跟踪的 `package/` 目录
 - [ ] 修正 README：安装示例 `0.18.2` → `<最新版本>`；Node 版本三处统一（engines / README / CI matrix）
 - [ ] CI 增加版本一致性检查：package.json 版本 == CHANGELOG 顶部 == 最新 tag
-- [ ] 校验部署一致性：对比 `~/.dsh/profiles/web/node_modules/dsh-voice-workbench/package.json` 的版本与源码版本，把差异写进 WORKLOG（对齐由发布作业自动完成）
+- [x] 校验部署一致性：对比 `~/.dsh/profiles/web/node_modules/dsh-voice-workbench/package.json` 的版本与源码版本，把差异写进 WORKLOG（2026-10-28：演练中完成，线上 0.21.0 → 0.6.1，现与源码一致）
 
 ## P1 · 自动验证能力
 
 - [ ] playwright + chromium 进 CI，先跑 `test/browser-smoke.py`（假麦克风已就绪，本地目前没装 playwright）
-- [ ] 新增 `GET /api/voice-workbench/health`，返回版本 / 工具数 / TTS provider / realtime 状态，作为发布后验证入口
+- [x] 新增 `GET /api/voice-workbench/health`，返回版本 / 工具数 / TTS provider / realtime 状态，作为发布后验证入口（2026-10-28 完成，已接入 `release.sh` 的部署校验）
 - [ ] 覆盖率：`node --test --experimental-test-coverage`，把当前值设为 CI 下限
 - [ ] ESLint(flat) + Prettier 接入 CI 与 `prepack`
 - [ ] 夜间真实链路冒烟（百炼 TTS 一句 + Realtime 握手 5s），限流、失败只告警不阻塞发布

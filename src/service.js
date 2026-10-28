@@ -2,6 +2,7 @@ import { BREEZE_PRESET_VOICES, resolveBreezeLanguage, normalizeBreezeProfile } f
 import { createVoicePresets } from './voice-presets.js'
 import { createVoiceCandidateState, spokenText } from './voice-candidate.js'
 import { readFile, mkdir, writeFile, rename, stat } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { getTtsProfile } from './tts-config.js'
@@ -28,11 +29,17 @@ export class RequestError extends Error { constructor(message, status = 400, fie
 function requireValue(ok, message, status = 400) { if (!ok) throw new RequestError(message, status) }
 function id(value) { requireValue(typeof value === 'string' && /^[\w-]{1,100}$/.test(value), '会话或请求标识无效'); return value }
 
+const PLUGIN_VERSION = (() => {
+  try { return JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version || 'unknown' }
+  catch { return 'unknown' }
+})()
+
 export function createService(config = {}, dependencies = {}) {
   const fetcher = dependencies.fetch || globalThis.fetch
   const stateDir = config.stateDir ? config.stateDir.replace(/^~(?=\/)/, homedir()) : join(homedir(), '.dsh', 'storages', 'voice-workbench')
   const settingsPath = join(stateDir, 'settings.json')
   const audit = createAuditLog({ path: join(stateDir, 'voice-audit.jsonl') })
+  const startedAt = Date.now()
   let settings = structuredClone(defaults), disposed = false
   const realtimeSessions = new Map() // sessionId -> {session, events, cursor, closed, key}
 
@@ -434,6 +441,24 @@ export function createService(config = {}, dependencies = {}) {
         await commitSettings(checked.next, externalSignal)
         return { body: { settings: structuredClone(settings), voicePresets: voicePresets.snapshot(), breezeVoicePresets: [] } }
       })
+    }
+    if (method === 'GET' && path === '/api/health') {
+      // 轻量自检：只读本地状态，不发起上游请求、不返回凭据值。
+      const providers = await credentialStatuses()
+      const { provider, model, voice } = sanitizeAuditRecord({ kind: 'synthesis', ...voiceProfile(settings) })
+      const ttsReady = provider === 'qwen' ? !!providers.bailian?.ready
+        : provider === 'breeze' ? !!providers.breeze?.ready
+        : !!getTtsProfile({ tts_provider: provider, tts_profiles: settings.tts_profiles })
+      return { body: {
+        ok: !disposed,
+        version: PLUGIN_VERSION,
+        uptimeMs: Date.now() - startedAt,
+        tts: { provider, model, voice, ready: ttsReady },
+        realtime: { activeSessions: realtimeSessions.size },
+        tools: { enabled: Array.isArray(settings.enabled_tools) ? settings.enabled_tools.length : 0 },
+        credentials: { bailian: !!providers.bailian?.ready, breeze: !!providers.breeze?.ready },
+        capabilities: { ...(dependencies.status?.() || {}) },
+      } }
     }
     requireValue(method === 'POST', '不支持的请求方法', 405)
     if (path === '/api/credentials/status') {

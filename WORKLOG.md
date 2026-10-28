@@ -2,6 +2,28 @@
 
 本轮工作的技术记录：做了什么、怎么验证的、还欠什么。发布记录由 `scripts/release.sh` 自动追加。
 
+## 2026-10-28 · 今日优化：健康检查端点 `/api/voice-workbench/health`
+
+**为什么是它**：发布流水线现在只能靠"config 接口返回 200"判断插件挂载，这既不能确认版本，也看不到 TTS 就绪状态和进行中的实时会话。加一个只读自检端点，把"部署成功"从主观判断变成可断言的事实，同时给运维留一个标准探针。
+
+**实现**（`src/service.js` + `src/index.js`）
+
+- 新增 `GET /api/health`，返回 `ok / version / uptimeMs / tts{provider,model,voice,ready} / realtime.activeSessions / tools.enabled / credentials{bailian,breeze} / capabilities`。
+- 只读本地状态：不发起任何上游请求，不返回凭据值；`version` 从 `package.json` 读取，避免和实际安装版本漂移。
+- 走宿主的 `connection.fetch.register`，与其它接口同一套鉴权和 no-store 缓存策略；POST 到该路径仍按既有约定返回 404（不新增语义）。
+- `release.sh` 的部署校验换成调用 `/health` 并断言 `ok === true` 且 `version === 新版本`，失败即视为部署失败（此前只看 200）。
+
+**验证**
+
+- 后端 279 项全绿（新增 10 条断言：方法、状态码、版本一致性、字段类型、无密钥泄露、清理计数 23→24）。
+- 前端 100 项全绿；`vite build` 通过。
+- 真实端点尚未在运行实例上调用——它随下一个补丁版本部署。
+
+**还欠什么**
+
+- 该端点在线上实例可用要等下一次发布（今天已有 0.6.1，按"每工作日一个 patch"的策略顺延到明天 16:00，除非用 `--force` 提前发一次）。
+- 推送仍排队：`pending_push_version=0.6.1`，网络恢复后自动补推 main + 所有 tag。
+
 ## 2026-10-28 · 迭代自动化落地（分析 + 发布流水线）
 
 **结论**：项目功能层已经完整（Realtime 大脑 + 可换 TTS + 音色设计 + 审计/统计），短板在发布工程：源码 0.6.0、dsh 里装 0.21.0、仓库 0 个 tag、36 个历史 tgz。自动发版前必须先建立可追溯基线。

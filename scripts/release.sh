@@ -64,7 +64,7 @@ except Exception: print("")' "$STATE" 2>/dev/null)"
 fi
 if [ -n "$PENDING_PUSH" ] && [ "$FORCE" -eq 0 ]; then
   step "retry pending push v$PENDING_PUSH"
-  if git push origin main >>"$LOG" 2>&1 && git push origin "v$PENDING_PUSH" >>"$LOG" 2>&1; then
+  if git push origin main >>"$LOG" 2>&1 && git push origin --tags >>"$LOG" 2>&1; then
     python3 -c 'import json,sys,datetime
 p=sys.argv[1]; st=json.load(open(p)); st.pop("pending_push_version",None)
 st["pushed"]=True; st["updated_at"]=datetime.datetime.now().astimezone().isoformat(timespec="seconds")
@@ -73,9 +73,8 @@ json.dump(st,open(p,"w"),ensure_ascii=False,indent=1)' "$STATE"
     echo "{\"ok\":true,\"version\":\"$PENDING_PUSH\",\"pushed\":1,\"retried_push\":true}"
     exit 0
   fi
-  say "push still failing (network or credentials) — retry on the next slot"
-  echo "{\"ok\":false,\"version\":\"$PENDING_PUSH\",\"pending_push\":true}"
-  exit 6
+  # 推送不通不应该挡住当天的发布：继续走正常流程，把新版本记成新的 pending
+  say "push still failing (network or credentials) — 继续本班次发版，推送保持排队"
 fi
 
 # ---- 0. 幂等：今天同一 slot 已发布过就不再重复 ----
@@ -234,11 +233,20 @@ if [ "$DEPLOY" -eq 1 ]; then
   [ "$INST" = "$NEXT_VERSION" ] || die "installed version $INST != $NEXT_VERSION"
   JAR="$(mktemp)"; rm -f "$JAR"
   curl -s -c "$JAR" -b "$JAR" -o /dev/null "http://127.0.0.1:3080/?$TOKEN"
-  API_CODE="$(curl -s -b "$JAR" -o "$LOGDIR/api-check.json" -w '%{http_code}' "http://127.0.0.1:3080/api/voice-workbench/config")"
+  API_CODE="$(curl -s -b "$JAR" -o "$LOGDIR/health-check.json" -w '%{http_code}' "http://127.0.0.1:3080/api/voice-workbench/health")"
   rm -f "$JAR"
-  [ "$API_CODE" = "200" ] || die "voice-workbench config API returned $API_CODE (plugin not mounted?)"
-  grep -q '"settings"' "$LOGDIR/api-check.json" || die "config API response missing settings"
-  say "installed version: $INST | config API: 200 ok"
+  [ "$API_CODE" = "200" ] || die "health API returned $API_CODE (plugin not mounted?)"
+  HEALTH="$(python3 - "$LOGDIR/health-check.json" "$NEXT_VERSION" <<'PY'
+import json, sys
+try: d = json.load(open(sys.argv[1]))
+except Exception: print("unreadable"); sys.exit(1)
+if d.get("ok") is not True: print("ok!=true"); sys.exit(1)
+if d.get("version") != sys.argv[2]: print(f"version {d.get('version')}"); sys.exit(1)
+tts = d.get("tts") or {}
+print(f"version={d['version']} tts={tts.get('provider')} ready={tts.get('ready')} sessions={d.get('realtime',{}).get('activeSessions')} tools={d.get('tools',{}).get('enabled')}")
+PY
+)" || die "health check failed: $HEALTH"
+  say "installed version: $INST | health: $HEALTH"
 fi
 
 # ---- 9. 提交 + tag + push ----
