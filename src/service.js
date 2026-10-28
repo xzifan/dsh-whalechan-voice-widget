@@ -1,4 +1,4 @@
-import { BREEZE_PRESET_VOICES, resolveBreezeLanguage, normalizeBreezeProfile } from './breeze-voices.js'
+import { BREEZE_PRESET_VOICES, BREEZE_ZH_VOICES, resolveBreezeLanguage, normalizeBreezeProfile } from './breeze-voices.js'
 import { createVoicePresets } from './voice-presets.js'
 import { createVoiceCandidateState, spokenText } from './voice-candidate.js'
 import { readFile, mkdir, writeFile, rename, stat } from 'node:fs/promises'
@@ -171,7 +171,10 @@ export function createService(config = {}, dependencies = {}) {
 
   // Breeze design is paused. Its old persisted presets are neither read nor deleted.
   const breezeDisabled = 'Breeze 暂不支持提示词生成/复刻，请使用预设音色'
-  const breezePresets = () => Object.entries(BREEZE_PRESET_VOICES).map(([language, voiceId]) => ({ id: language, language, voiceId, name: {zh:'中文',ja:'日语',en:'英语'}[language] }))
+  const breezePresets = () => Object.entries(BREEZE_PRESET_VOICES).map(([language, voiceId]) => ({
+    id: language, language, voiceId, name: {zh:'中文',ja:'日语',en:'英语'}[language],
+    ...(language === 'zh' ? { options: BREEZE_ZH_VOICES.map(v => ({ ...v })) } : {}),
+  }))
 
   // All settings writers share a queue; callbacks merge against the latest state.
   function persistSettings(patch, signal) {

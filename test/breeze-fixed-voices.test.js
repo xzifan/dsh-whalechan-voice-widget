@@ -4,7 +4,7 @@ import {mkdtemp,rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {createService} from '../src/service.js'
-import {BREEZE_PRESET_VOICES,resolveBreezeLanguage,normalizeBreezeProfile} from '../src/breeze-voices.js'
+import {BREEZE_PRESET_VOICES,BREEZE_ZH_VOICES,resolveBreezeLanguage,normalizeBreezeProfile} from '../src/breeze-voices.js'
 import {sanitizeAuditRecord} from '../src/audit-log.js'
 
 const audio=Buffer.from('ID3fixed-voice-test')
@@ -47,6 +47,12 @@ test('Breeze language detection honors supported explicit languages and determin
  assert.equal(resolveBreezeLanguage('???','','invalid'),'zh')
  assert.equal(resolveBreezeLanguage('hello','constructor'),'en')
  assert.equal(normalizeBreezeProfile({voice:'custom',model:'retained'}).voice,BREEZE_PRESET_VOICES.zh)
+ // 中文默认是机灵版，可在设置里切到迷糊版；日语/英语不受影响。
+ assert.equal(BREEZE_PRESET_VOICES.zh,BREEZE_ZH_VOICES[0].voiceId)
+ assert.equal(normalizeBreezeProfile({zhVoice:BREEZE_ZH_VOICES[1].voiceId},{text:'你好'}).voice,BREEZE_ZH_VOICES[1].voiceId)
+ assert.equal(normalizeBreezeProfile({zhVoice:BREEZE_ZH_VOICES[1].voiceId},{text:'こんにちは'}).voice,BREEZE_PRESET_VOICES.ja)
+ assert.equal(normalizeBreezeProfile({zhVoice:'voc_not_a_real_voice'},{text:'你好'}).voice,BREEZE_PRESET_VOICES.zh)
+ assert.equal(normalizeBreezeProfile({zhVoice:'voc_not_a_real_voice'},{text:'你好'}).zhVoice,undefined)
  assert.deepEqual(normalizeBreezeProfile({voice:'custom',model:'retained'},{text:'こんにちは'}),{voice:BREEZE_PRESET_VOICES.ja,model:'retained'})
 })
 
