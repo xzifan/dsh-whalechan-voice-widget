@@ -227,6 +227,26 @@ say "packed: $(basename "$TGZ") ($(du -h "$TGZ" | cut -f1))"
 # ---- 8. 部署到 dsh web（可选） ----
 if [ "$DEPLOY" -eq 1 ]; then
   step "install into dsh web profile"
+  # pnpm 更新依赖时会先解析「已安装的旧依赖」；若旧 tgz 已被归档到 artifacts/，
+  # 它会 ENOENT 直接失败。这里对缺失的旧包补一个符号链接，再装新包。
+  PREV_TGZ="$(python3 - "$HOME/.dsh/profiles/web/package.json" <<'PY'
+import json, sys
+try:
+    dep = (json.load(open(sys.argv[1])).get("dependencies") or {}).get("dsh-voice-workbench", "")
+except Exception:
+    dep = ""
+print(dep[5:] if dep.startswith("file:") else "")
+PY
+)"
+  if [ -n "$PREV_TGZ" ] && [ ! -e "$PREV_TGZ" ]; then
+    BASE="$(basename "$PREV_TGZ")"
+    if [ -e "$RELDIR/$BASE" ]; then
+      ln -sf "$RELDIR/$BASE" "$PREV_TGZ"
+      say "re-linked previously installed $BASE from artifacts/releases"
+    else
+      say "WARN: previous install $BASE is gone and not in artifacts/releases"
+    fi
+  fi
   dsh plugin --profile web add "$TGZ" --ignore-scripts >>"$LOG" 2>&1 || die "dsh plugin add failed"
 
   step "restart dsh web"
