@@ -78,6 +78,22 @@
 - P0 剩余三项在 BACKLOG 顶部，由 J1 下一轮开始做。
 - `/health` 已实现并接入发布校验，但要等下一个补丁版本（明天 16:00 的 0.6.2）才在运行实例上生效。
 
+## 2026-10-28 19:15 · 发布 0.6.2（首个带健康检查的版本）
+
+**为什么今天发了两次**：09:24 的 0.6.1 是部署演练转正的，占掉了当天的策略名额；之后迭代作业又落了 6 项（`/health`、归档、Node 统一、覆盖率/lint/e2e 门禁）。按「有内容才发」的原则手动 `--force` 发了 0.6.2，把 `/health` 推上线，让后续发布有可断言的健康校验。
+
+**结果**：`installed version: 0.6.2 | health: version=0.6.2 tts=breeze ready=True sessions=0 tools=24`，tag `v0.6.2` 已推，`main` 与 origin 同步。
+
+**发布过程中撞到并修掉的两个真问题**
+
+1. **归档把已安装的依赖弄丢**：迭代作业把根目录的 `0.6.1.tgz` 移进 `artifacts/`，而 dsh profile 里的依赖仍指向旧路径；pnpm 在解析旧依赖时 `ENOENT`，安装直接失败。修法：`release.sh` 安装前读取 profile 当前的依赖路径，缺失时从 `artifacts/releases/` 补一个符号链接。这类失败只在「归档 + 发布」同一天发生时出现，靠单测抓不到。
+2. **GET 路由声明 streaming 会被宿主 400**：`/health` 注册时沿用了 POST 的 `requestBody:'streaming'`，请求在到达插件前就被宿主拒掉（`config` 一直是 `buffered`，所以从没暴露）。改成 GET 走 `buffered`，并在 `adapter.test.js` 里断言 `requestBody==='buffered'` 锁住。这个问题只会在真实宿主里出现，本地单测直接调 `service.handle` 是看不到的——是发布流程的健康校验把它逼出来的。
+
+**还欠什么**
+
+- `release.sh` 在中途失败时会留下「版本已 bump、CHANGELOG 已改写」的半成品状态（这次是版本一致性测试帮我拦住的）。应该加失败回滚：trap 里 `git checkout -- package.json package-lock.json` 并还原 CHANGELOG 的 `[Unreleased]`。已加进 BACKLOG。
+- GitHub Actions 仍因账单无法启动，CI 已改为手动触发，公开仓库不再显示红叉。
+
 ## 2026-10-28 · 规划子代理首跑：拆 service.js 的计划
 
 - 触发方式：主会话 `delegate_task`，单任务、只读 goal（写死禁止改文件与 git 写操作）。

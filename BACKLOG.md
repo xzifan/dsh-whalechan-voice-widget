@@ -13,6 +13,10 @@
 - [x] CI 增加版本一致性检查：package.json 版本 == CHANGELOG 顶部 == 最新 tag（2026-10-28：新增 `test/version-consistency.test.js`，随 `npm test` 跑 4 条断言——semver 合法；CHANGELOG 顶部版本段 == package.json 且带日期、版本段严格递减；`package-lock.json` 顶层与 `packages[""].version` 同步；最新 `v*` tag 不得高于 package.json，相等时 tag 名必须是 `v<version>`。**没有**用硬等式「版本 == 最新 tag」：`release.sh` 是先 commit、后 tag、再分两次 push，硬等式会打红合法的「已提交未推 tag」中间态。CI checkout 加 `fetch-depth: 0`（否则浅克隆无 tag 会静默跳过），并在 `CI` 环境读不到 tag 时反向失败。反向验证：CHANGELOG 顶部改 0.7.0、package.json 回退 0.6.0 都能打红；后端 284 / 前端 100 全绿）
 - [x] 校验部署一致性：对比 `~/.dsh/profiles/web/node_modules/dsh-voice-workbench/package.json` 的版本与源码版本，把差异写进 WORKLOG（2026-10-28：演练中完成，线上 0.21.0 → 0.6.1，现与源码一致）
 
+## P0 · 发布健壮性
+
+- [ ] `release.sh` 失败回滚：中途失败（install/restart/health 断言）时把 package.json、package-lock.json、CHANGELOG 的 `[Unreleased]` 段还原，避免留下半成品状态
+
 ## P1 · 自动验证能力
 
 - [x] playwright + chromium 进 CI，先跑 `test/browser-smoke.py`（假麦克风已就绪，本地目前没装 playwright）（2026-10-28：CI 新增独立 `browser-smoke` job——`setup-python@v5` + `playwright install --with-deps chromium`，root/web 装依赖 → `npm run build` → `npm run test:browser`；`package.json` 加 `test:browser` 脚本。**脚本本身已随 UI 重构失效**：断言里的「小鲸鱼娘在这里。」「音色三角配比」「试听示例文本」「等待时说一句」和 `/debug`、`/tune` 接口在当前 `web/src` 里都不存在（本地实测首个断言就 10s 超时），因此按现 UI 重写为挂载冒烟：宿主页面挂真实 `lib/client.js` → iframe 载 `dist/web` → 侧边栏导航 → 设置保存回环（PUT 断言 system_prompt/enabled_tools/workspace）→ 实时会话（合成麦克风 + 脚本化 `/realtime/events` 含工具时间线）→ 结束并释放麦克风 → 110/390px 无横向溢出。本地已装 playwright 1.60 + chromium headless shell 实测 PASS）
