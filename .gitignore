@@ -4,6 +4,10 @@ web/node_modules/
 .env
 *.env
 
+# local artifacts (voice samples, archived tarballs, debug dumps) - never committed
+/artifacts/
+/package/
+
 .DS_Store
 .tools/
 .npm-cache-statistics/

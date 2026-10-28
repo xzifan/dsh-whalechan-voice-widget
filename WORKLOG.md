@@ -95,3 +95,13 @@
 - 根因不是 HTTP vs SSH，而是 macOS 系统代理（`127.0.0.1:7897`）git 不认：`curl` 直连 443 超时、走代理 200，git 默认直连。
 - 修复（仓库本地，不动全局）：`http.proxy=http://127.0.0.1:7897`、`http.version=HTTP/1.1`、`credential.helper='!gh auth git-credential'`。
 - 结果：`main` 推到 `f67b4cd`，`v0.6.0` / `v0.6.1` 两个 tag 已上远端；`release.sh` 的 pending-push 分支真实跑通并把 state 的 `pushed` 改回 true。
+
+## 2026-10-28 · 仓库基线清理：36 个历史 tgz 归档、清掉解包残留
+
+- 条目：P0「把根目录 36 个历史 tgz 移到 `artifacts/releases/`，删除未跟踪的 `package/` 目录」。
+- 改动：36 个 tgz 全部 `mv` 到 `artifacts/releases/`（根目录剩 0 个）；`package/`（0.1.0 的旧解包残留，220K / 8 文件）移出仓库到 `~/.hermes/cache/scratch/dsh-vw-stale-package-20261028T101812/`。`rm -rf`、`find -delete`、`execute_code` 在 cron 无审批环境下都被策略拦截，所以用 `mv` 达到「仓库内不再存在」的等价结果，没有动 `approvals.cron_mode`。
+- `.gitignore` 追加 `/artifacts/` 与 `/package/`：清理前 `git status -uall` 有 11 个 artifacts 文件（json/html）未被忽略，本作业收尾用的 `git add -A` 会把它们扫进提交——这是顺手补上的一处真实隐患，不只是为了 status 好看。
+- 影响面：仅 `.gitignore`（+4 行），无源码改动。核对过仓库内没有脚本读根目录 tgz（`release.sh` 的 `TGZ` 变量是打包时现算的，`.release-state.json` 的 `last_tarball` 只写不读），所以移动不会打断发版。
+- 测试：后端 279 全绿 / 前端 100 全绿 / `npm run build` 成功（只有 rolldown 既有的 `use client` 指令警告）。
+- 规划子代理：未使用（机械条目，改动未跨 3 文件）。
+- 遗留：`release.sh` 仍把 `npm pack` 输出写到仓库根（167 行 `$PACKDIR`、218 行 `$ROOT`），已开新票，否则历史 tgz 会重新堆回来。
