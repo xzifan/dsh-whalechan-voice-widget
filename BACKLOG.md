@@ -2,13 +2,14 @@
 
 按顺序取用：迭代作业（J1）每次只做最上面一个 `- [ ]`，做完改成 `- [x]` 并在同一 commit 里补 WORKLOG。
 
+> 发布动作（bump 版本、`npm pack`、`dsh plugin add`、重启 dsh、`git tag`、`git push`）**不在本清单里**，全部由 patch / minor 作业通过 `scripts/release.sh --deploy` 执行。J1 只改代码和文档。
+
 ## P0 · 发布基线（先做，做完才能开自动发版）
 
-- [ ] 对齐部署版本：按当前源码重建 0.6.0 并 `dsh plugin --profile web add` + 重启，确认侧栏加载的是新构建
-- [ ] 建立基线 tag `v0.6.0` 并 push（当前仓库 0 个 tag，发布脚本无法判断改动区间）
 - [ ] 把根目录 36 个历史 tgz 移到 `artifacts/releases/`，删除未跟踪的 `package/` 目录
 - [ ] 修正 README：安装示例 `0.18.2` → `<最新版本>`；Node 版本三处统一（engines / README / CI matrix）
 - [ ] CI 增加版本一致性检查：package.json 版本 == CHANGELOG 顶部 == 最新 tag
+- [ ] 校验部署一致性：对比 `~/.dsh/profiles/web/node_modules/dsh-voice-workbench/package.json` 的版本与源码版本，把差异写进 WORKLOG（对齐由发布作业自动完成）
 
 ## P1 · 自动验证能力
 
