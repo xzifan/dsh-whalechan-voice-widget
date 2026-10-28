@@ -112,7 +112,7 @@ Breeze 提示词生成/复刻入口已停用，旧版的生成、保存、应用
 
 ## 构建与安装
 
-需要 Node.js 22+ 和 npm。
+需要 Node.js `20.19+` 或 `22.12+` 和 npm（前端构建依赖 Vite 8，Node 18 已 EOL）。
 
 ```sh
 npm ci

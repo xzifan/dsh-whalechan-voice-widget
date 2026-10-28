@@ -125,3 +125,13 @@
 - 引用核对：全仓库 grep `whale[AB]-realtime` / `realtime-(en|ja)\.silk` 在可见文件里命中 0（源码、脚本、文档都不读这 4 个文件）。唯一命中在 `.tools/bailian-voice-lab/manifest.json`，其 `jaQqFile`/`enQqFile` 指向 `.tools/bailian-voice-lab/` 下的同名副本，不是根目录这 4 个 —— 移动后仍然有效，未改路径。
 - 测试：后端 279 全绿 / 前端 100 全绿 / `npm run build` 成功（仅 rolldown 既有的 `use client` 指令警告）。
 - 规划子代理：未使用（纯文件归档，无源码改动）。
+
+## 2026-10-28 · Node 版本三处统一（engines / README / CI matrix）
+
+- 条目：P0「修正 README：安装示例 `0.18.2` → `<最新版本>`；Node 版本三处统一」。
+- 事实核对：安装示例早就改成了 `<版本>`，全仓库除 `.tools/` 历史备份外已无 `0.18.2`；`docs/iteration-automation.md` 里那条是待办描述，不是安装文档。真正没做的是 Node 下限。
+- 取舍依据：三处原先是 `engines >=18` / README `22+` / CI `[18,20,22]`，谁都不对。以 `web/package.json` 的 `^20.19.0 || >=22.12.0` 为真值——那是 Vite 8 自己声明的范围，`npm run build` 直接依赖它，比任何手写版本都硬。Node 18 已 EOL，`>=18` 属于虚报支持。
+- 改动：`package.json` `engines.node` → `^20.19.0 || >=22.12.0`；`README.md`「需要 Node.js `20.19+` 或 `22.12+` 和 npm（前端构建依赖 Vite 8，Node 18 已 EOL）」；`.github/workflows/ci.yml` matrix → `[20, 22, 24]`（两个声明下限 + 当前 LTS 24）。
+- 新增断言：`test/node-version-consistency.test.js` 锁三件事——根 `engines` 必须等于 `web/package.json` 的 `engines`；README 里 `需要 Node.js` 那行写出的版本号必须正好等于 engines 的两个下限；CI matrix 每一项要么落在带小版本下限的主版本里，要么 ≥ 开放下限的主版本，且两个下限主版本都得测。回填旧 matrix 会直接失败：「CI 测试的 Node 18 不满足 engines 范围」。
+- 测试：后端 280 全绿（279 + 新增 1）/ 前端 100 全绿 / `npm run build` 成功（仅 rolldown 既有 `use client` 警告）。
+- 规划子代理：未使用（3 个文件、1 行级改动 + 1 个新测试，未触及接口或数据结构）。

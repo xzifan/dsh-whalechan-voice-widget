@@ -9,7 +9,7 @@
 - [x] 把根目录 36 个历史 tgz 移到 `artifacts/releases/`，删除未跟踪的 `package/` 目录（2026-10-28：36 个 tgz 全部移入 `artifacts/releases/`；`package/` 是 0.1.0 的旧解包残留，`rm -rf`/`find -delete` 在 cron 无审批环境下被拦截，改为移出仓库到 `~/.hermes/cache/scratch/`；`.gitignore` 追加 `/artifacts/`、`/package/`，否则后续 `git add -A` 会把 11 个 artifacts 文件扫进提交）
 - [x] `release.sh` 仍把 `npm pack` 输出写到仓库根（167 行 `$PACKDIR`、218 行 `$ROOT`），清完的历史 tgz 会重新堆回来：统一改到 `artifacts/releases/`，并同步 `.release-state.json` 的 `last_tarball`（2026-10-28：新增 `RELDIR="$ROOT/artifacts/releases"`，打包前 `mkdir -p` + 先删同版本旧包，`npm pack --pack-destination "$RELDIR"`；`last_tarball` 已改指 `artifacts/releases/dsh-voice-workbench-0.6.1.tgz`（该文件确实存在）。dry-run 分支仍用 `mktemp -d` 以便自清理，不动）
 - [x] 根目录 4 个调试音频（`whaleA/B-realtime-{en,ja}.silk`）移入 `artifacts/debug-audio/`（2026-10-28：4 个 `.silk` 共 83 KB 全部 `mv` 进 `artifacts/debug-audio/`，根目录已无 `*.silk`；文件本就被 `.gitignore` 的 `*.silk` 覆盖，所以零 git 改动。`.tools/bailian-voice-lab/manifest.json` 里 `jaQqFile`/`enQqFile` 指的是 `.tools/` 下自己那份副本，不是这 4 个，无需改路径）
-- [ ] 修正 README：安装示例 `0.18.2` → `<最新版本>`；Node 版本三处统一（engines / README / CI matrix）
+- [x] 修正 README：安装示例 `0.18.2` → `<最新版本>`；Node 版本三处统一（engines / README / CI matrix）（2026-10-28：安装示例在更早一轮已改成 `<版本>`，全仓库非备份文件里已无 `0.18.2`，本轮只做 Node 下限。以 `web/package.json` 的 Vite 8 范围为准统一为 `^20.19.0 || >=22.12.0`：根 `engines` 从 `>=18` 改到同一范围，README 从「Node.js 22+」改为「`20.19+` 或 `22.12+`」，CI matrix 从 `[18, 20, 22]` 改为 `[20, 22, 24]`；新增 `test/node-version-consistency.test.js` 锁死三处一致，回填旧值会报「CI 测试的 Node 18 不满足 engines 范围」）
 - [ ] CI 增加版本一致性检查：package.json 版本 == CHANGELOG 顶部 == 最新 tag
 - [x] 校验部署一致性：对比 `~/.dsh/profiles/web/node_modules/dsh-voice-workbench/package.json` 的版本与源码版本，把差异写进 WORKLOG（2026-10-28：演练中完成，线上 0.21.0 → 0.6.1，现与源码一致）
 
