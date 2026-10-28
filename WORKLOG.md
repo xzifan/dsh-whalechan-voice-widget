@@ -135,3 +135,14 @@
 - 新增断言：`test/node-version-consistency.test.js` 锁三件事——根 `engines` 必须等于 `web/package.json` 的 `engines`；README 里 `需要 Node.js` 那行写出的版本号必须正好等于 engines 的两个下限；CI matrix 每一项要么落在带小版本下限的主版本里，要么 ≥ 开放下限的主版本，且两个下限主版本都得测。回填旧 matrix 会直接失败：「CI 测试的 Node 18 不满足 engines 范围」。
 - 测试：后端 280 全绿（279 + 新增 1）/ 前端 100 全绿 / `npm run build` 成功（仅 rolldown 既有 `use client` 警告）。
 - 规划子代理：未使用（3 个文件、1 行级改动 + 1 个新测试，未触及接口或数据结构）。
+
+## 2026-10-28 · CI 版本一致性检查（package.json / CHANGELOG / 最新 tag）
+
+- 条目：P0「CI 增加版本一致性检查：package.json 版本 == CHANGELOG 顶部 == 最新 tag」。
+- 新增 `test/version-consistency.test.js`（4 条断言，随 `npm test` 跑）：① `package.json` 版本是三段式 semver；② CHANGELOG 顶部版本段 == `package.json` 版本且带 `YYYY-MM-DD`，版本段必须严格递减不重复；③ `package-lock.json` 顶层与 `packages[""].version` 都等于 `package.json` 版本（发布脚本 bump 时会同时改两处，单改一处就是漂移）；④ 用 `git tag --list 'v*'` 取语义最新 tag，版本号被回退（源码比已发布 tag 还旧）直接失败。
+- tag 断言的取舍：**没做**「版本号必须等于最新 tag」的硬等式，只做「不得落后于最新 tag」+「相等时 tag 名必须是 `v<version>`」。原因在 `scripts/release.sh` 的 264–271 行：它是先 `git commit`、再 `git tag`、最后分两次 `git push`（main 与 tag 分开推），中途失败还会把 `pending_push_version` 排队到下一班次。硬等式会让「已提交未推 tag」这个合法中间态把 CI 打红，从而挡掉发布流水线。源码领先最新 tag 时只输出 diagnostic 提示。
+- CI：`.github/workflows/ci.yml` 的 checkout 加 `fetch-depth: 0`，否则浅克隆没有 tag，断言会静默跳过。为此测试里加了反向保险：`process.env.CI` 为真时读不到 tag / 一个 tag 都没有 = 失败，提示补 `fetch-depth: 0`，避免「CI 绿但什么也没检查」。
+- 反向验证（证明断言真的会红，不是永远绿）：把 CHANGELOG 顶部临时改成 `0.7.0` → 报「CHANGELOG 顶部是 0.7.0，package.json 是 0.6.1」；把 `package.json` 临时回退成 `0.6.0` → CHANGELOG、package-lock、tag 三条同时红。两次都从备份还原，`git status` 只剩本轮两个改动。
+- 测试：后端 284 全绿（280 + 新增 4）/ 前端 100 全绿 / `npm run build` 成功（仅 rolldown 既有 `use client` 指令警告）。
+- 规划子代理：未使用（2 个文件：1 个新测试 + CI 1 行配置，无接口或数据结构变化）。
+- 下次可做：`package-lock.json` 的 `packages[""].engines` 仍是 `>=18`，与 `package.json` 的 `^20.19.0 || >=22.12.0` 不一致（上一轮 Node 下限只改了三处，漏了 lock 文件）；本轮未动，建议下一轮补 `npm install --package-lock-only` 或手工对齐后加一条断言。

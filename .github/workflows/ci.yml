@@ -13,6 +13,9 @@ jobs:
         node-version: [20, 22, 24]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 版本一致性测试要读 tag：浅克隆拿不到，会让断言静默跳过
+          fetch-depth: 0
 
       - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v4
