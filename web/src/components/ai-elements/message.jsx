@@ -1,6 +1,5 @@
 // Plain-text Message / MessageContent primitives adapted from AI Elements.
 // Source: https://registry.ai-sdk.dev/message.json
-import React from 'react'
 import {cn} from 'cn'
 import {useConversationEntrance} from '../../hooks/use-conversation-motion'
 export function Message({from,className,...props}){const ref=useConversationEntrance();return <div ref={ref} data-role={from} className={cn('group flex w-full max-w-[92%] flex-col gap-2',from==='user'?'is-user ml-auto items-end':'is-assistant items-start',className)} {...props}/>}

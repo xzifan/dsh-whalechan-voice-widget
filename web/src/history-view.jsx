@@ -1,4 +1,4 @@
-import React, {useEffect, useState} from 'react'
+import {useEffect, useState} from 'react'
 import {History, Search, RefreshCw, LoaderCircle, ArrowLeft, MessagesSquare, UserRound, Wrench, CircleAlert, ScrollText} from 'lucide-react'
 import {Button} from './components/ui/button'
 import {Input} from './components/ui/input'

@@ -1,6 +1,6 @@
-import React, {useEffect, useRef, useState} from 'react'
+import {useEffect, useRef, useState} from 'react'
 import {createRoot} from 'react-dom/client'
-import {api, createRequestGate, newId, normalizeSettings} from './lib/core.js'
+import {api, normalizeSettings} from './lib/core.js'
 import {CompanionView} from './companion-view.jsx'
 import {configIssues,configurationContext,mergeConfigurationErrors} from './lib/configuration.js'
 import {advanceCursor,applyRealtimeEvent,shouldStopPlayback,createPlaybackQueue,startRealtimeMic,listAudioInputs,finalizeRealtimeMessages} from './lib/realtime.js'
@@ -25,11 +25,11 @@ function App() {
   const [rt,setRt]=useState({active:false,starting:false,speaking:false,listening:false,level:0,userText:'',assistantText:'',tool:null,error:'',done:false,closed:false})
   const [audioInputs,setAudioInputs]=useState([]),[audioDeviceId,setAudioDeviceId]=useState('default')
   const rtSession=useRef(null),rtMic=useRef(null),rtEventsCursor=useRef(0),rtPollTimer=useRef(null),rtPollWake=useRef(null),rtMounted=useRef(false)
-  const rtPlayback=useRef(null),rtAudioCtx=useRef(null),rtPcmRemainder=useRef(new Float32Array(0)),rtCaptureCtx=useRef(null)
+  const rtPlayback=useRef(null),rtAudioCtx=useRef(null)
   const rtPreviewAudio=useRef(null),rtPendingVoice=useRef('')
   const rtUploader=useRef(null),rtStartAttempt=useRef(null),rtStartGeneration=useRef(0)
   const rtFiller=useRef(null),rtReporter=useRef(null),rtPcmActive=useRef(false)
-  const mounted=useRef(true), session=useRef(newId()), currentSettings=useRef(settings)
+  const mounted=useRef(true),currentSettings=useRef(settings)
   currentSettings.current=settings
   function onVoiceApplied(applied){
     const next=mergeAppliedVoice(currentSettings.current,applied)
@@ -45,7 +45,7 @@ function App() {
   }
   const voicePresets=useVoicePresets({onApplied:onVoiceApplied})
   const dirty=saved!==JSON.stringify(settings)
-  const configContext=configurationContext(models,capabilities),contextKey=JSON.stringify(configContext)
+  const configContext=configurationContext(models,capabilities)
   const fieldErrors=mergeConfigurationErrors(configIssues(settings,configContext),serverIssues,JSON.stringify(settings))
   const validationWarnings=serverIssues?.snapshot===JSON.stringify(settings)?Object.values(serverIssues.warnings||{}):[]
   const notify=(kind,message)=>{if(mounted.current)setNotice({kind,message})}

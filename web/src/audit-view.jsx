@@ -1,4 +1,4 @@
-import React, {useCallback, useEffect, useRef, useState} from 'react'
+import {useCallback, useEffect, useRef, useState} from 'react'
 import {Table, TableHeader, TableBody, TableHead, TableRow, TableCell, TableCaption} from './components/ui/table'
 import {Popover, PopoverTrigger, PopoverContent} from './components/ui/popover'
 import {Copy, FileText, LoaderCircle, RefreshCw, Search, X, ListFilter, ChevronRight, Hash, MessagesSquare, Server} from 'lucide-react'

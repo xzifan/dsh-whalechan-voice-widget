@@ -189,3 +189,18 @@
 - 已知小缺口：ESLint 10 的 engines 是 `^20.19.0 || ^22.13.0 || >=24`，仓库下限定在 22.12.0，Node 22.12.x 装依赖会收到 EBADENGINE **警告**（不是失败）；CI 的 20/22/24 leg 全部满足。
 - 下次可做：`eslint-plugin-react` 把 33 个 .jsx 纳入 lint（已排进 BACKLOG）。
 
+## 2026-10-28 · ESLint 覆盖 33 个 .jsx（不装 eslint-plugin-react）
+
+- 条目原计划是「先接 `eslint-plugin-react` 拿到 `jsx-uses-vars`，再把 `web/src/**/*.jsx` 纳入」。**两步都实测推翻了第一步的必要性**：
+  - `eslint-plugin-react` 最新 7.37.5 的 peer 是 `eslint ^3 || … || ^9.7`，本仓 `eslint@10.13.0`，`npm i -D eslint-plugin-react` 直接 `ERESOLVE`（要装只能 `--legacy-peer-deps`，给后续 install 埋雷）。`next` tag 还停在 7.8.0-rc.0，没有 ESLint 10 分支。
+  - 更关键：ESLint 10 的核心 `no-unused-vars` **已经**把 JSX 元素名算作引用。合成文件实测（`import {Used} from './used.js'` + `import {Dead} from './dead.js'` + `export default () => <Used/>`）：只报 `Dead` 一条，`Used` 不报；`settings-view.jsx` 里 15 个只在 JSX 里出现的组件 import 也一条不报。所以 `jsx-uses-vars` 解决的问题在 ESLint 10 上不存在。
+- 旧笔记的「288 条假 `no-unused-vars`」没复现，且量级完全对不上：`.jsx` 进 `files` 但**不开** `ecmaFeatures.jsx` 时，33 个 .jsx 是 33 条 `Parsing error: Unexpected token <`（fatal），不是 288 条 no-unused-vars；开了解析后全仓只剩 32 条。所以正确做法既不是装插件、也不是 `--legacy-peer-deps`，而是「开 JSX 解析 + 把 .jsx 纳入 + 修掉那 32 条真问题」。
+- 配置（`eslint.config.js`，+6/−2 行）：`files` 加 `**/*.jsx`；`languageOptions.parserOptions = {ecmaFeatures: {jsx: true}}`；浏览器 globals 那块的 `files` 补 `web/src/**/*.jsx`（不加会炸 `no-undef`）。lint 覆盖面 82 → **115 文件**（33 个 .jsx 全在内）。注释里写清了「为什么不用 eslint-plugin-react」，免得下一轮又有人照着旧结论去装。
+- 32 条全部是 `no-unused-vars`，没有别的规则被引出来。逐条修：
+  - **27 个死 `import React`**（`import React from 'react'` / `import * as React from "react"` / `import React,{useX}` 三种写法）。先证明它们真是死的：`transformWithOxc`（Vite 8 已换掉 esbuild）对 `<div/>` 产出 `require("react/jsx-runtime")`，即 JSX runtime 是 automatic，默认导入无用武之地。另 5 个 .jsx（`sidebar`/`slider`/`sheet`/`tooltip`/`voice-layer-view`）真在调 `React.*`，按 lint 结果排除、一个没动。
+  - **`main.jsx` 5 个死绑定**：`createRequestGate`、`newId`（`session=useRef(newId())` 删掉后连带失效）、`rtPcmRemainder`/`rtCaptureCtx` 两个 ref、`contextKey=JSON.stringify(configContext)`（每渲染少算一次 JSON）。
+- 守卫（`test/lint-config.test.js` 3 → 4 条）：新增一条**行为断言**——用 ESLint API `lintText` 一个合成的 `.jsx`，断言「JSX 里的组件算引用、只有真死 import 报错」，同时断言 `**/*.jsx` 进了 `files`、`ecmaFeatures: {jsx: true}` 在配置里。这条是给「将来升级 ESLint 又把 JSX 引用退回去」准备的保险，否则复发时会是 33 个文件突然爆红而不是一条失败。文本断言里的空格写成 `\{ ?jsx: true ?\}`，因为 Prettier 会把它排成 `{ ecmaFeatures: { jsx: true } }`。
+- 验收：`npm run lint` 0 问题（115 文件）／`npm run format:check` 通过／后端 **288**（287 + 1 新元测试）／前端 **100**／`npm run build` 成功／浏览器冒烟 **PASS**（`.tools/pw-venv/bin/python test/browser-smoke.py`，真 `lib/client.js` + `dist/web` iframe：侧栏导航、设置保存回环、实时会话与工具时间线、110/390px 布局）。删 27 个 React 导入属于「改运行时入口」的风险动作，所以额外跑了冒烟，不只依赖单测。
+- 未提交 `dist/`：`release.sh` 在发版时才 `git add … dist`（第 266 行），本提交按惯例 `git checkout -- dist` 还原，免得夹带 500KB 打包产物。
+- 下次可做：接 `eslint-plugin-react-hooks`（peer 已到 `eslint ^10.0.0`）补 `rules-of-hooks` / `exhaustive-deps`——已作为新条目排进 BACKLOG，本轮不动。
+

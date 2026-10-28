@@ -1,6 +1,5 @@
 // JSX adaptation of AI Elements Conversation primitives.
 // Source: https://registry.ai-sdk.dev/conversation.json
-import React from 'react'
 import {cn} from 'cn'
 import {ArrowDown} from 'lucide-react'
 import {StickToBottom,useStickToBottomContext} from 'use-stick-to-bottom'

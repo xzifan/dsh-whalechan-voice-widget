@@ -1,4 +1,4 @@
-import React,{useEffect,useState} from 'react'
+import {useEffect,useState} from 'react'
 import {AudioLines,FileText} from 'lucide-react'
 
 export function VoiceMessage({message,recording=false}){

@@ -8,12 +8,16 @@ export default [
     ignores: ['**/node_modules/**', 'dist/**', 'web/dist/**', 'artifacts/**', '.tools/**', 'coverage/**'],
   },
   {
-    // .jsx 暂不纳入：espree 不把 JSX 里的标识符算作引用，会把每个组件当作未使用变量。
-    files: ['**/*.js', '**/*.mjs'],
+    // .jsx 也纳入：ESLint 10 的核心 no-unused-vars 已把 JSX 元素标签算作引用
+    // （实测 `<Probe/>` 不报未使用，只有真正没引用的 import 才报），因此不需要
+    // eslint-plugin-react 的 jsx-uses-vars —— 它的最新版 peer 只到 eslint ^9.7，
+    // 为它降级 ESLint 或加 --legacy-peer-deps 都不划算。
+    files: ['**/*.js', '**/*.mjs', '**/*.jsx'],
     ...js.configs.recommended,
     languageOptions: {
       ecmaVersion: 'latest',
       sourceType: 'module',
+      parserOptions: { ecmaFeatures: { jsx: true } },
       globals: { ...globals.node },
     },
     linterOptions: { reportUnusedDisableDirectives: 'warn' },
@@ -36,8 +40,8 @@ export default [
     },
   },
   {
-    // 浏览器侧：宿主页脚本和 web/src 的纯 .js 逻辑
-    files: ['lib/client.js', 'web/src/**/*.js'],
+    // 浏览器侧：宿主页脚本和 web/src 的纯 .js 逻辑与 .jsx 组件
+    files: ['lib/client.js', 'web/src/**/*.js', 'web/src/**/*.jsx'],
     languageOptions: { globals: { ...globals.browser } },
   },
 ]

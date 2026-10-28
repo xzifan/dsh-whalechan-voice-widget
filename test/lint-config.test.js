@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {readFile} from 'node:fs/promises'
+import {fileURLToPath} from 'node:url'
+import {join} from 'node:path'
 
 const read=path=>readFile(new URL(path,import.meta.url),'utf8')
 
@@ -30,7 +32,10 @@ test('CI runs the lint and format jobs, not just the test matrix',async()=>{
 test('eslint covers js sources, prettier config matches the repo style',async()=>{
   const config=await read('../eslint.config.js')
   assert.ok(/\*\*\/\*\.js/.test(config),'eslint 配置没有覆盖 **/*.js')
+  assert.ok(/\*\*\/\*\.jsx/.test(config),'eslint 配置没有覆盖 **/*.jsx')
   assert.ok(/node_modules/.test(config),'eslint 配置没有忽略 node_modules')
+  // JSX 必须显式打开解析，否则 .jsx 直接是 parse error
+  assert.ok(/ecmaFeatures: \{ ?jsx: true ?\}/.test(config),'eslint 配置没有打开 JSX 解析')
   const rc=JSON.parse(await read('../.prettierrc.json'))
   assert.equal(rc.semi,false)
   assert.equal(rc.singleQuote,true)
@@ -39,4 +44,22 @@ test('eslint covers js sources, prettier config matches the repo style',async()=
   for(const entry of ['node_modules/','dist/','package-lock.json']){
     assert.ok(ignore.includes(entry),`.prettierignore 缺少 ${entry}`)
   }
+})
+
+test('eslint counts JSX element names as references, so .jsx needs no react plugin',async()=>{
+  // 这条盯的是「为什么不用 eslint-plugin-react」：它的 jsx-uses-vars 只解决
+  // `no-unused-vars` 不把 `<Foo/>` 算作引用的问题，而 ESLint 10 的核心规则已经算了。
+  // 若哪天升级又退回去，这里会先红，而不是让 33 个 .jsx 突然炸出几百条假错。
+  const {ESLint}=await import('eslint')
+  const root=fileURLToPath(new URL('..',import.meta.url))
+  const eslint=new ESLint({cwd:root})
+  const code=[
+    "import {Used} from './used.js'",
+    "import {Dead} from './dead.js'",
+    'export default function Probe(){return <Used/>}',
+  ].join('\n')
+  const [result]=await eslint.lintText(code,{filePath:join(root,'web','src','__jsx-ref-probe.jsx')})
+  const unused=result.messages.filter(message=>message.ruleId==='no-unused-vars')
+  assert.equal(unused.length,1,`JSX 里的组件没被算作引用：${unused.map(m=>m.message).join(' / ')}`)
+  assert.match(unused[0].message,/'Dead'/)
 })
