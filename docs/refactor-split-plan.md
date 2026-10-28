@@ -47,12 +47,14 @@
 ## 每步的验收断言
 
 **步骤 1**
+
 - `newMod.toolDefinitions === rtMod.toolDefinitions`（同一引用，杜绝双份维护）。
 - `realtimeDefaults()` 深比对 8 个键；`DEFAULT_TOOLS.length === 8` 且顺序不变。
 - 经 `createService()` 的 `GET /api/config` 断言 `settings.realtime` 形状等于 `realtimeDefaults()`。
 - `readEnvKey` 对缺文件 / 权限错误仍返回 `''` 而不抛。
 
 **步骤 2**
+
 - 同会话内 `set_tts_provider('mimo')` 后 `get_voice_config` 返回 `provider === 'mimo'`（证明注入的是 live getter）。
 - Breeze 下 `design_voice` / `apply_voice` / `delete_voice` 抛 400 且 message 精确等于 `breezeDisabled`。
 - 非 qwen 下 `list_voice_presets` 返回 `{presets:[],candidates:[],note}` 三键齐全。
@@ -60,6 +62,7 @@
 - `__settingsChanged` / `__voiceSettingsPatch` 仍被 session 转成 `voice-settings-changed` 事件。
 
 **步骤 3**
+
 - 一次 `synth_tts` 只产生 1 条 `kind:'synthesis'`，字段键集合冻结为 `{kind,role,text,provider,model,voice,status,usage,requestId,audioOutput,audioDurationSeconds}`。
 - 取消 → `status:'cancelled'` 且不追加 error；真失败 → `failed` + 单独 `kind:'error'`。
 - qwen → bailian 凭据、breeze → `modelCredential('breeze')` + 语言归一、custom → `readProviderKey`；三者的 key 字符串都不得出现在返回体与审计文本中。

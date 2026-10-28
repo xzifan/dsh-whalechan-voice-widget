@@ -65,11 +65,11 @@
 
 **已注册的定时作业**（2026-10-28，Hermes cron）
 
-| 作业 | ID | 计划 |
-| --- | --- | --- |
-| voice-workbench · 迭代循环 | `44914f72f670` | `17 */4 * * *`（每 4 小时） |
-| voice-workbench · patch 发布 | `a29ae4b46645` | `0 16,18 * * 1-5` |
-| voice-workbench · minor 发布 | `14db9e4ea4c6` | `0 16,18 * * 6` |
+| 作业                         | ID             | 计划                        |
+| ---------------------------- | -------------- | --------------------------- |
+| voice-workbench · 迭代循环   | `44914f72f670` | `17 */4 * * *`（每 4 小时） |
+| voice-workbench · patch 发布 | `a29ae4b46645` | `0 16,18 * * 1-5`           |
+| voice-workbench · minor 发布 | `14db9e4ea4c6` | `0 16,18 * * 6`             |
 
 同时补了基线 tag `v0.6.0`（指向 `97a0845 Initial commit`，仅本地，未 push）。补 tag 后 `release.sh --dry-run` 显示"自 v0.6.0 以来 2 个 commit → 0.6.1"，改动区间判断恢复正常。
 
@@ -82,14 +82,14 @@
 
 **怎么测的**：`say` 合成语音 → 16k PCM → `/realtime/audio` → 观察真实工具事件 + 直接检查文件系统副作用（不信模型自述）。
 
-| 工具 | 结果 | 可核对的证据 |
-| --- | --- | --- |
-| `bash`（读） | ✅ | 让它跑 `date`，回复 20:34:57，与系统时间一致（秒数猜不出） |
-| `bash`（写） | ✅ | `~/abc123.txt` 3 字节，确实落盘 |
-| `read` | ✅ | 随机串 `QXVB` 被原样念出 |
-| `write` | ✅ | `~/c.txt` 内容 `qwer` |
-| `edit` | ❌→✅ | 修复前报 `file has not been read`；修复后 `~/b.txt` 从 OLD 变 NEW |
-| `web_search` | ✅ | 天气查询会话里有 tool completed 记录 |
+| 工具         | 结果  | 可核对的证据                                                      |
+| ------------ | ----- | ----------------------------------------------------------------- |
+| `bash`（读） | ✅    | 让它跑 `date`，回复 20:34:57，与系统时间一致（秒数猜不出）        |
+| `bash`（写） | ✅    | `~/abc123.txt` 3 字节，确实落盘                                   |
+| `read`       | ✅    | 随机串 `QXVB` 被原样念出                                          |
+| `write`      | ✅    | `~/c.txt` 内容 `qwer`                                             |
+| `edit`       | ❌→✅ | 修复前报 `file has not been read`；修复后 `~/b.txt` 从 OLD 变 NEW |
+| `web_search` | ✅    | 天气查询会话里有 tool completed 记录                              |
 
 **根因**：`agent-conversation.js` 每次 `runTool` 都 `agents.create({sessionId: voice-workbench-tool-${randomUUID()}})` 再销毁。工具状态（例如 edit 的 read-before-modify 守卫）属于 agent 会话，跨调用就丢了，所以 `read` 成功、`edit` 永远说没读过。
 
@@ -241,7 +241,6 @@
 - 未提交 `dist/`：`release.sh` 在发版时才 `git add … dist`（第 266 行），本提交按惯例 `git checkout -- dist` 还原，免得夹带 500KB 打包产物。
 - 下次可做：接 `eslint-plugin-react-hooks`（peer 已到 `eslint ^10.0.0`）补 `rules-of-hooks` / `exhaustive-deps`——已作为新条目排进 BACKLOG，本轮不动。
 
-
 ## 2026-10-28 · `release.sh` 失败回滚（J1 迭代班次）
 
 - 条目：P0「`release.sh` 失败回滚」。只做这一条，其它条目没动。
@@ -271,7 +270,6 @@
 - 未提交 `dist/`：`web/src` 有改动，build 后 bundle hash 变了（`index-BjJ6wBA5.js` → `index-BjUZrPR-.js`），按仓库惯例构建产物随发版重建，本轮 `git checkout -- dist` 还原。
 - 下次可做：把上表那 13 条 compiler 规则（`set-state-in-effect` ×11、`refs`、`purity`）单独立一条「effect 结构重构」的 `[plan]` 条目——它是这批 error 的唯一来源，且需要逐个确认「该 state 是否本该是派生值」。另外 3 条已排队条目（全仓 Prettier 重排、husky+lint-staged、`prefer-const` 收紧）本轮未动。
 
-
 ## 2026-10-28 · Prettier 全仓迁移 S1：账本归一 + `web/index.html`（J1 迭代班次）
 
 - 条目：P1「全仓 Prettier 重排（116 文件 / 约 22k 行 churn）」。**只做了第一步 S1**，全量按规划拆成 S0–S8 排进 BACKLOG，本轮没碰其它条目。
@@ -293,3 +291,9 @@
 - 顺带否掉两条候选：`src/config-validation.js:23` 与 `src/conversation-filler.js:94` 的同类 `eslint-disable-next-line` **不埋雷**（格式化 config-validation.js 后 eslint 零问题；filler 那处在上面的全量探针里也没报），所以按「只做这一条」的硬限制没动它们。副作用：本轮没有改行为，纯测试健壮性 + 注释形态 + 一行拆分。
 - 测试：后端 **306** / 前端 **101** 全绿；`npm run lint` 0 问题、`format:check` 通过、`npm run build` 成功（`dist/` 本轮无改动）。改动 `test/adapter.test.js`（+7/−3）、`test/bridge-interruption-regression.test.js`（+14/−1）、`src/service.js`（+2/−1）、`src/tts-config.js`（+2/−1）、`src/conversation-filler.js`（+3/−2），共 +27/−8。未用规划子代理（非 `[plan]`、改动 ≤200 行、不改对外行为）。
 - 下次可做：BACKLOG 顶上的「Prettier 迁移 S2」（`*.md` 一行账本，6 文件 / 139 行），S3（`lib/client.js` 189 行）现在也可以跑了——S0 覆盖的两条红已消失。另外注意 `git stash` 实验期间不要与发布作业并发（`.work.lock` 只管本作业）。
+
+- 2026-10-29 · P1「Prettier 迁移 S2」（md + docs 全量，7 文件 / 187 行 + 账本 7 行）：`.prettierignore` 删掉 `*.md` 一行，并同步改写账本注释（「CI 只校验 json/yml」→「也校验全部 markdown」；`docs/` 从「已被 `*.md` 覆盖」改为「markdown 已于 S2 全部迁移」），然后只格式化 md：`README.md`、`WORKLOG.md`、`web/README.md`、`docs/{iteration-automation,prettier-migration-plan,realtime-mvp-plan,refactor-split-plan}.md`。计划文档里写的「6 文件 / 139 行」是 10-28 的快照，现在 `docs/` 有 4 篇、根目录只有 `README.md` 与 `WORKLOG.md` 需要重排（`BACKLOG.md`/`CHANGELOG.md`/`PREVIEW.md` 本来就合规），实测 **7 文件 / 187 行**，加账本 `+3/−4` 共 **194 行**，仍在 200 行上限内。
+- **代码围栏人工扫查**（条目明确要求）：整套 md 只有 1 个 `js` 代码围栏，`web/README.md:34` 的 `api('tune', {sessionId, settings})` 被写成 `api("tune", { sessionId, settings });`——双引号 + 分号，因为**围栏内的嵌入代码不继承 `.prettierrc` 的 `semi:false`/`singleQuote`**，是 Prettier 嵌入格式化的固有行为，不是配置漏了；语义零变化，所以保留（真要保仓库风格就加 `<!-- prettier-ignore -->`）。`docs/realtime-mvp-plan.md` 的 `json` 代码围栏（`session.update`）被重排后丢了手写的 `//` 注释对齐空格，键值、注释、`smart_turn` 等取值一个没变；`sh`/`bash` 围栏 Prettier 不动。
+- **新增的维护成本（记下来免得下次踩）**：md 表格会被补齐空格对齐，今后改任何 md 表格行（WORKLOG 里就有 3 张）都要跟着 `npm run format`，否则 `npm run format:check` 会红。
+- 测试：后端 **306** / 前端 **101** 全绿，`npm run lint` 0 问题、`format:check` 通过（全仓 100%，md 进去后也过）、`npm run build` 成功且 `dist/` 无改动（git status 干净，无新 hash 产物）。改动：`.prettierignore`（+3/−4）、`README.md`（+10/−10）、`WORKLOG.md`（+13/−15）、`web/README.md`（+1/−1）、`docs/iteration-automation.md`（+23/−23）、`docs/prettier-migration-plan.md`（+16/−16）、`docs/realtime-mvp-plan.md`（+32/−22）、`docs/refactor-split-plan.md`（+4/−1）。未用规划子代理（非 `[plan]`、纯文档、不动代码与对外行为）。
+- 下次可做：BACKLOG 顶上的「Prettier 迁移 S3」（`lib/client.js` 单文件 189 行，S0 已铺好前置；`test/browser-smoke.py` 把它当脚本注入浏览器，那条冒烟要跟着跑一遍）。

@@ -4,18 +4,18 @@
 
 ## 1. 现状快照
 
-| 项目 | 实测结果 |
-| --- | --- |
-| 代码规模 | `src` 21 个文件、`web/src` 65 个文件，`src + web/src + test` 合计 13,567 行 |
-| 后端测试 | 279 项全绿，3.46s |
-| 前端测试 | 100 项全绿，0.11s |
-| 构建 | `vite build` 通过，185ms（`dist/` 被 git 跟踪，走发布包） |
-| 架构 | Qwen-Audio-Realtime 作大脑 + 可替换 TTS 声音层；打断、工具调用、音色设计、审计/统计均已落地 |
-| 已装到 dsh | `~/.dsh/profiles/web` 里是 **0.21.0** 的 tgz |
-| 源码声明版本 | **0.6.0**（`package.json` + `CHANGELOG.md` 顶部） |
-| git | 只有 1 个 commit（`Initial commit`），**没有任何 tag**；remote `xzifan/dsh-whalechan-voice-widget` 已配置，`gh` 已登录且有 `repo` scope |
-| CI | GitHub Actions 跑 node 20/22/24 的后端测试 + 前端测试 + build + pack 检查，外加独立 `browser-smoke` job（playwright + chromium，跑 `test/browser-smoke.py`） |
-| 遗留物 | 根目录 36 个 `dsh-voice-workbench-*.tgz`（0.2.0 → 0.21.0）、未跟踪的 `package/` 目录 |
+| 项目         | 实测结果                                                                                                                                                     |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 代码规模     | `src` 21 个文件、`web/src` 65 个文件，`src + web/src + test` 合计 13,567 行                                                                                  |
+| 后端测试     | 279 项全绿，3.46s                                                                                                                                            |
+| 前端测试     | 100 项全绿，0.11s                                                                                                                                            |
+| 构建         | `vite build` 通过，185ms（`dist/` 被 git 跟踪，走发布包）                                                                                                    |
+| 架构         | Qwen-Audio-Realtime 作大脑 + 可替换 TTS 声音层；打断、工具调用、音色设计、审计/统计均已落地                                                                  |
+| 已装到 dsh   | `~/.dsh/profiles/web` 里是 **0.21.0** 的 tgz                                                                                                                 |
+| 源码声明版本 | **0.6.0**（`package.json` + `CHANGELOG.md` 顶部）                                                                                                            |
+| git          | 只有 1 个 commit（`Initial commit`），**没有任何 tag**；remote `xzifan/dsh-whalechan-voice-widget` 已配置，`gh` 已登录且有 `repo` scope                      |
+| CI           | GitHub Actions 跑 node 20/22/24 的后端测试 + 前端测试 + build + pack 检查，外加独立 `browser-smoke` job（playwright + chromium，跑 `test/browser-smoke.py`） |
+| 遗留物       | 根目录 36 个 `dsh-voice-workbench-*.tgz`（0.2.0 → 0.21.0）、未跟踪的 `package/` 目录                                                                         |
 
 最大的问题不是功能，而是**发布状态不可信**：源码说 0.6.0，dsh 里装的是 0.21.0，没有任何 tag 能说明哪个 commit 对应哪个产物。在这种状态下做自动发版，只会把混乱自动化。
 
@@ -85,17 +85,17 @@ J1 迭代循环（每小时/每 4 小时）       J2 patch 发布（工作日 16
 
 ### 3.3 幂等与并发
 
-| 机制 | 位置 | 作用 |
-| --- | --- | --- |
-| `.release.lock`（mkdir 原子锁，>90 分钟视为陈旧） | `release.sh` | 两个 tick 同时到不会并发跑 |
-| `.release-state.json`（日期/slot/版本） | `release.sh` | 当天同 slot 只发一次 |
-| 无 tag 或 `tag..HEAD` 为 0 → 跳过 | `release.sh` | 不出空版本 |
-| 审计文件 10 分钟内被写过 → 推迟重启 | `release.sh` | 不在用户通话中途重启 dsh |
-| 测试红 → 退出码 2，不 bump 不提交 | `release.sh` | 坏的不会进 main |
-| `.release-logs/<ts>-<slot>.log` | `release.sh` | 每次运行的完整输出 |
-| `npm pack` 产物落 `artifacts/releases/`（不是仓库根） | `release.sh` | root 不再每发一版多一个 400KB tgz；`.gitignore` 已忽略 `/artifacts/` |
-| 推送失败 → 记 `pending_push_version`，退出码 6 | `release.sh` | 下一班次只补推送，不会重复 bump |
-| dsh 子进程 setsid 脱离 | `restart-dsh.sh` | 调用方（cron 工具）不会因继承管道而挂死 |
+| 机制                                                  | 位置             | 作用                                                                 |
+| ----------------------------------------------------- | ---------------- | -------------------------------------------------------------------- |
+| `.release.lock`（mkdir 原子锁，>90 分钟视为陈旧）     | `release.sh`     | 两个 tick 同时到不会并发跑                                           |
+| `.release-state.json`（日期/slot/版本）               | `release.sh`     | 当天同 slot 只发一次                                                 |
+| 无 tag 或 `tag..HEAD` 为 0 → 跳过                     | `release.sh`     | 不出空版本                                                           |
+| 审计文件 10 分钟内被写过 → 推迟重启                   | `release.sh`     | 不在用户通话中途重启 dsh                                             |
+| 测试红 → 退出码 2，不 bump 不提交                     | `release.sh`     | 坏的不会进 main                                                      |
+| `.release-logs/<ts>-<slot>.log`                       | `release.sh`     | 每次运行的完整输出                                                   |
+| `npm pack` 产物落 `artifacts/releases/`（不是仓库根） | `release.sh`     | root 不再每发一版多一个 400KB tgz；`.gitignore` 已忽略 `/artifacts/` |
+| 推送失败 → 记 `pending_push_version`，退出码 6        | `release.sh`     | 下一班次只补推送，不会重复 bump                                      |
+| dsh 子进程 setsid 脱离                                | `restart-dsh.sh` | 调用方（cron 工具）不会因继承管道而挂死                              |
 
 ### 3.3.1 推送：系统代理要让 git 知道
 

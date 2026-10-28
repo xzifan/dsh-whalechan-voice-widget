@@ -31,6 +31,7 @@ DSH 插件后端 (src/service.js 新增 realtime 会话管理)
 ```
 
 **关键决策**：WebSocket 建在**后端**（Node），而不是浏览器直连。理由：
+
 - API Key 只能存在服务端，绝不暴露到浏览器；
 - Function Calling 要执行 DSH 工具、走审批，必须后端；
 - 后端统一管理重连、超时、限流和事件回放，前端只做「采集 + 播放 + 展示」。
@@ -49,9 +50,11 @@ DSH 插件后端 (src/service.js 新增 realtime 会话管理)
 ```
 
 WebSocket URL：
+
 ```
 wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime?model=qwen-audio-3.1-realtime-plus
 ```
+
 > 兼容旧域名 `wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=…`，MVP 可先用旧域名，后续引导迁移业务空间专属域名。
 
 ### 3.2 session.update（首次、仅一次生效的音色等）
@@ -61,18 +64,19 @@ wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime?model=qwen-a
   "type": "session.update",
   "session": {
     "modalities": ["text", "audio"],
-    "voice": "<复刻音色ID>",          // MVP 先用系统音色 longanqian_v3.1，后续换设计音色
+    "voice": "<复刻音色ID>", // MVP 先用系统音色 longanqian_v3.1，后续换设计音色
     "instructions": "<鲸鱼娘人格+回复语言+语气>",
     "input_audio_transcription": { "language": "zh" },
     "output_audio": { "language": "zh" },
     "output_audio_format": "pcm",
     "enable_speech_emotion": true,
-    "turn_detection": { "type": "smart_turn" }   // 语义打断：嗯啊不触发
+    "turn_detection": { "type": "smart_turn" } // 语义打断：嗯啊不触发
   }
 }
 ```
 
 注意：
+
 - `voice` 只能在**第一次** `session.update` 设置，之后改要新建连接；
 - `turn_detection` 只能在首次发音频前（IDLE）设置；
 - `instructions` 可随时更新（改人格/语言/语气）。
@@ -80,22 +84,24 @@ wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime?model=qwen-a
 ### 3.3 音频采集与输入
 
 前端每 20~40ms 采集一帧 16kHz/16bit/单声道，base64 后发：
+
 ```json
 { "type": "input_audio_buffer.append", "audio": "<base64>" }
 ```
+
 经后端转发给 WebSocket。
 
 ### 3.4 输出事件（服务端 → 前端）
 
-| 事件 | 含义 | 前端处理 |
-|---|---|---|
-| `response.audio.delta` | PCM 音频增量（base64） | 追加到播放队列，实时播放 |
-| `response.audio_transcript.delta` | 字幕增量 | 滚动字幕 |
-| `response.audio_transcript.done` | 完整回复文本 | 定格字幕 |
-| `conversation.item.input_audio_transcription.delta` | 用户语音转写增量 | 显示「你说的话」 |
-| `input_audio_buffer.speech_started` | 检测到用户开口 | 进入「用户在说话」状态 |
-| `input_audio_buffer.speech_stopped` | 用户说完 | 准备触发回复 |
-| `response.done` | 本轮回复完成 | 结束本轮，恢复监听 |
+| 事件                                                | 含义                   | 前端处理                 |
+| --------------------------------------------------- | ---------------------- | ------------------------ |
+| `response.audio.delta`                              | PCM 音频增量（base64） | 追加到播放队列，实时播放 |
+| `response.audio_transcript.delta`                   | 字幕增量               | 滚动字幕                 |
+| `response.audio_transcript.done`                    | 完整回复文本           | 定格字幕                 |
+| `conversation.item.input_audio_transcription.delta` | 用户语音转写增量       | 显示「你说的话」         |
+| `input_audio_buffer.speech_started`                 | 检测到用户开口         | 进入「用户在说话」状态   |
+| `input_audio_buffer.speech_stopped`                 | 用户说完               | 准备触发回复             |
+| `response.done`                                     | 本轮回复完成           | 结束本轮，恢复监听       |
 
 音频格式：**输出 PCM 24kHz/16bit/单声道**，前端播放时按 24kHz 处理（或转成 WebAudio buffer 播放）。
 
@@ -111,6 +117,7 @@ wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime?model=qwen-a
 ### 4.1 声明工具
 
 `session.update` 里加 `tools`：
+
 ```json
 "tools": [{
   "type": "function",
@@ -121,6 +128,7 @@ wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime?model=qwen-a
   }
 }]
 ```
+
 MVP 只暴露白名单内的只读工具，与现有 `enabled_tools` 一致。
 
 ### 4.2 执行与写回
@@ -172,23 +180,24 @@ realtime:
 
 ## 7. 新增/改动文件清单（预估）
 
-| 文件 | 改动 |
-|---|---|
-| `src/realtime-service.js`（新） | WebSocket 会话管理、事件转发、重连、Function Calling 桥 |
-| `src/realtime-events.js`（新） | 事件序列化、PCM 转发、字幕事件 |
-| `src/service.js` | 新增 `/realtime/start`、`/realtime/audio`、`/realtime/cancel`、`/realtime/end` 路由 |
-| `src/index.js` | 注册新路由 + 凭据读取 |
-| `src/config-validation.js` | 新增 realtime 字段校验 |
-| `web/src/main.jsx` | 新增 Realtime 采集/播放/字幕状态机 |
-| `web/src/realtime-view.jsx`（新） | 实时对话界面 |
-| `lib/client.js` | iframe 消息白名单加新路由 |
-| 测试 | 后端事件时序 + 前端采集播放回归 |
+| 文件                              | 改动                                                                                |
+| --------------------------------- | ----------------------------------------------------------------------------------- |
+| `src/realtime-service.js`（新）   | WebSocket 会话管理、事件转发、重连、Function Calling 桥                             |
+| `src/realtime-events.js`（新）    | 事件序列化、PCM 转发、字幕事件                                                      |
+| `src/service.js`                  | 新增 `/realtime/start`、`/realtime/audio`、`/realtime/cancel`、`/realtime/end` 路由 |
+| `src/index.js`                    | 注册新路由 + 凭据读取                                                               |
+| `src/config-validation.js`        | 新增 realtime 字段校验                                                              |
+| `web/src/main.jsx`                | 新增 Realtime 采集/播放/字幕状态机                                                  |
+| `web/src/realtime-view.jsx`（新） | 实时对话界面                                                                        |
+| `lib/client.js`                   | iframe 消息白名单加新路由                                                           |
+| 测试                              | 后端事件时序 + 前端采集播放回归                                                     |
 
 ---
 
 ## 8. MVP 交付范围（明确不做）
 
 ✅ 做：
+
 - 单会话 Realtime 语音对话（server_vad 或 smart_turn）
 - 打断（用户说话自动取消播报）
 - 字幕（用户转写 + 回复转写）
@@ -196,6 +205,7 @@ realtime:
 - 凭据复用 bailian.env，系统音色起步
 
 ❌ 不做（后续阶段）：
+
 - TTS 混音（「Realtime 大脑 + TTS 嘴巴」）
 - 音色设计向导接入
 - 说话人增强（voiceprint）
