@@ -41,7 +41,15 @@ async function setup(t, native = false, delayDesign, retainedBreeze = false) {
   const first = await start()
   const config = async () => (await service.handle('GET', '/api/config')).body.settings
   const settle = async () => { for (let i = 0; i < 12; i++) await tick() }
-  const invoke = async (name, args, socket = first.socket) => { const id = socket.tool(name, args); for (let i = 0; i < 100 && !socket.output(id); i++) await tick(); assert.ok(socket.output(id), name); return socket.output(id) }
+  // 用真实时间设截止，而不是数 setImmediate 轮次。apply_voice 需要等最终转写，
+  // 产品侧的超时是 1500ms；100 tick 只有几百微秒，CI 上必然等不到（2026-10-28 红过）。
+  const invoke = async (name, args, socket = first.socket) => {
+    const id = socket.tool(name, args)
+    const deadline = Date.now() + 5000
+    while (!socket.output(id) && Date.now() < deadline) await tick()
+    assert.ok(socket.output(id), name)
+    return socket.output(id)
+  }
   return { ...first, service, requests, start, config, invoke, settle }
 }
 

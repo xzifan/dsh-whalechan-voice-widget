@@ -1,15 +1,13 @@
 name: CI
 
-# 手动触发。原因：2026-10-28 起 GitHub Actions 因账户账单问题拒绝启动任务
+# push 与 PR 自动触发已恢复：2026-10-28 早些时候 Actions 曾因账户账单锁拒跑任务
 # （"The job was not started because your account is locked due to a billing issue"），
-# 每次 push 都会产生一个 3 秒失败的红叉，对外看起来像代码坏了。
-# 真实的发布门禁是本地 scripts/release.sh（280+100 项测试 + build + 健康校验）。
-# 账单恢复后，取消下面 push/pull_request 的注释即可恢复自动触发。
+# 于是临时改成手动触发；当天晚些时候账单恢复、runner 正常，这里恢复自动触发。
 on:
+  push:
+    branches: [main, master]
+  pull_request:
   workflow_dispatch:
-  # push:
-  #   branches: [main, master]
-  # pull_request:
 
 jobs:
   test:
