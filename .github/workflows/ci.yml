@@ -29,12 +29,22 @@ jobs:
       - name: Run backend tests
         run: npm test
 
+      # 覆盖率门槛只在一个 leg 上跑：--test-coverage-* 系列参数要 Node >=22.8，
+      # Node 20 leg 会把它当成未知参数直接失败。其余 leg 仍跑全量 npm test。
+      - name: Coverage floor (backend src/)
+        if: matrix.node-version == '22'
+        run: npm run test:coverage
+
       - name: Install web dependencies
         working-directory: web
         run: npm install --ignore-scripts --no-audit --no-fund
 
       - name: Run frontend tests
         run: npm run test:web
+
+      - name: Coverage floor (web/src)
+        if: matrix.node-version == '22'
+        run: npm run test:coverage:web
 
       - name: Build web bundle
         run: npm run build

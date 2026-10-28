@@ -159,3 +159,17 @@
 - 规划子代理：未使用——条目为 CI 配置类，改前只有「3 文件 + 1 个脚本」的预估，实际该条的真实边界（脚本已失效）只能靠本地实跑发现，规划子代理在只读模式下给不出这个结论。
 - 旁注：本地 playwright 装在 `.tools/pw-venv`（`python3 -m venv` + `pip install playwright` + `playwright install chromium`，走 127.0.0.1:7897 代理）；`.tools/` 已被 gitignore，不进提交。
 - 下次可做：其余 7 个 `browser-*.py` 仍是旧 UI 断言（已作为 `[plan]` 条目入 BACKLOG）；`package-lock.json` 的 `engines` 仍是 `>=18`（也已入队）。
+
+## 2026-10-28 · 覆盖率门槛进 CI（行/分支/函数三档下限）
+
+- 条目：P1「覆盖率：`node --test --experimental-test-coverage`，把当前值设为 CI 下限」。只做这一条，未动其它条目。
+- 实测基线（Node v26.8.1，本机）：后端 `src/` 行 97.79 / 分支 85.61 / 函数 93.25；前端 `web/src/` 行 91.37 / 分支 88.95 / 函数 90.76。
+- 关键发现：直接按条目原话跑 `node --test --experimental-test-coverage test/*.test.js`，报告里会混进 `web/src/lib/*`（`filler-playback.js` 25%、`realtime.js` 65%、`preview-playback.js` 92%）——这些模块由前端套件覆盖，后端套件只是把它们加载进来。聚合值是 91.04/84.06/88.38，设成「后端下限」等于把前端缺口记在后端账上，且前端真掉线时也不会红。所以两个脚本都加 `--test-coverage-include`（`src/**/*.js` / `web/src/**/*.js`），范围与测试套件一一对应。
+- 下限取实测下浮：后端 `--test-coverage-lines=96 --test-coverage-branches=83 --test-coverage-functions=92`；前端 `90/86/89`。行/函数留约 1.5 个点，分支留约 2.5 个点——四次实跑，行覆盖恒定 97.79（稳），分支覆盖在 `audio-duration.js`（96.15↔98.04）、`service.js`（87.24↔88.14）、`tts-http.js`（87.84↔89.04）之间抖，聚合 85.46/85.49/85.53/85.61。抖动来自这些模块里只在某些异步顺序下才走到的兜底分支，不是测试缺陷；分支卡到 84 就只剩 1.5 个点余量，跨 Node 版本容易误报。
+- Node 版本约束：`--test-coverage-include/-lines/-branches/-functions` 都是 **Node ≥22.8** 才有的参数，Node 20 leg 会当成未知参数直接失败（比覆盖率不达标更难读）。因此 CI 只在 `matrix.node-version == '22'` 的 leg 上加两个步骤，20/24 leg 照旧跑全量 `npm test` / `npm run test:web`；`npm test` 本身未改动，本地快跑不受影响。
+- 改动：`package.json`（+2 scripts）、`.github/workflows/ci.yml`（+2 steps，含注释说明为何单 leg）、`README.md`（验证小节加了覆盖率表与 Node 约束）、`docs/iteration-automation.md`（第 8 条标记完成）。
+- 反向验证：把后端行阈值临时改成 99 → `npm run test:coverage` exit 1，输出 `ℹ Error: 97.79% line coverage does not meet threshold of 99%.`；改回 96 → exit 0。CI YAML 用 `yaml` 包真解析，确认两个步骤的 `if` 落在正确位置（`matrix.node-version == '22'`），不是加在 job 级。
+- 测试：后端 284 全绿 / 前端 100 全绿 / `npm run build` 成功（仅 rolldown 既有 `use client` 指令警告，`dist/` 无 diff）。
+- 规划子代理：未使用——条目是 CI 配置类、预估 4 文件 ~30 行，实际边界（include 该圈多大、Node 20 不认参数）靠本地实跑一眼看出，只读规划子代理拿不到这些输出。
+- 下次可做：`package-lock.json` 的 `packages[""].engines` 仍是 `>=18`（BACKLOG 里下一条，已排队）。
+
