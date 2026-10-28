@@ -196,11 +196,15 @@ if [ "$DEPLOY" -eq 1 ]; then
   dsh plugin --profile web add "$TGZ" --ignore-scripts >>"$LOG" 2>&1 || die "dsh plugin add failed"
 
   step "restart dsh web"
-  OUT="$(bash "$ROOT/scripts/restart-dsh.sh" 2>&1)"; RC=$?
-  say "$OUT"
-  [ "$RC" -eq 0 ] || die "dsh web restart failed (see log above)"
-  WEBLOG="$(printf '%s' "$OUT" | grep -o '/[^ ]*web-[0-9T]*\.log' | head -1)"
-  TOKEN="$(printf '%s' "$OUT" | grep -o 'token=[A-Za-z0-9_-]*' | head -1)"
+  # 不能用 $(...) 捕获：后台启动的 dsh 会继承管道写端，命令替换会一直等到超时。
+  # 改为写临时文件，父进程立即返回。
+  ROUT="$(mktemp)"
+  bash "$ROOT/scripts/restart-dsh.sh" >"$ROUT" 2>&1; RC=$?
+  while IFS= read -r line; do say "$line"; done <"$ROUT"
+  [ "$RC" -eq 0 ] || { rm -f "$ROUT"; die "dsh web restart failed (see log above)"; }
+  WEBLOG="$(grep -o '/[^ ]*web-[0-9T]*\.log' "$ROUT" | head -1)"
+  TOKEN="$(grep -o 'token=[A-Za-z0-9_-]*' "$ROUT" | head -1)"
+  rm -f "$ROUT"
 
   step "verify installed build"
   INST="$(node -p "require('$HOME/.dsh/profiles/web/node_modules/dsh-voice-workbench/package.json').version" 2>/dev/null || echo missing)"

@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # 重启 dsh web 并等待就绪；被 release.sh 调用，也可单独执行做演练。
-# 关键点：必须从 $HOME 启动（qqbot_send_file 的路径白名单包含进程 cwd），
-# 并且必须在脚本父进程退出后继续存活（nohup + 子 shell 双保险）。
+#
+# 两个必须成立的条件：
+# 1. 从 $HOME 启动 —— qqbot_send_file 的路径白名单包含进程 cwd。
+# 2. 子进程不能继承调用方的 stdout/管道 —— 否则调用方（cron 的 terminal 工具、
+#    $(...) 命令替换）会一直等 EOF 直到超时。用 setsid + close_fds 彻底脱钩。
 set -uo pipefail
 export PATH="/Users/mac/.nvm/versions/node/v26.8.1/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${PATH:-}"
 HOME_DIR="${HOME:?}"
@@ -19,7 +22,21 @@ else
   echo "dsh web not running, starting fresh"
 fi
 
-( cd "$HOME_DIR" && nohup dsh web --no-open >"$LOG" 2>&1 & )
+python3 - "$LOG" <<'PY'
+import os, subprocess, sys
+log_path = sys.argv[1]
+log = open(log_path, "ab", buffering=0)
+subprocess.Popen(
+    ["dsh", "web", "--no-open"],
+    cwd=os.path.expanduser("~"),
+    stdin=subprocess.DEVNULL,
+    stdout=log,
+    stderr=log,
+    start_new_session=True,   # setsid：脱离调用方的进程组
+    close_fds=True,
+)
+print("spawned dsh web (detached)")
+PY
 
 for _ in $(seq 1 60); do
   CODE="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:3080/" 2>/dev/null || echo 000)"
