@@ -8,7 +8,7 @@ test('a normalized realtime settings object passes validation',()=>{
 })
 
 test('invalid workspace, prompt and tool lists are flagged and clear on correction',()=>{
-  let settings=normalizeSettings()
+  const settings=normalizeSettings()
   settings.workspace='x'.repeat(3000)
   settings.system_prompt='y'.repeat(9000)
   settings.enabled_tools=[123]

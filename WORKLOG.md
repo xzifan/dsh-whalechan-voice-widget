@@ -303,3 +303,18 @@
 - 顺带把 `docs/prettier-migration-plan.md` 的分批表更新成实际状态：md+docs 标 S2 已完成（6→7 文件、139→187 行）、`lib/client.js` 标 S3 已完成。
 - 测试：后端 **306** / 前端 **101** 全绿；`npm run lint` 0 问题、`format:check` 全仓通过（`/lib/` 出账本后 `prettier --check .` 覆盖到 `lib/client.js` 也全绿）、`npm run build` 成功且 `dist/` 无改动（git status 只有本轮三个文件）、`npm run test:browser` 实跑 PASS（真 `lib/client.js` + `dist/web` iframe，含设置回环、实时回合与 110/390px 无横向溢出）。改动：`.prettierignore`（+2/−1）、`lib/client.js`（+141/−48）、`docs/prettier-migration-plan.md`（表格 6 行）、`BACKLOG.md`、`WORKLOG.md`。未用规划子代理（非 `[plan]`、单文件、改动 ≤200 行、不改对外行为）。
 - 下次可做：BACKLOG 顶上「重排完成后再上 husky + lint-staged」还得等 S4/S5/S6/S7 的目录迁移（`test/` 6181、`web/src/lib/` 2913、`web/src/` 其余 7908、`src/` 4269 行），而它们全挂在「需要产品决策」的 200 行豁免上；不豁免时能直接做的是「收紧 `prefer-const`」（实测 6 处 `let`→`const`）与「对齐 `package-lock.json` 的 `packages[""].engines`」（1 行级改动）。
+
+## 2026-10-29 · P1「收紧 `prefer-const`」（J1 迭代班次）
+
+- 条目：P1「收紧 `prefer-const`（实测 6 处 `let`→`const`）」。**跃过了排在最上面的「husky + lint-staged」**：那条的前置是「重排完成」，而 S4–S7 的目录迁移全挂在「需要产品决策·200 行豁免」上，本班次无权拍板，所以在 BACKLOG 里给它加了 `⛔ 阻塞待决策` 标记而不是反复来取它。本轮仍然只做 1 条。
+- 改动：`eslint.config.js` 加 `'prefer-const': 'error'`，注释写明**不用** `ignoreReadBeforeAssign: true` 去豁免那 1 处「先声明后一次性赋值」——豁免会让全仓同类写法都漏过检查，为 1 行代码削弱规则不划算，改代码比改规则便宜。
+- 6 处全手改（ESLint 自己只肯自动修 4 处，全手改是为了让 diff 保持最小、可逐行评审）：
+  - `src/audit-log.js`：`let records = [], bytes = 0, sequence = 0, storageError, normalized` 拆成 `const records = []` + 保留 `let bytes/sequence/storageError/normalized`（后四个确实会重赋值）。
+  - `src/service.js`：`settingsLoad` 是一次性 Promise，`let`→`const`。
+  - `web/src/lib/configuration.test.js`：`settings` 只做属性修改，`let`→`const`。
+  - `web/src/lib/realtime.test.js` 2 处：两个用例里 `state` 从头到尾没重赋值 → `const`；**真正会重赋值的那条 `let state`（首条历史用例）保持 let**，这正好是规则不误报的活样本。
+  - `web/src/lib/core.js` 的 `bridgeRequest`：删掉 `let timer` + 后面那句 `timer = setTimeout(...)`，改成赋值处 `const timer = setTimeout(...)`。这是本轮唯一有语义风险的改动，判定依据是三个引用方（`cleanup` / `abort` / `receive`）都是异步回调，`setTimeout` 之前不可能执行，故不会踩 TDZ；`web/src/lib/core.test.js` 的 abort 用例也确认 `controller2.abort()` 发生在 `bridgeRequest` 返回之后，不是「构造期同步 abort」。
+- 元测试：`test/lint-config.test.js` 第 5 条，用 ESLint API 跑合成 `probe(flag)`，断言恰好 2 条 `prefer-const`（`fixed` 一次赋值、`deferred` 先声明后赋值）、severity=2、且 `growing`（真被重新赋值）**不**报。锁的是「规则真的在跑」而不是配置里的字面量。
+- **变异验证**（不是推断）：把配置里那行换掉 → `node --test test/lint-config.test.js` 恰好红 1 条，报 `prefer-const 应恰好报 2 条，实际：(无)`；还原后 6/6 绿。
+- 测试：后端 **306 → 307** 全绿、前端 **101** 全绿；`npm run lint` 0 问题、`format:check` 通过、`npm run build` 成功（build 后按惯例 `git checkout -- dist` 并删掉新 hash 产物 `index-CReRi_3c.js`，构建产物未进提交）、`test:browser` 实跑 **PASS**（`npm run test:browser` 走的是系统 `python3`、没装 playwright，实际用的是 `.tools/pw-venv/bin/python test/browser-smoke.py`——这一条值得记：以后跑冒烟别直接 `npm run test:browser`）。改动 7 文件 / 40 插入 / 7 删除 = **47 行**，未用规划子代理（非 `[plan]`、单条规则 + 6 处一行级改动、不改对外行为）。
+- 下次可做：①「对齐 `package-lock.json` 的 `packages[""].engines`」（仍是 `>=18`，1 行级，但要连带 `npm install` 刷新 lock 才算真对齐）；②「夜间真实链路冒烟」本体；③「`[plan]` 重写 7 个浏览器脚本」需要先派只读子代理盘点失效断言。**husky + lint-staged 与 Prettier S4–S7 在决策落地前一律不动**。

@@ -132,7 +132,8 @@ export function createAuditLog({ path, maxRecords = 2000, maxBytes = 10 * 1024 *
     record.voice === undefined ? '' : JSON.stringify(record.voice),
     record.usage == null ? '' : JSON.stringify(record.usage),
   ].filter(value => typeof value === 'string' && value).join('\n').toLowerCase()
-  let records = [], bytes = 0, sequence = 0, storageError, normalized
+  const records = []
+  let bytes = 0, sequence = 0, storageError, normalized
   const visibleRecords = () => normalized ??= responseRecords(records)
   const lineSize = record => Buffer.byteLength(JSON.stringify(record)) + 1
   function bound() {

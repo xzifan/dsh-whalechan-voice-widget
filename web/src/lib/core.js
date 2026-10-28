@@ -64,7 +64,6 @@ export function bridgeRequest(path, method, body, signal) {
   return new Promise((resolve, reject) => {
     const id = newId()
     if (signal?.aborted) { reject(new DOMException('Aborted', 'AbortError')); return }
-    let timer
     const cleanup = () => {
       window.removeEventListener('message', receive)
       signal?.removeEventListener('abort', abort)
@@ -82,7 +81,9 @@ export function bridgeRequest(path, method, body, signal) {
     }
     window.addEventListener('message', receive)
     signal?.addEventListener('abort', abort, {once: true})
-    timer = setTimeout(() => {
+    // const 而非「let timer 后赋值」：本函数的引用方（cleanup/abort/receive）都是
+    // 异步回调，setTimeout 之前不可能执行，所以提前到赋值处声明不会踩 TDZ。
+    const timer = setTimeout(() => {
       cleanup()
       window.parent.postMessage({type: 'voice-workbench:abort', id}, window.location.origin)
       reject(new Error('请求超时，请检查插件连接后重试'))

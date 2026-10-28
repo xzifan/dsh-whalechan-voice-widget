@@ -64,6 +64,32 @@ test('eslint counts JSX element names as references, so .jsx needs no react plug
   assert.match(unused[0].message,/'Dead'/)
 })
 
+test('eslint wires prefer-const: single-assignment let is an error, reassigned let is not',async()=>{
+  // 锁的是「prefer-const 这条门禁真的在跑」，不是配置文件里的字面量：用 ESLint API
+  // 跑一段合成代码，断言恰好两条（`fixed` 一次赋值、`deferred` 先声明后一次性赋值），
+  // 而 `growing` 真的被重新赋值所以不能报——规则开得太宽会把这条变成噪音来源。
+  const {ESLint}=await import('eslint')
+  const root=fileURLToPath(new URL('..',import.meta.url))
+  const eslint=new ESLint({cwd:root})
+  const code=[
+    'export function probe(flag){',
+    '  let fixed=1',
+    '  let growing=1',
+    '  let deferred',
+    '  deferred=flag??0',
+    '  if(flag) growing+=fixed+deferred',
+    '  return growing',
+    '}',
+  ].join('\n')
+  const [result]=await eslint.lintText(code,{filePath:join(root,'src','__prefer-const-probe.js')})
+  const hits=result.messages.filter(message=>message.ruleId==='prefer-const')
+  const reported=result.messages.map(message=>`${message.ruleId}: ${message.message}`).join(' | ')||'(无)'
+  assert.equal(hits.length,2,`prefer-const 应恰好报 2 条，实际：${reported}`)
+  for(const hit of hits) assert.equal(hit.severity,2,'prefer-const 必须是 error')
+  const named=hits.map(hit=>(hit.message.match(/'([^']+)'/)||[])[1]).sort()
+  assert.deepEqual(named,['deferred','fixed'],`prefer-const 点名的变量不对：${reported}`)
+})
+
 test('eslint wires react-hooks: conditional hook is an error, missing dep is a warning',async()=>{
   // 锁的是「hooks 门禁真的接上了」，不是配置文件里的字面量：用 ESLint API 跑一段
   // 必然违规的合成代码。哪天插件被移除/规则名写错，这里先红。

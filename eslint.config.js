@@ -45,6 +45,11 @@ export default [
       ],
       eqeqeq: ['error', 'smart'],
       'no-var': 'error',
+      // 与 no-var 配对：能 const 就必须 const。开启前实测 6 处（1 处是
+      // 「先声明后一次性赋值」，其余是纯 let 惯性），已全部收成 const；
+      // 刻意不用 ignoreReadBeforeAssign:true 去豁免那 1 处，那会让全仓的
+      // 「先读后赋」都漏过检查，为 1 行代码削弱规则不划算。
+      'prefer-const': 'error',
     },
   },
   {

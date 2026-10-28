@@ -93,7 +93,7 @@ export function createService(config = {}, dependencies = {}) {
     return { valid: Object.keys(errors).length === 0, errors, warnings, checked: 'configuration', networkTested: false, next }
   }
 
-  let settingsLoad = readFile(settingsPath, 'utf8').then(raw => { settings = validateSettings(JSON.parse(raw)) }).catch(e => { if (e.code !== 'ENOENT') throw new RequestError('工作台配置无法读取，请检查配置文件', 500) })
+  const settingsLoad = readFile(settingsPath, 'utf8').then(raw => { settings = validateSettings(JSON.parse(raw)) }).catch(e => { if (e.code !== 'ENOENT') throw new RequestError('工作台配置无法读取，请检查配置文件', 500) })
 
   function realtimeSettings(input = settings) {
     const s = input && typeof input === 'object' ? input : settings

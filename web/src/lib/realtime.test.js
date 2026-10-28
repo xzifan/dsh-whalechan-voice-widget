@@ -142,7 +142,7 @@ test('continuous history retains two turns and updates final transcripts in plac
 })
 
 test('speech interruption preserves partial response and accepts the next turn', () => {
-  let state = reduceEvents([
+  const state = reduceEvents([
     { type: 'user-transcript-done', text: 'question' },
     { type: 'transcript-delta', text: 'partial answer' },
     { type: 'speech-started' },
@@ -359,7 +359,7 @@ test('concurrent tools persist in shared timeline through done and finish in pla
 })
 
 test('repeated tool events neither duplicate nor reopen finished calls or reorder messages', () => {
-  let state = reduceEvents([
+  const state = reduceEvents([
     { type: 'tool-start', name: 'read', callId: 'a', seq: 1 },
     { type: 'tool-start', name: 'read', callId: 'a', seq: 1 },
     { type: 'transcript-delta', messageId: 'm', text: 'result' },
