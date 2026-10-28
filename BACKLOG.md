@@ -22,7 +22,9 @@
 ## P2 · 结构性改进
 
 - [ ] 火山引擎 Realtime：给出接入时间点，或从声音设置下拉里移除 WorkInProgress 项
-- [ ] [plan] 拆分 `src/service.js`(592 行) 与 `src/realtime-service.js`(558 行)：会话生命周期 / 工具桥接 / 配置读写分层
+- [ ] [plan] 拆分 `src/service.js`(617 行) 与 `src/realtime-service.js`(558 行)：按 `docs/refactor-split-plan.md` 先做步骤 1（抽 `realtime-protocol.js`）
+- [ ] 拆分步骤 2：抽 `src/voice-tool-bridge.js`（voice 工具桥接，122 行；收益最大，注意 mutate 不可重入与 settings getter）
+- [ ] 拆分步骤 3：抽 `src/voice-synthesis.js`（合成层，62 行；realtime-tts 有 24 条断言盯着字段）
 - [ ] [plan] 首字延迟、打断响应、TTS 合成耗时进 `statistics` 聚合（p50/p95），把延迟风险变成指标
 - [ ] 审计容量策略：2000 条 / 10 MiB 之外的按周归档或导出
 

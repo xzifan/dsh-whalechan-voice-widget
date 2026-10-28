@@ -78,6 +78,17 @@
 - P0 剩余三项在 BACKLOG 顶部，由 J1 下一轮开始做。
 - `/health` 已实现并接入发布校验，但要等下一个补丁版本（明天 16:00 的 0.6.2）才在运行实例上生效。
 
+## 2026-10-28 · 规划子代理首跑：拆 service.js 的计划
+
+- 触发方式：主会话 `delegate_task`，单任务、只读 goal（写死禁止改文件与 git 写操作）。
+- 结果：101 秒、11 次 API 调用，产出可执行计划，已固化为 `docs/refactor-split-plan.md`。
+- 质量判断（主代理决策依据）：
+  - 它纠正了 BACKLOG 里过期的行数（592 → 617，因为当天新增 health 端点），说明读的是真代码而不是凭记忆。
+  - 抓到了两条我原本没写进计划的风险：`test/adapter.test.js` 锁死 `routes.length === 23`；`WebSocketCtor` 是默认参数、调用时求值，挪错会让 `connect()` 静默 return 而测试抓不到（所有测试都注入了它）。
+  - 给出了可验证的顺序依据：步骤 1 纯常量无状态、测试零改动，所以先做。
+- 决策：采纳，但把「一次 200 行」拆成三张独立票（步骤 1/2/3 各一条 BACKLOG），`createRealtimeSession` 与 `initializeSessionVoice` 不进本轮。
+- 结论：cron 里该机制走同步内联，父进程要等子代理；101 秒远低于 600 秒空闲看门狗，节奏安全。只有 `[plan]` 条目会触发，机械条目不受影响。
+
 ## 2026-10-28 · 推送修复：git 没走系统代理
 
 - 现象：`git push` 分别报过 `Operation timed out`、`Error in the HTTP2 framing layer`、`Empty reply from server`。
