@@ -315,18 +315,20 @@ PY
   step "verify installed build"
   INST="$(node -p "require('$HOME/.dsh/profiles/web/node_modules/dsh-voice-workbench/package.json').version" 2>/dev/null || echo missing)"
   [ "$INST" = "$NEXT_VERSION" ] || die "installed version $INST != $NEXT_VERSION"
-  # 刚重启时服务端可能还没准备好接受 token 登录（实测过：立刻请求会拿不到 cookie，
-  # 后续 API 一律 401）。这里重试到 200，最多 20 秒。
+  # 刚重启时首页能应答、但 token 登录还要过一会儿才就绪（实测：20 秒内全是 401，
+  # 40 秒后 5/5 成功）。这里给到 60 秒，并只把 login!=303 视为未就绪。
+  sleep 3
   API_CODE=""
-  for _ in $(seq 1 20); do
+  for _ in $(seq 1 60); do
     JAR="$(mktemp)"; rm -f "$JAR"
-    curl -s -c "$JAR" -b "$JAR" -o /dev/null "http://127.0.0.1:3080/?$TOKEN"
+    LOGIN_CODE="$(curl -s -c "$JAR" -b "$JAR" -o /dev/null -w '%{http_code}' "http://127.0.0.1:3080/?$TOKEN")"
+    [ "$LOGIN_CODE" = "303" ] || { rm -f "$JAR"; sleep 1; continue; }
     API_CODE="$(curl -s -b "$JAR" -o "$LOGDIR/health-check.json" -w '%{http_code}' "http://127.0.0.1:3080/api/voice-workbench/health")"
     rm -f "$JAR"
     [ "$API_CODE" = "200" ] && break
     sleep 1
   done
-  [ "$API_CODE" = "200" ] || die "health API returned $API_CODE after 20s (plugin not mounted?)"
+  [ "$API_CODE" = "200" ] || die "health API returned $API_CODE after 60s (plugin not mounted?)"
   HEALTH="$(python3 - "$LOGDIR/health-check.json" "$NEXT_VERSION" <<'PY'
 import json, sys
 try: d = json.load(open(sys.argv[1]))
