@@ -14,7 +14,7 @@
 | 已装到 dsh | `~/.dsh/profiles/web` 里是 **0.21.0** 的 tgz |
 | 源码声明版本 | **0.6.0**（`package.json` + `CHANGELOG.md` 顶部） |
 | git | 只有 1 个 commit（`Initial commit`），**没有任何 tag**；remote `xzifan/dsh-whalechan-voice-widget` 已配置，`gh` 已登录且有 `repo` scope |
-| CI | GitHub Actions 跑 node 18/20/22 的后端测试 + 前端测试 + build + pack 检查；**不含**浏览器 e2e |
+| CI | GitHub Actions 跑 node 20/22/24 的后端测试 + 前端测试 + build + pack 检查，外加独立 `browser-smoke` job（playwright + chromium，跑 `test/browser-smoke.py`） |
 | 遗留物 | 根目录 36 个 `dsh-voice-workbench-*.tgz`（0.2.0 → 0.21.0）、未跟踪的 `package/` 目录 |
 
 最大的问题不是功能，而是**发布状态不可信**：源码说 0.6.0，dsh 里装的是 0.21.0，没有任何 tag 能说明哪个 commit 对应哪个产物。在这种状态下做自动发版，只会把混乱自动化。
@@ -31,7 +31,7 @@
 
 ### P1 — 两周内把"能自动验证"补齐
 
-6. **e2e 冒烟进 CI**：`test/browser-*.py` 已经用假麦克风 + mock API 写了成套用例，但本地没装 playwright、CI 也没跑。装 playwright + chromium 后先在 CI 跑 `browser-smoke.py`，这是唯一能覆盖"插件装进去之后页面真的能打开"的检查。
+6. **e2e 冒烟进 CI**（2026-10-28 完成）：CI 增加独立 `browser-smoke` job —— `setup-python` + `playwright install --with-deps chromium`，build 后跑 `npm run test:browser`（即 `test/browser-smoke.py`）。原脚本写在 UI 重构之前（依赖「小鲸鱼娘在这里。」标题、音色三角、`/debug`、`/tune` 这些已不存在的入口），本轮按现 UI 重写为挂载冒烟：宿主页面挂真实 `lib/client.js` → iframe 载 `dist/web` → 侧边栏导航 → 设置保存回环 → 实时会话（合成麦克风、mock 事件流含工具时间线）→ 结束并释放麦克风 → 110/390px 无横向溢出。其余 7 个 `browser-*.py` 仍基于旧 UI（部分还要求 `PLAYWRIGHT_CHROMIUM_EXECUTABLE`），已在 BACKLOG 里单独立项。
 7. **健康检查端点**：加 `GET /api/voice-workbench/health`（返回版本、已加载工具数、TTS provider、realtime 连接状态）。现在发布后只能用 `curl /` 猜 bundle hash，判断不了插件是否真的挂载。
 8. **覆盖率门槛**：`node --test --experimental-test-coverage`，把当前值设为下限，防止新增代码只写实现不写测试。
 9. **lint / format**：ESLint flat config + Prettier，接进 CI 和 `prepack`。当前没有任何静态检查，纯靠测试兜底。

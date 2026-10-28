@@ -135,4 +135,14 @@ dsh plugin --profile web add /绝对路径/dsh-voice-workbench-<版本>.tgz --ig
 
 后端测试覆盖实时会话、音色设计、人格、工具执行与配置校验；前端测试覆盖 PCM 编解码、事件状态机、打断与配置规范化。浏览器自动化使用合成音频，不录制用户环境声音。真实物理麦克风、声卡回声与网络波动仍需在用户设备上试听确认。
 
+`test/browser-smoke.py` 是 CI 的独立 e2e 门禁（job `browser-smoke`）：把真实的 `lib/client.js` 挂进宿主页面、iframe 载入 `dist/web` 构建产物、合成麦克风持续发声，插件 API 全部由 mock 拦截，因此不需要 dsh、不需要凭据、不产生任何外部请求。本地复现：
+
+```sh
+npm run build
+python3 -m pip install playwright && python3 -m playwright install chromium
+npm run test:browser
+```
+
+（本机若在 venv 里装了 playwright，把该 venv 的 `bin` 放到 PATH 前面即可，脚本默认用 `python3`。）
+
 协议依据：[Qwen 实时语音对话](https://help.aliyun.com/zh/model-studio/qwen-audio-realtime-user-guides)、[Realtime WebSocket](https://help.aliyun.com/zh/model-studio/fun-audiochat-realtime-websocket-api)、[声音设计](https://help.aliyun.com/zh/model-studio/voice-design-user-guide)、[声音复刻](https://help.aliyun.com/zh/model-studio/voice-cloning-user-guide)。

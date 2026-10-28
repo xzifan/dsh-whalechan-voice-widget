@@ -41,3 +41,40 @@ jobs:
 
       - name: Verify package contents
         run: npm run pack:check
+
+  browser-smoke:
+    # e2e gate: the real plugin bundle mounting inside a host page, driven by a
+    # synthetic microphone against fully mocked plugin APIs (no network calls).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install backend dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Build web bundle
+        run: npm run build
+
+      - name: Use Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Playwright + Chromium
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Plugin mount smoke (fake microphone, mock APIs)
+        run: npm run test:browser

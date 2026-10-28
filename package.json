@@ -36,6 +36,7 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "test:web": "node --test web/src/lib/*.test.js",
+    "test:browser": "python3 test/browser-smoke.py",
     "build": "npm --prefix web run build",
     "pack:check": "npm pack --dry-run"
   },

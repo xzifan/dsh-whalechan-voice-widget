@@ -146,3 +146,16 @@
 - 测试：后端 284 全绿（280 + 新增 4）/ 前端 100 全绿 / `npm run build` 成功（仅 rolldown 既有 `use client` 指令警告）。
 - 规划子代理：未使用（2 个文件：1 个新测试 + CI 1 行配置，无接口或数据结构变化）。
 - 下次可做：`package-lock.json` 的 `packages[""].engines` 仍是 `>=18`，与 `package.json` 的 `^20.19.0 || >=22.12.0` 不一致（上一轮 Node 下限只改了三处，漏了 lock 文件）；本轮未动，建议下一轮补 `npm install --package-lock-only` 或手工对齐后加一条断言。
+
+## 2026-10-28 · 浏览器 e2e 冒烟进 CI（playwright + chromium）
+
+- 条目：P1「playwright + chromium 进 CI，先跑 `test/browser-smoke.py`」。
+- CI：`.github/workflows/ci.yml` 新增独立 job `browser-smoke`（不塞进现有 matrix，e2e 失败不掩盖单测结果）：Node 22 + root/web 装依赖 → `npm run build` → `setup-python@v5`(3.12) → `pip install playwright` + `playwright install --with-deps chromium` → `npm run test:browser`。`package.json` 因此多了 `test:browser` 脚本（`python3 test/browser-smoke.py`）。
+- 关键发现：`test/browser-smoke.py` 已经**随 UI 重构失效**，不是“装了 playwright 就能跑”。本地装好 playwright 1.60 + chromium headless shell 后第一次运行就卡在首个断言：`heading "小鲸鱼娘在这里。"` 10s 超时（实际页面渲染正常，`#root` 有完整 DOM）。逐一核对后确认脚本里这些入口在当前 `web/src` 均已不存在：「小鲸鱼娘在这里。」（现为「和小鲸鱼娘聊一会儿」）、`tab 对话/设置`（现为侧边栏 `SidebarMenu aria-label="主导航"`）、`音色三角配比`/`试听示例文本`/`等待时说一句`/`调音语言`（grep 命中 0）、`/debug` 与 `/tune` 两个被 mock 的接口（`web/src` 里已无调用）；`已停止` 现为「对话已结束」。
+- 处理方式：把 `browser-smoke.py` 按现 UI 重写为**挂载冒烟**（204 行 → 100 行），保留原 mock 路由骨架，覆盖 CI 真正需要证明的一条链：宿主页面挂真实 `lib/client.js` → iframe 载 `dist/web` 构建产物 → 侧边栏 `主导航` + 「开始对话」可用 → 设置页保存回环（`保存设置` 触发 PUT，断言 `system_prompt` / `enabled_tools==['read']`（先 uncheck `glob`）/ `workspace`）→ 实时会话（合成麦克风持续发声，`/realtime/events` 返回脚本化 `user-transcript-done → tool-start → tool-end → transcript-done → done`，断言「在呢，主人。」与工具时间线「已完成」+ `Call ID: call-1`）→ `结束对话` 触发 `/realtime/end`、麦克风轨道全部 `ended` → 110/390px 无横向溢出、零 pageerror、零外部请求。
+- 迭代过程中确认的两个 mock 细节（都踩过一次）：`action` 是 URL 里 `/api/voice-workbench/` 之后的部分，所以事件轮询是 `realtime/events` 而不是 `events`（写成 `events` 会静默落到兜底分支，脚本一直等不到回复）；`rtStop()` 里 `/realtime/end` 是 `void api(...).catch()`，断言调用记录会早一拍，改用 `page.expect_response` 包住点击。
+- 反向验证：本地 `npm run test:browser` 实跑 PASS，且 `npm run build` 后 `dist/` 无 diff（构建产物与提交一致，脚本测的是真 bundle）。
+- 测试：后端 284 全绿 / 前端 100 全绿 / `npm run build` 成功（仅 rolldown 既有 `use client` 指令警告）。
+- 规划子代理：未使用——条目为 CI 配置类，改前只有「3 文件 + 1 个脚本」的预估，实际该条的真实边界（脚本已失效）只能靠本地实跑发现，规划子代理在只读模式下给不出这个结论。
+- 旁注：本地 playwright 装在 `.tools/pw-venv`（`python3 -m venv` + `pip install playwright` + `playwright install chromium`，走 127.0.0.1:7897 代理）；`.tools/` 已被 gitignore，不进提交。
+- 下次可做：其余 7 个 `browser-*.py` 仍是旧 UI 断言（已作为 `[plan]` 条目入 BACKLOG）；`package-lock.json` 的 `engines` 仍是 `>=18`（也已入队）。

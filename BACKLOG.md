@@ -15,11 +15,13 @@
 
 ## P1 · 自动验证能力
 
-- [ ] playwright + chromium 进 CI，先跑 `test/browser-smoke.py`（假麦克风已就绪，本地目前没装 playwright）
+- [x] playwright + chromium 进 CI，先跑 `test/browser-smoke.py`（假麦克风已就绪，本地目前没装 playwright）（2026-10-28：CI 新增独立 `browser-smoke` job——`setup-python@v5` + `playwright install --with-deps chromium`，root/web 装依赖 → `npm run build` → `npm run test:browser`；`package.json` 加 `test:browser` 脚本。**脚本本身已随 UI 重构失效**：断言里的「小鲸鱼娘在这里。」「音色三角配比」「试听示例文本」「等待时说一句」和 `/debug`、`/tune` 接口在当前 `web/src` 里都不存在（本地实测首个断言就 10s 超时），因此按现 UI 重写为挂载冒烟：宿主页面挂真实 `lib/client.js` → iframe 载 `dist/web` → 侧边栏导航 → 设置保存回环（PUT 断言 system_prompt/enabled_tools/workspace）→ 实时会话（合成麦克风 + 脚本化 `/realtime/events` 含工具时间线）→ 结束并释放麦克风 → 110/390px 无横向溢出。本地已装 playwright 1.60 + chromium headless shell 实测 PASS）
 - [x] 新增 `GET /api/voice-workbench/health`，返回版本 / 工具数 / TTS provider / realtime 状态，作为发布后验证入口（2026-10-28 完成，已接入 `release.sh` 的部署校验）
 - [ ] 覆盖率：`node --test --experimental-test-coverage`，把当前值设为 CI 下限
 - [ ] ESLint(flat) + Prettier 接入 CI 与 `prepack`
 - [ ] 夜间真实链路冒烟（百炼 TTS 一句 + Realtime 握手 5s），限流、失败只告警不阻塞发布
+- [ ] [plan] 重写其余 7 个浏览器脚本（`browser-platform/-history/-statistics/-audit-table/-breeze-voice/-voice-presets/-startup-initialization.py`）：它们写在 UI 重构之前，断言「音色三角配比」「试听示例文本」「等待时说一句」「调音语言」等已不存在的入口，且多数硬依赖 `PLAYWRIGHT_CHROMIUM_EXECUTABLE`；先只读盘点各自失效断言与现 UI 的对应关系，再决定逐条修复还是合并进 `browser-smoke.py`
+- [ ] 对齐 `package-lock.json` 的 `packages[""].engines`（仍是 `>=18`，与 `package.json` 的 `^20.19.0 || >=22.12.0` 不一致，上一轮 Node 下限只改了三处）
 
 ## P2 · 结构性改进
 
