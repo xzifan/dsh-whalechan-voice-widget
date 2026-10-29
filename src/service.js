@@ -13,6 +13,7 @@ import { createAuditLog, sanitizeAuditRecord, numericUsage } from './audit-log.j
 import { designVoice, synthesizeTts } from './voice-design.js'
 import { createVoiceToolBridge, breezeDisabled } from './voice-tool-bridge.js'
 import { createVoiceSynthesis } from './voice-synthesis.js'
+import { createVoiceInitialization } from './voice-initialization.js'
 import { readPersona, assembleRealtimeInstruction } from './persona.js'
 import { randomUUID } from 'node:crypto'
 
@@ -186,52 +187,13 @@ export function createService(config = {}, dependencies = {}) {
     return next
   }
 
-  // A configured voice is already initialized; never replace an explicitly
-  // selected voice merely because it was created outside this workbench.
-  async function initializeSessionVoice(input, signal) {
-    if (input.realtime.use_tts_voice === false) return null
-    const provider = input.tts_voice_provider || 'qwen'
-    const requestedVoice = String(input.tts_profiles?.[provider]?.voice || '').trim()
-    const patchFor = profile => ({ tts_voice_provider: provider, tts_profiles: { [provider]: { voice: profile.voice, model: profile.model } } })
-    const scope = input => {
-      if (provider === 'qwen') return { host: input.realtime.api_host || '', key_file: input.realtime.key_file || '', source: input.realtime.credential_source || 'auto', ref: input.realtime.credential_ref }
-      const { voice, ...profile } = getTtsProfile({ tts_provider: provider, tts_profiles: input.tts_profiles }) || {}
-      return profile
-    }
-    const sameScope = () => JSON.stringify(scope(input)) === JSON.stringify(scope(settings))
-    if (provider === 'breeze') {
-      requireValue(sameScope() && settings.tts_voice_provider === provider, '请先保存声音设置，再开始对话', 409)
-      await modelCredential('breeze')
-      signal?.throwIfAborted()
-      const profile = normalizeBreezeProfile(getTtsProfile({ tts_provider: provider, tts_profiles: settings.tts_profiles }))
-      return patchFor(profile)
-    }
-    if (requestedVoice) {
-      requireValue(sameScope() && settings.tts_voice_provider === provider && String(settings.tts_profiles?.[provider]?.voice || '').trim(), '请先保存声音设置，再开始对话', 409)
-      return String(settings.tts_profiles[provider].voice).trim() === requestedVoice ? null : patchFor(settings.tts_profiles[provider])
-    }
-    if (sameScope() && settings.tts_voice_provider === provider && String(settings.tts_profiles?.[provider]?.voice || '').trim()) return patchFor(settings.tts_profiles[provider])
-    requireValue(provider === 'qwen', '当前语音提供方不支持自动设计，请先配置可用音色', 409)
-    const marker = () => JSON.stringify({ provider: settings.tts_voice_provider, profile: settings.tts_profiles?.[provider], realtime: { api_host: settings.realtime.api_host, key_file: settings.realtime.key_file, credential_source: settings.realtime.credential_source, credential_ref: settings.realtime.credential_ref, use_tts_voice: settings.realtime.use_tts_voice } })
-    const before = marker()
-    let candidate
-    try { candidate = await voicePresets.initialize(input) }
-    catch (error) { throw new RequestError(`默认音色初始化失败，请检查声音配置后重试（HTTP ${Number.isInteger(error.status) ? error.status : 502}）`, error.status === 409 ? 409 : 502) }
-    signal?.throwIfAborted()
-    return mutate(async () => {
-      signal?.throwIfAborted()
-      requireValue(!disposed, '工作台已关闭', 503)
-      if (marker() !== before) {
-        // Another simultaneous start may have initialized the same profile.
-        // A settings edit must not be silently overwritten by a late design.
-        requireValue(settings.realtime.use_tts_voice !== false && sameScope() && settings.tts_voice_provider === provider && String(settings.tts_profiles?.[provider]?.voice || '').trim(), '声音配置在初始化期间已改变，请重新开始对话', 409)
-        return patchFor(settings.tts_profiles[provider])
-      }
-      const profile = { ...input.tts_profiles?.[provider], voice: candidate.voiceId, model: candidate.model }
-      await commitSettings(current => ({ tts_voice_provider: provider, tts_profiles: { ...current.tts_profiles, [provider]: profile } }), signal)
-      return patchFor(profile)
-    })
-  }
+  // 会话启动的音色初始化已抽出到 src/voice-initialization.js；这里只做注入。
+  // 注入 raw mutate + commitSettings（不能传 persistSettings：mutate 不可重入，套一层会死锁）
+  // 与 live getter：settings 会被 commitSettings 整体重赋值，disposed 也是活标志。
+  const { initializeSessionVoice } = createVoiceInitialization({
+    getSettings: () => settings, mutate, commitSettings, voicePresets, modelCredential,
+    isDisposed: () => disposed, requireValue, RequestError,
+  })
 
   // 合成层（provider/profile 快照、凭据选择、合成审计）已抽出到 src/voice-synthesis.js。
   // getSettings 必须是 live getter：settings 会被 commitSettings 整体重赋值。

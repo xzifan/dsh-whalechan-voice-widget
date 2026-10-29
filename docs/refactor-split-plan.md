@@ -2,14 +2,14 @@
 
 > 由规划子代理（只读）于 2026-10-28 产出，主代理已采纳并拆成三张独立票。
 > 基线：`npm test` 279 / `npm run test:web` 100 全绿。
-> 现状行数（2026-10-29，步骤 3 完成后）：`src/service.js` **445 行**、`src/realtime-service.js` **506 行**、`src/realtime-protocol.js` **66 行**、`src/voice-tool-bridge.js` **146 行**、`src/voice-synthesis.js` **84 行**。
-> 立项时为 617 / 558；步骤 1（2026-10-29）把 `realtime-service.js` 565 → 506、后端 320 → 327；步骤 2（2026-10-29）把 `service.js` 624 → 504、后端 327 → 332；步骤 3（2026-10-29）把 `service.js` 504 → 445、后端 332 → 339。三步全部落地，`createRealtimeSession` 与 `initializeSessionVoice` 按计划留作步骤 4（已进 BACKLOG）。
+> 现状行数（2026-10-29，步骤 4a 完成后）：`src/service.js` **408 行**、`src/realtime-service.js` **506 行**、`src/voice-initialization.js` **64 行**、`src/realtime-protocol.js` **66 行**、`src/voice-tool-bridge.js` **146 行**、`src/voice-synthesis.js` **84 行**。
+> 立项时为 617 / 558；步骤 1（2026-10-29）把 `realtime-service.js` 565 → 506、后端 320 → 327；步骤 2（2026-10-29）把 `service.js` 624 → 504、后端 327 → 332；步骤 3（2026-10-29）把 `service.js` 504 → 445、后端 332 → 339；步骤 4a（2026-10-29）把 `service.js` 445 → 408、后端 339 → 345。`createRealtimeSession` 留作步骤 4b，4c 判定不做机械抽取（见文末）。
 
 ## 分工原则
 
 - 每步一次独立提交、可单独 revert，单步 ≤200 行。
 - 对外行为零变化：HTTP 路径与字段、审计记录形状、测试断言都不动。
-- `createRealtimeSession`（rt 85–556）与 `initializeSessionVoice`（svc 191–236）**本轮不动**，单独开票。
+- `createRealtimeSession`（rt 27–503）与 `initializeSessionVoice`（svc 191–234）**原本列为「本轮不动，单独开票」**；`initializeSessionVoice` 已于步骤 4a 抽出，`createRealtimeSession` 拆成 4b（响应簿记层）+ 4c（判定不做机械抽取）。
 
 ## 步骤 1 · `src/realtime-protocol.js`（先做 · 2026-10-29 已落地）
 
@@ -35,6 +35,25 @@
 - 搬：svc 238–255（readProviderKey）、257–264（voiceProfile）、266–301（synthVoiceLayer），62 行。
 - 注入 `{ getSettings, credential, modelCredential, audit, fetch }`；保留同名导出，签名不变。
 - 约 105 行改动。`realtime-tts.test.js` 有 24 条断言盯着 usage / requestId / audioDurationSeconds。
+
+## 步骤 4a · `src/voice-initialization.js`（2026-10-29 已落地）
+
+> 落地实况：新模块 **64 行**，`createVoiceInitialization({getSettings, mutate, commitSettings, voicePresets, modelCredential, isDisposed, requireValue, RequestError})` → `{initializeSessionVoice}`；`service.js` 445 → **408**、后端 339 → 345、churn 188 行（在 200 行预算内，是三步以来第一张真正压进预算的票）。
+> **行号更正**：该函数实测在 **svc 191–234**（44 行），不是立项时记的 191–236；`createRealtimeSession` 实测在 **rt 27–503**，不是 rt 85–556（后者是步骤 1 之前 558 行版本的坐标）。
+
+- 搬：svc 191–234（横跨 4 个 `await` 的 20 处 `s().` 读取 + 1 处 `disposed`）。
+- 三个不能动的点：①`mutate` 必须注入**原始队列**——传 `persistSettings` 就是 mutate 套 mutate，失败形态是**整测挂死**（变异实测 TIMEOUT）而不是红；②`isDisposed` 必须 getter；③`input` 参数**保持快照**——全部 409 语义来自 input 与 live settings 的对比，改成 live 会让 stale / unsaved 两条用例假通过。
+- `getTtsProfile` / `normalizeBreezeProfile` 直接 import（纯函数、无环），其余全部注入；`patchFor` 每次返回新对象（调用方会就地合并进 `sessionSettings`）。
+- 6 条新断言：工厂直连的 patch 形状 + `commitSettings` 收到合并函数、live getter、注入表静态守卫、设计期间已 dispose 不写 settings、上游 409 不降级成 502、`service.js` 源码守卫。现有 12 条 HTTP 用例零改动即通过，是「对外行为零变化」的直接证据。
+- **教训**：`isDisposed()` 这条守卫现有 HTTP 用例盖不到（`service.js` 在 `initializeSessionVoice` 之后还有一层 `requireValue(!disposed)`，两条路径都 503、socket 都是 0），必须直接构造工厂才能测到。
+
+### 步骤 4b（下一票）
+
+`src/realtime-response-bookkeeping.js`：搬 rt 41–46 / 61–68 / 86–122 共 51 行（`remember`/`history`/`context`/`transcriptContext`/`redactError`/`audit`/`assistantContext`/`finalizeResponseAudit`/`captureResponseUsage`/`finalizeText`/`itemText`）。函数名全同名，28 处调用点零改动。三个硬约束：`history` 必须导出同一数组实例（fillers 的 `context()` 与 `remember` 共享）、`currentTurn` 传函数引用（默认参数调用时求值）、`live` 本体留会话（另有 12 处调用）。预计 rt → ≈460。
+
+### 步骤 4c：不做机械抽取
+
+`runTool`(89) + `onMessage`(139) 占 `createRealtimeSession` 的 48%，共享 21 个可变绑定。要变小只能改成「事件分发表 + turn/response/tool 三层状态机」，会改 `continueResponse` / `deliverDone` 的时序语义（打断、TTS 投递顺序、审计去重）——那是架构决策，已在 BACKLOG 单列为 `[arch]` 条目。
 
 ## 必须避开的坑（读代码时逐个确认）
 

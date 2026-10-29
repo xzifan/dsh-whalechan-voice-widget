@@ -4,6 +4,8 @@ import {mkdtemp,rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {createService} from '../src/service.js'
+import {createVoiceInitialization} from '../src/voice-initialization.js'
+import {readFileSync} from 'node:fs'
 import {BREEZE_PRESET_VOICES} from '../src/breeze-voices.js'
 import {MODEL_TTS,VOICE_PRESETS} from '../src/voice-design.js'
 
@@ -145,4 +147,72 @@ test('Breeze starts from fixed presets with saved scope and never designs a remo
  assert.equal(requests.length,0);assert.equal(sockets.length,1)
  await assert.rejects(service.handle('POST','/api/realtime/start',{settings:{...settings,tts_profiles:{breeze:{...settings.tts_profiles.breeze,endpoint:'https://different.example/v1/text-to-speech/{voice_id}'}}}}),/请先保存声音设置/)
  await service.handle('POST','/api/realtime/start');assert.equal(requests.length,0);assert.equal(sockets.length,2)
+})
+
+const base=(profiles={})=>({realtime:{use_tts_voice:true},tts_voice_provider:'qwen',tts_profiles:profiles})
+
+function factory(initial,onDesign){
+ const state={settings:initial,mutateCalls:0,commitCalls:0,commitPatch:null,disposed:false}
+ const voicePresets={initialize:async()=>{if(onDesign)onDesign(state);return {voiceId:'candidate-voice',model:'model-x'}}}
+ const init=createVoiceInitialization({
+  getSettings:()=>state.settings,
+  mutate:work=>{state.mutateCalls++;return work()},
+  commitSettings:async patch=>{state.commitCalls++;state.commitPatch=patch;return state.settings},
+  voicePresets,
+  modelCredential:async()=>({key:'k'}),
+  isDisposed:()=>state.disposed,
+  requireValue:(ok,message,status=400)=>{if(!ok){const error=new Error(message);error.status=status;throw error}},
+  RequestError:class extends Error{constructor(message,status=400){super(message);this.status=status}},
+ })
+ return {state,init}
+}
+
+test('工厂可独立使用：设计路径的 patch 形状固定，commitSettings 收到合并函数',async()=>{
+ const {state,init}=factory(base())
+ const patch=await init.initializeSessionVoice(base())
+ assert.deepEqual(Object.keys(patch),['tts_voice_provider','tts_profiles'])
+ assert.deepEqual(patch,{tts_voice_provider:'qwen',tts_profiles:{qwen:{voice:'candidate-voice',model:'model-x'}}})
+ assert.equal(state.mutateCalls,1);assert.equal(state.commitCalls,1)
+ assert.equal(typeof state.commitPatch,'function')
+ const merged=state.commitPatch({tts_profiles:{breeze:{voice:'breeze-voice',model:'breeze-model'}}})
+ assert.deepEqual(merged.tts_profiles.breeze,{voice:'breeze-voice',model:'breeze-model'})
+ assert.deepEqual(merged.tts_profiles.qwen,{voice:'candidate-voice',model:'model-x'})
+})
+
+test('工厂读 live settings：settings 整体重赋值后同一实例立即用新值',async()=>{
+ const stale=base({qwen:{voice:'stale-voice',model:'model-x'}})
+ const {state,init}=factory(base({qwen:{voice:'saved-voice',model:'model-x'}}))
+ assert.equal((await init.initializeSessionVoice(stale)).tts_profiles.qwen.voice,'saved-voice')
+ state.settings=base({qwen:{voice:'new-voice',model:'model-x'}})
+ assert.equal((await init.initializeSessionVoice(stale)).tts_profiles.qwen.voice,'new-voice')
+ assert.equal(state.commitCalls,0)
+})
+
+test('新模块不重复排队：注入表里没有 self-queuing 的包装，只接 raw mutate',()=>{
+ const source=readFileSync(new URL('../src/voice-initialization.js',import.meta.url),'utf8')
+ // 注入表（工厂签名）不得出现自带队列的包装函数，否则 mutate 套 mutate 会死锁。
+ assert.equal(/createVoiceInitialization\(\{[^}]*persistSettings/.test(source),false)
+ assert.equal(/persistSettings\s*\(/.test(source),false)
+ assert.match(source,/mutate, commitSettings/)
+})
+
+test('设计期间已关闭：模块自己不写 settings，报「工作台已关闭」',async()=>{
+ const {state,init}=factory(base(),pending=>{pending.disposed=true})
+ await assert.rejects(init.initializeSessionVoice(base()),/工作台已关闭/)
+ assert.equal(state.commitCalls,0)
+ assert.equal(state.settings.tts_profiles.qwen,undefined)
+})
+
+test('初始化上游 409 原样透传，不降级成 502',async()=>{
+ const {state,init}=factory(base(),()=>{const error=new Error('design conflict');error.status=409;throw error})
+ await assert.rejects(init.initializeSessionVoice(base()),error=>error.status===409&&/默认音色初始化失败/.test(error.message))
+ assert.equal(state.commitCalls,0)
+})
+
+test('service.js 只注入初始化工厂，不再自带 initializeSessionVoice',()=>{
+ const source=readFileSync(new URL('../src/service.js',import.meta.url),'utf8')
+ assert.equal(source.includes("import { createVoiceInitialization } from './voice-initialization.js'"),true)
+ assert.equal(source.includes('async function initializeSessionVoice'),false)
+ assert.equal(source.includes('voicePresets.initialize('),false)
+ assert.equal(source.split('initializeSessionVoice').length-1,2)
 })

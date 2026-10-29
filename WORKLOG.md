@@ -576,3 +576,27 @@
 **变异验证（三条，各恰好红 1 条）**：①工厂入口快照（`const frozen = getSettings()`）→ live getter 那条红；②`usageAvailable` 恒 `false` → 字段集合那条红；③删掉非托管分支的 `audit.addSecret(key)` → key_file 那条红。三条都用 `cp` 备份还原，还原后 7/7。
 
 **下次可做**：步骤 4 = `createRealtimeSession`（rt 85–556，506 行的主体）与 `initializeSessionVoice`（svc 191–236），计划文档原本就写「本轮不动，单独开票」，已作为 `[plan]` 条目进 BACKLOG。另一个仍挂着的观察：`voice-tool-bridge.js` 函数覆盖 83.33%（`delete_voice` 删除成功路径、`set_tts_profile` 的 Breeze 拒绝分支只有 socket 层间接覆盖），补断言可把 `src/` 函数覆盖推回 92 以上——本轮按「一次只做一条」没动。
+
+## 2026-10-29 · 拆分步骤 4a：`initializeSessionVoice` 抽成 `src/voice-initialization.js`
+
+**做了哪一条**：BACKLOG P2「拆分步骤 4」（`[plan]` 条目，原文字面要求一次拆 `createRealtimeSession` 与 `initializeSessionVoice` 两块）。**用了只读规划子代理**，它复核后给出的结论是「只做 4a」，我采纳：`createRealtimeSession` 现状是 rt **27–503**、共享 **21 个可变绑定 + 6 个建会话快照**，`runTool`(89) 与 `onMessage`(139) 合计 228 行占 48%，机械可抽的只有 ~70 行；两块混做会同时动 `service.js` 与 `realtime-service.js`，失去单独 revert 的能力，违反「一次提交一个改动」。
+
+**改动**（188 行 churn，在 200 预算内）
+
+- 新增 `src/voice-initialization.js` **64 行**：`createVoiceInitialization({ getSettings, mutate, commitSettings, voicePresets, modelCredential, isDisposed, requireValue, RequestError })` → `{ initializeSessionVoice }`。
+- 搬移方式：**脚本逐行切片**（`sed` 语义的 Python 切片），不手抄——`scope(settings)` → `scope(s())`、20 处 `settings.` → `s().`、`!disposed` → `!isDisposed()`。手抄那 600 字符级的 `marker()` 串错一字就是静默行为漂移。
+- `src/service.js` 445 → **408 行**：删掉 191–234，换成 7 行工厂注入块 + 1 行 import。
+
+**三个刻意没动的地方**
+
+1. `mutate` 注入的是**原始队列**，不是 `persistSettings`。后者内部又走 `mutate`，套在模块自己的 `mutate(...)` 里就是 mutate 套 mutate —— 失败形态是**整测挂死**而不是红（变异 E 实测：`node --test` 直接 TIMEOUT）。
+2. `isDisposed` 是 getter，不是建工厂时的布尔快照。
+3. `input` 参数保持**调用时快照**。它是全部 409 语义的来源（input 与 live settings 的对比），改成 live 会让 `stale explicit voice` 与 `unsaved explicit voice` 两条用例假通过——这是本模块唯一「改错却全绿」的方向。
+
+**验证（实跑）**：后端 339 → **345**、前端 **101** 全绿；`lint` 0 问题、`format:check` 通过、`build` 成功（`dist/` 零改动）；`test:coverage` 聚合 98.56/86.94/93.71（新文件 100/92.86/100），仍高于 96/83/92。原有 12 条 `test/voice-initialization.test.js` 用例**一行未改**就通过，是「对外行为零变化」的直接证据；新增 6 条覆盖工厂直连路径（patch 形状 + `commitSettings` 收到合并函数、live getter、注入表静态守卫、设计期间 dispose、409 不降级成 502、`service.js` 源码守卫）。
+
+**规划漏判一处（本轮最有价值的发现）**：规划说 `isDisposed()` 由「disposal while design is in flight」那条 HTTP 用例守着，**实测不成立**——`service.js` 在 `initializeSessionVoice` 之后还有一层 `requireValue(!disposed)`，两条路径都 503、socket 都是 0，所以把模块内守卫改成恒真时 **0 条变红**。是补的工厂级断言才把它抓住。教训：抽出的模块里凡是「外层也有同名检查」的分支，HTTP 层用例天然盖不到，必须直接构造工厂测。
+
+**变异验证（5 条）**：入口快照 `s` 冻结 `getSettings()` → 红 6；注入表混入 `persistSettings` → 红 1（静态守卫）；`isDisposed` 恒真 → 红 1（新增那条）；`sameScope` 只比 input → 红 2；`commitSettings` 换成 `persistSettings` → **TIMEOUT**。全部用 `cp` 备份还原，还原后 18/18。
+
+**下次可做**：步骤 4b（`src/realtime-response-bookkeeping.js`，51 行响应簿记层，rt 506 → ≈460）已作为普通条目进 BACKLOG；`runTool` + `onMessage` 剩下的 228 行**不该**继续机械抽取，已单列为 `[arch]`（要变小只能改事件状态机，会动打断 / TTS 投递 / 审计去重的时序语义）。
