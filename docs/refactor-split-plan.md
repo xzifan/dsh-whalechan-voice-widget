@@ -2,8 +2,8 @@
 
 > 由规划子代理（只读）于 2026-10-28 产出，主代理已采纳并拆成三张独立票。
 > 基线：`npm test` 279 / `npm run test:web` 100 全绿。
-> 现状行数（2026-10-29，步骤 1 完成后）：`src/service.js` **624 行**、`src/realtime-service.js` **506 行**、`src/realtime-protocol.js` **66 行**。
-> 立项时为 617 / 558；步骤 1 于 2026-10-29 落地，`realtime-service.js` 565 → 506，后端 320 → 327。
+> 现状行数（2026-10-29，步骤 2 完成后）：`src/service.js` **504 行**、`src/realtime-service.js` **506 行**、`src/realtime-protocol.js` **66 行**、`src/voice-tool-bridge.js` **146 行**。
+> 立项时为 617 / 558；步骤 1（2026-10-29）把 `realtime-service.js` 565 → 506、后端 320 → 327；步骤 2（2026-10-29）把 `service.js` 624 → 504、后端 327 → 332。
 
 ## 分工原则
 
@@ -19,7 +19,9 @@
 - rt 保留同名 re-export（558 行已有该形式），补 `realtimeDefaults`、`REALTIME_INSTRUCTIONS`、`realtimeInstructions`、`readEnvKey`。
 - 约 130 行改动。**收益/风险比最好，测试零改动。**
 
-## 步骤 2 · `src/voice-tool-bridge.js`（收益最大的一刀）
+## 步骤 2 · `src/voice-tool-bridge.js`（收益最大的一刀 · 2026-10-29 已落地）
+
+> 落地实况：新模块 **146 行**（不是 122——`settings.x` 全部改成 `s().x` 的 live getter 形式，另加 `voiceToolNames`/`breezeDisabled`/`breezePresets` 导出与工厂签名）；`service.js` 624 → 504（比预估的 ~470 少，因为 `voiceProfile`/`synthVoiceLayer`/`runSingleTool` 仍留在 service、以注入形式进入桥接）。`design_voice` 的 `Voice design failed` 审计记录留在 `dispatchRealtimeTool` 的 catch，未下沉到 `runVoiceTool`。
 
 - 搬：svc 171–173（breeze 视图）、303–410（runVoiceTool）、412–422（dispatchRealtimeTool），122 行。
 - 注入 `{ getSettings, persistSettings, credential, synthVoiceLayer, fetch, audit, requireValue, RequestError }`；`settings.` 有 13 处读取，必须是 getter 不能传快照。

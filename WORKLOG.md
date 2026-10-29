@@ -532,3 +532,24 @@
 **结果**：成功。0.6.4 → **0.6.5**，后端 327 / 前端 101 全绿，已部署（`/api/voice-workbench/health` → `version=0.6.5 ok=true`），已推送 main + `v0.6.5`（远端 `git ls-remote` 校验），tarball `artifacts/releases/dsh-voice-workbench-0.6.5.tgz`（438,656 B）。本版为维护性发布（Realtime 协议层拆分、浏览器冒烟统一 harness、夜间探测脚本），无用户可感知变化。
 
 **过程里的一个真问题**：第一次 `./scripts/release.sh --slot patch --deploy` 在「verify installed build」退出 **5** —— `health API returned  after 60s`（`API_CODE` 为空，说明 60 次循环里 login 一次都没拿到 303，而不是拿到了非 200 的 health）。当时插件其实已装好，紧接着手工登录 `/health` 返回 `version=0.6.5`。即重启后 token 登录的就绪时间这次约 **70–90 s**，超出脚本的 60 s 窗口（脚本注释记的经验值是 40 s）。清理 `dist/` 后原样重跑即通过（exit 0）。**结论：60 s 窗口仍偏紧，应放宽到至少 120 s，或把「首页 401 → 登录 303」单独当作就绪信号并给出实测耗时日志**，否则每次重启都约有一半概率把一次成功部署回滚成 exit 5。
+
+## 2026-10-29 · P2「拆分 service.js · 步骤 2：抽 `src/voice-tool-bridge.js`」（J1 迭代班次，未用规划子代理）
+
+**取活说明**：顶部两条 `- [ ]`（husky + lint-staged、夜间冒烟接入调度）自带「阻塞待决策 / 需人拍板」，P2 第一条「火山引擎给出接入时间点或移除 WIP 项」两个分支同样是产品决定（`是否把火山引擎列为正式支持的第二大脑`就在决策小节），于是取第一条可做的：拆分步骤 2。拆解计划上一轮已由只读规划子代理产出并落进 `docs/refactor-split-plan.md`，其中两处硬约束（`settings` 必须 live getter、`mutate` 不可重入）也已复核过，本轮直接实现。
+
+**改动（3 个文件，churn 384 行）**
+
+- `src/voice-tool-bridge.js`（新，146 行）：`createVoiceToolBridge({getSettings, persistSettings, credential, synthVoiceLayer, voiceProfile, runSingleTool, fetcher, audit, requireValue, RequestError})` → `{runVoiceTool, dispatchRealtimeTool}`，另导出 `breezeDisabled`、`breezePresets`、`voiceToolNames`。
+- `src/service.js`（624 → **504 行**，+10/−130）：删掉搬走的 120 行，改成一处注入；`breezeDisabled` 改为从新模块 import（`/api/voice-presets/*` 路由仍要它判 400）；清掉 6 个搬走后无人用的 import 符号。
+- `test/voice-tool-bridge.test.js`（新，98 行 / 5 条）。
+
+**两个实现决策**
+
+1. **`settings` 用 `const s = () => getSettings()`，13 处 `settings.x` 逐个改成 `s().x`，不做进函数时快照。** 计划只写「必须是 getter」，实际读代码发现还有一处更细的理由：`list_voice_presets` 的 `tts_voice_provider` 判断落在一次 `await credential()` **之后**，入口快照会让它在凭据解析期间被别的写入静默过期——不是所有读取都在第一个 await 之前。变异成快照后新测试②立即红，说明这条断言真的在测这件事。
+2. **`dispatchRealtimeTool` 的 8 个工具名改成 `new Set(DEFAULT_TOOLS)`。** 原来是一串硬编码字符串，与 `realtime-protocol.js` 的 `DEFAULT_TOOLS` 是两份各自演化的清单；实测两边当前完全一致，所以这是纯防漂移，不改行为。`design_voice` 的 `Voice design failed` 审计记录留在 `dispatchRealtimeTool` 的 catch，没有下沉——下沉会改变「谁负责写这条审计」。
+
+**验证（实跑）**：后端 327 → **332**、前端 **101** 全绿；`lint` 0 问题、`format:check` 通过、`build` 成功（`dist/` 零改动，无需还原）；`test:coverage` 聚合 98.21/86.40/93.36（新文件 99.32/90.59/83.33），仍高于 96/83/92。改动前先跑了一次 `npm test` 确认 327 是干净基线，重构后同一套测试仍是 327——这一步是「对外行为零变化」的直接证据。
+
+**变异验证（两条，各恰好红 1 条）**：①把 `const s = () => getSettings()` 换成入口 `const snapshot = getSettings()` → 测试②红；②`voiceToolNames` 过滤掉 `set_tts_profile` → 测试①红。两次都 `cp` 备份还原，还原后 5/5。
+
+**下次可做**：步骤 3「抽 `src/voice-synthesis.js`」是 BACKLOG 里下一条可做的（`service.js` 现 504 行，`synthVoiceLayer` 62 行，`realtime-tts.test.js` 24 条断言盯着 usage/requestId/audioDurationSeconds，`readProviderKey` 与 `voiceProfile` 一起搬、签名不变）。另一个观察：新文件函数覆盖只有 83.33%（`delete_voice` 的删除成功路径与 `set_tts_profile` 的 Breeze 拒绝分支没有直接断言，只有 socket 层间接覆盖），若想把 `src/` 函数覆盖推回 92 以上可单独补；本轮未做，属「顺手就能改」的范畴，按一次只做一条的规矩留给后续。
