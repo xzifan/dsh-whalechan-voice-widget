@@ -2,8 +2,8 @@
 
 > 由规划子代理（只读）于 2026-10-28 产出，主代理已采纳并拆成三张独立票。
 > 基线：`npm test` 279 / `npm run test:web` 100 全绿。
-> 现状行数（2026-10-29，步骤 2 完成后）：`src/service.js` **504 行**、`src/realtime-service.js` **506 行**、`src/realtime-protocol.js` **66 行**、`src/voice-tool-bridge.js` **146 行**。
-> 立项时为 617 / 558；步骤 1（2026-10-29）把 `realtime-service.js` 565 → 506、后端 320 → 327；步骤 2（2026-10-29）把 `service.js` 624 → 504、后端 327 → 332。
+> 现状行数（2026-10-29，步骤 3 完成后）：`src/service.js` **445 行**、`src/realtime-service.js` **506 行**、`src/realtime-protocol.js` **66 行**、`src/voice-tool-bridge.js` **146 行**、`src/voice-synthesis.js` **84 行**。
+> 立项时为 617 / 558；步骤 1（2026-10-29）把 `realtime-service.js` 565 → 506、后端 320 → 327；步骤 2（2026-10-29）把 `service.js` 624 → 504、后端 327 → 332；步骤 3（2026-10-29）把 `service.js` 504 → 445、后端 332 → 339。三步全部落地，`createRealtimeSession` 与 `initializeSessionVoice` 按计划留作步骤 4（已进 BACKLOG）。
 
 ## 分工原则
 
@@ -28,7 +28,9 @@
 - 顺手把 413 行硬编码的 8 个工具名改成引用 `DEFAULT_TOOLS`（与 rt:20 的集合完全一致，消除漂移）。
 - 约 175 行改动。切完 service.js 降到 ~470 行。
 
-## 步骤 3 · `src/voice-synthesis.js`（最后做，风险最高）
+## 步骤 3 · `src/voice-synthesis.js`（最后做，风险最高 · 2026-10-29 已落地）
+
+> 落地实况：新模块 **84 行**（`createVoiceSynthesis({getSettings, credential, modelCredential, audit, fetcher, requireValue})` → `{voiceProfile, synthVoiceLayer}`，另导出 `readProviderKey`）；`service.js` 504 → **445**，后端 332 → 339。计划里的「保留同名导出」不成立（三者原本是 `createService` 内部闭包，从未导出）；「取消不追加 error」与实际代码不符且该分支现状不可达，重构原样保留（详见 BACKLOG 该条）。
 
 - 搬：svc 238–255（readProviderKey）、257–264（voiceProfile）、266–301（synthVoiceLayer），62 行。
 - 注入 `{ getSettings, credential, modelCredential, audit, fetch }`；保留同名导出，签名不变。

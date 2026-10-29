@@ -553,3 +553,26 @@
 **变异验证（两条，各恰好红 1 条）**：①把 `const s = () => getSettings()` 换成入口 `const snapshot = getSettings()` → 测试②红；②`voiceToolNames` 过滤掉 `set_tts_profile` → 测试①红。两次都 `cp` 备份还原，还原后 5/5。
 
 **下次可做**：步骤 3「抽 `src/voice-synthesis.js`」是 BACKLOG 里下一条可做的（`service.js` 现 504 行，`synthVoiceLayer` 62 行，`realtime-tts.test.js` 24 条断言盯着 usage/requestId/audioDurationSeconds，`readProviderKey` 与 `voiceProfile` 一起搬、签名不变）。另一个观察：新文件函数覆盖只有 83.33%（`delete_voice` 的删除成功路径与 `set_tts_profile` 的 Breeze 拒绝分支没有直接断言，只有 socket 层间接覆盖），若想把 `src/` 函数覆盖推回 92 以上可单独补；本轮未做，属「顺手就能改」的范畴，按一次只做一条的规矩留给后续。
+
+## 2026-10-29 · P2「拆分 service.js · 步骤 3：抽 `src/voice-synthesis.js`」（J1 迭代班次，未用规划子代理）
+
+**取活说明**：顶部三条 `- [ ]` 都自带「阻塞待决策 / 需人拍板」（husky + lint-staged、夜间冒烟接入调度），P2 第一条「火山引擎给出接入时间点或移除 WIP 项」的两个分支同属产品决定（`是否把火山引擎列为正式支持的第二大脑` 就在决策小节），于是取第一条可做的：拆分步骤 3。拆解计划上一轮已由只读规划子代理产出并落进 `docs/refactor-split-plan.md`，本轮只按实际代码复核，没有再派子代理。
+
+**改动（3 个文件，churn 300 行）**
+
+- `src/voice-synthesis.js`（新，84 行）：`createVoiceSynthesis({getSettings, credential, modelCredential, audit, fetcher, requireValue})` → `{voiceProfile, synthVoiceLayer}`，另导出纯函数 `readProviderKey`。
+- `src/service.js`（504 → **445 行**，+8/−75）：只剩一处工厂注入；删掉搬走后无人用的 import（`synthesizeHttpTts`、`resolveBreezeLanguage`、`MODEL_TTS`/`MODEL_TTS_SYNTH`）。
+- `test/voice-synthesis.test.js`（新，141 行 / 7 条）。
+
+**计划文档两处与实际不符（已写回 `docs/refactor-split-plan.md`）**
+
+1. **「保留同名导出，签名不变」不成立**：`readProviderKey` / `voiceProfile` / `synthVoiceLayer` 原本都是 `createService` 内部的闭包函数，从未 `export`，所以没有 re-export 可留。改成工厂注入后导出面只有 `createVoiceSynthesis` + 纯函数 `readProviderKey`。
+2. **「取消 → `status:'cancelled'` 且不追加 error」与实际代码相反**：cancelled 分支**仍会**追加一条 `kind:'error'`；而且这个分支现状**不可达**——`synthesizeTts` 与 `synthesizeHttpTts` 都把非 abort 的失败映射成 502/402，abort 又在 catch 开头直接 `throw error`。重构保留原样（改写审计语义不属于重构），测试里留了注释说明，避免下一个人把它当 bug「顺手修」。
+
+**实现决策**：`settings` 用 `const s = () => getSettings()`；`synthVoiceLayer` 顶部那两处 `tts_voice_provider` 读取都在第一个 `await` 之前，取局部值与前一致，没有引入跨 await 的快照问题。`voiceProfile(input = s())` 保留默认参数，`/api/config` 与 `/api/health` 仍显式传快照（行为不变）。
+
+**验证（实跑）**：后端 332 → **339**、前端 **101** 全绿；`lint` 0 问题、`format:check` 通过、`build` 成功（`dist/` 零改动）；`test:coverage` 聚合 98.54/86.86/93.65（新文件 100/92.31/100），仍高于 96/83/92；`realtime-tts.test.js` 的 24 条 usage/requestId/audioDurationSeconds 断言在重构后依旧全绿，是「对外行为零变化」的直接证据。
+
+**变异验证（三条，各恰好红 1 条）**：①工厂入口快照（`const frozen = getSettings()`）→ live getter 那条红；②`usageAvailable` 恒 `false` → 字段集合那条红；③删掉非托管分支的 `audit.addSecret(key)` → key_file 那条红。三条都用 `cp` 备份还原，还原后 7/7。
+
+**下次可做**：步骤 4 = `createRealtimeSession`（rt 85–556，506 行的主体）与 `initializeSessionVoice`（svc 191–236），计划文档原本就写「本轮不动，单独开票」，已作为 `[plan]` 条目进 BACKLOG。另一个仍挂着的观察：`voice-tool-bridge.js` 函数覆盖 83.33%（`delete_voice` 删除成功路径、`set_tts_profile` 的 Breeze 拒绝分支只有 socket 层间接覆盖），补断言可把 `src/` 函数覆盖推回 92 以上——本轮按「一次只做一条」没动。
