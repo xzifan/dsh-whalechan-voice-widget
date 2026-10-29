@@ -23,7 +23,8 @@ from browser_harness import Harness
 DRAFT = '尚未保存的聊天草稿'
 CONNECTING = '准备声音并连接' + '\u2026'
 MIC_SCRIPT = """window.__micCalls=0;const capture=navigator.mediaDevices?.getUserMedia?.bind(navigator.mediaDevices);if(capture)navigator.mediaDevices.getUserMedia=options=>{window.__micCalls++;return capture(options)};"""
-CASES = [('qwen', 'normal'), ('qwen', 'success'), ('breeze', 'success'), ('qwen', 'failure'), ('qwen', 'cancel')]
+CASES = [('qwen', 'normal'), ('qwen', 'success'), ('breeze', 'success'), ('qwen', 'failure'), ('qwen', 'cancel'),
+         ('qwen', 'closed'), ('qwen', 'closed404')]
 
 
 async def until(predicate, timeout=5.0, interval=0.1):
@@ -82,6 +83,12 @@ def routes_for(provider, mode, starts, ended, release):
 
     async def realtime_events(method, body):
         # Harness 的默认 mock 会在 >2 帧音频后灌脚本化事件，本用例的上下文需要空流
+        if mode == 'closed':
+            # 上游断连：只有一条 closed，done 仍是 false —— 客户端必须自己认这个事件
+            return {'events': [{'seq': 1, 'type': 'closed'}], 'cursor': 1, 'done': False}
+        if mode == 'closed404':
+            # 服务端已回收会话（墓碑被淘汰）：轮询拿到 404，必须当成正常结束而不是报错
+            return 404, {'error': '实时语音会话不存在或已结束'}
         return {'events': [], 'cursor': 0, 'done': False}
 
     async def realtime_end(method, body):
@@ -140,6 +147,25 @@ async def run_case(provider, mode):
             # 取消后迟到的 session 必须被 end，而且只能 end 它（麦克风失败也会走 end，所以要精确断言）
             assert await until(lambda: ended == ['cancel-1']), ended
             await expect(frame.get_by_role('button', name='结束对话', exact=True)).to_be_visible()
+        elif mode in ('closed', 'closed404'):
+            release.set()
+            assert await until_async(lambda: mic_is(harness, 1)), '开始对话后应恰好开麦一次'
+            # 上游断连（closed 事件 / 轮询 404）必须由宿主收尾：退出通话视图、只 end 一次
+            assert await until(lambda: ended == [f'{mode}-1']), ended
+            await expect(frame.locator('[data-call-view="active"]')).to_have_count(0)
+            await expect(frame.locator('[data-call-view="idle"]')).to_have_count(1)
+            await expect(frame.get_by_role('button', name='再次开始', exact=True)).to_be_visible()
+            # 麦克风必须真的释放（此前会一直「我在听」并继续采集）
+            tracks = await harness.child.evaluate('(() => {const list=window.__testTracks||[];return {count:list.length,ended:list.every(t=>t.readyState==="ended")}})()')
+            assert tracks == {'count': 1, 'ended': True}, tracks
+            # 轮询与上传必须停下：0.3 s 让在途请求落地，再观察 0.6 s 不应有新请求
+            await asyncio.sleep(0.3)
+            settled = [call[1] for call in harness.calls if call[1] in ('realtime/events', 'realtime/audio')]
+            await asyncio.sleep(0.6)
+            after = [call[1] for call in harness.calls if call[1] in ('realtime/events', 'realtime/audio')]
+            assert after == settled, f'会话结束后仍在轮询或上传：{settled} -> {after}'
+            # 404 不得变成错误横幅
+            await expect(frame.get_by_role('alert')).to_have_count(0)
         elif mode == 'failure':
             release.set()
             await expect(frame.get_by_role('alert').filter(has_text='默认音色初始化失败')).to_be_visible()
@@ -152,7 +178,7 @@ async def run_case(provider, mode):
             await expect(frame.get_by_role('button', name='结束对话', exact=True)).to_be_visible()
             assert await until_async(lambda: mic_is(harness, 1)), '开始对话后应恰好开麦一次'
 
-        if mode != 'failure':
+        if mode in ('normal', 'success', 'cancel'):
             await frame.get_by_role('button', name='结束对话', exact=True).click()
             assert await until(lambda: ended == (['cancel-1', 'cancel-2'] if mode == 'cancel' else [f'{mode}-1'])), ended
             # 结束对话必须真的释放麦克风：一次通话只开一次，且轨道都已 ended

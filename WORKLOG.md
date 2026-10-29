@@ -846,3 +846,30 @@
 **并发**：开始时无 `.release.lock`，建了 `.work.lock`（2026-10-30 03:17:39）并在收尾删除。
 
 **下次可做**：下一班次直接取新条目（`[plan]` → 先派只读规划子代理，再按计划实现）。候选 2、3 仍未入清单，其中候选 3 上一轮也提过，可优先补。
+
+## 2026-10-30 04:35 · 迭代 J1：上游断开 socket 后会话不收尾（用了规划子代理）
+
+**条目**：BACKLOG「[plan] 上游断开实时 socket 后会话不收尾」——上一班次从证据提候选后入清单的那条，也是清单里唯一未被硬阻塞的 `- [ ]`（其余 5 条分别是 `⛔ 阻塞待决策`、需人拍板的「夜间冒烟接入调度」、`[arch]` 事件分发、「需先定口径归属」的首帧锚点、「单独立项」的真实停播时延，按规则全跳过）。
+
+**规划子代理（只读）纠正了两处条目前提**：①`src/core/realtime-service.js` 的 `socket.on('close')` 主路径其实**可以 0 行改动**——收尾挂到 `service.js` 的 emit 包装上即可，省一次 `createRealtimeSession` 签名变更、不碰 adapter 契约与那 8 个直连用例的调用点；②条目里担心的「`/api/realtime/end` 对未知 sid 返回 404」不成立：服务端 `:380` 对不存在的 sid 也无条件回 `{ok:true}`，客户端四处调用本来就 `.catch(()=>{})`，所以真要防的是**别把它改成 404 / 别改成 await**，不是新增兜底。
+
+**改动（7 个代码文件 + CHANGELOG，churn 126 行：源码 45 / 测试 93 / 文档 7，含删 8）**
+
+- `src/core/service.js`：新增 `liveRealtimeSessionCount()` 与 `settleRealtimeSession(sid)`。前者让 `/api/health` 的 `activeSessions` 与两处 `< 4` 并发额度都按**活会话**计——只改一处会出现「预检通过、落库前 429」的不一致计数；后者是服务端权威收尾（幂等：已 `closed` 直接返回；置 `closed` → `session.dispose()` → `void releaseToolSession(sid)` → 墓碑最多留 8 条、按插入顺序淘汰，不直删是因为客户端还要取末尾的 transcript/metrics/closed）。收尾钩子放在 emit 包装里 `event.type === 'closed'`，且**必须在 `events.push` 之后**，否则客户端永远取不到 closed 事件。`/events` 分支之后加一行 `requireValue(!record.closed, …, 404)`：事件仍可读，写接口一律 404，避免对已 dispose 的会话空转。
+- `web/src/lib/core.js`：抛错补 `error.status`（原来只有 message，靠文本匹配 404 不可接受）。
+- `web/src/lib/realtime.js`：新增可单测的 `shouldSettleRealtime(result, events)` —— `done === true` 或出现 `closed` 事件；`error` 刻意**不算**（`audio_too_large` / `tts_failed` 之后会话仍可继续）。
+- `web/src/main.jsx`：`rtPoll` 里算一次 `ended`，循环后 `rtSet({done:true}); void rtStop()`（放在循环外：循环内 `return` 会让 `rtStopPolling` 在定时器还没设的窗口空跑一次）；`catch` 里 `error.status === 404` 走 `rtStop` 而不是弹错误横幅。幂等性靠 `rtStop()` 全程无 `await`（`rtSession.current=null` 在第一个同步 tick 完成）+ `/end` 由 `if(sessionId)` 守卫，所以「closed 与同批 done」「closed 后紧跟 404」「重复 closed」都不会二次 end。
+
+**没改的**：`src/core/realtime-service.js` 0 行；reducer 的 `next.done` 仍是**单轮**边界（真正被写的 `rt.done` 不需要新消费方——消费方就是 `rtPoll` 自己）；`/api/realtime/end` 的 `{ok:true}` 契约原样保留。
+
+**断言**：后端 1 条用例 7 个断言（`done === true`、closed 恰 1 条、`releaseToolSession` 深等于 `[sid]` 且二次 close 不重复、`activeSessions === 0`、`/audio` 404、断连后再 start 4 次全成功——没修时第 4 次会 429）；前端 5 个断言（done / closed / 单轮 done / `audio_too_large` / 空响应）；浏览器 `browser-startup-initialization.py` 5 → **7** case（新增 `closed` 事件与 `closed404` 轮询两条）：`data-call-view` active→idle、「再次开始」可见、`ended == ['{mode}-1']` 恰好一次、`__testTracks` 全 `ended`、0.3 s 落定后再观察 0.6 s 内 `realtime/events`/`realtime/audio` 请求数不再增长、无错误横幅。浏览器用例没新建脚本——`test/browser-scripts.test.js` 的 py↔npm script↔CI 三方对账会红。
+
+**变异验证（2 条都真红）**：①回滚 `src/core/service.js` → 新后端用例红在 `done` 实际 `false`（14 pass / 1 fail）；②回滚三个前端文件 + `npm run build` → 浏览器脚本红在 `assert await until(lambda: ended == ['closed-1'])`，实际 `[]`——正是「UI 卡在我在听、一次 end 都没发」的症状。两条都用备份 `cp` 还原后重跑全绿。
+
+**验收（真跑）**：后端 379 → **380** / 前端 103 → **104** 全绿，`npm run lint` 0 问题、`npm run format:check` 通过、`npm run build` 成功（`dist/` 已 `git checkout`、新 hash 产物移出仓库），`browser-startup-initialization.py` 7/7 PASS（修好后连跑 2 次）。CHANGELOG 按 `[Unreleased]` 写（`scripts/release.sh` 第 6 步会把它转成版本段落，`test/version-consistency.test.js` 的 `parse()` 会过滤掉非三段式标题，不会打红）。
+
+**用了只读规划子代理**：条目带 `[plan]`，跨 6 文件且改 `/api/realtime/events` 的 `done` 语义，按 J1 分级先派规划子代理产出拆解（文件清单 / 分步做法 / 每步行数 / 回归风险 / 断言清单），拿到计划后**全量采纳**（计划实测 126 行，未超 200；其可选步骤 S9 单独立项）。
+
+**并发**：开始时无 `.release.lock`，建了 `.work.lock`（2026-10-30T04:17:37+0800）并在收尾删除。
+
+**下次可做**：清单新入第 1 条「`connect()` 的 `!WebSocketCtor` 与构造抛错两条路径同样不收尾」（`ws` 缺失时连 error 都不发，仍会永久卡「我在听」+ 占额度）——同一病根的另一半，可直接取。再往后仍全是硬阻塞（产品决策 / 口径归属 / 单独立项 / 夜间冒烟调度需人拍板），届时按第 7 步从证据提候选即可；上一班次留的候选 2（`error.safe.category` 被丢弃）与候选 3（`ENDPOINT_METHODS` 三方清单无守卫、`/api/models/check` 已漂移）仍未入清单。

@@ -3,7 +3,7 @@ import assert from 'node:assert'
 import {
   float32ToPcm16Base64, pcm16Base64ToFloat32, pcm16BytesToFloat32,
   bytesToBase64, base64ToBytes, chunkFrames, resample,
-  advanceCursor, applyRealtimeEvent, shouldStopPlayback, createPlaybackQueue,
+  advanceCursor, applyRealtimeEvent, shouldStopPlayback, shouldSettleRealtime, createPlaybackQueue,
   finalizeRealtimeMessages, MAX_REALTIME_MESSAGES, MAX_REALTIME_TOOL_CALLS, realtimeTimeline,
 } from './realtime.js'
 
@@ -541,4 +541,17 @@ test('dedicated TTS transcript fills tool audit correlation without creating ano
   assert.equal(state.toolCalls[0].messageId, state.messages[0].id)
   assert.equal(state.toolCalls[0].turnId, 'turn-id')
   assert.equal(state.toolCalls[0].status, 'completed')
+})
+
+test('会话结束判据：done 与 closed 都算结束，单轮 done 与可恢复的 error 不算', () => {
+  // 服务端 done：手动 end / 上游断连后的收尾
+  assert.equal(shouldSettleRealtime({done: true}, []), true)
+  // 上游只有 closed 事件、done 仍为 false —— 客户端必须自己认（本用例的核心）
+  assert.equal(shouldSettleRealtime({done: false}, [{type: 'closed'}]), true)
+  // 单轮回答完成不是会话结束
+  assert.equal(shouldSettleRealtime({done: false}, [{type: 'done'}]), false)
+  // audio_too_large / tts_failed 之后会话仍可继续：error 不得当终止信号
+  assert.equal(shouldSettleRealtime({done: false}, [{type: 'error', code: 'audio_too_large'}]), false)
+  // 缺字段/空响应不得误判为结束
+  assert.equal(shouldSettleRealtime({}, undefined), false)
 })

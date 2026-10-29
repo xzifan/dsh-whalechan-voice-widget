@@ -403,6 +403,13 @@ export function shouldStopPlayback(event) {
   return event.type === 'speech-started' || event.type === 'interruption' || event.type === 'interrupted' || event.type === 'done' || event.type === 'closed' || event.type === 'error'
 }
 
+// Whether the session itself is over: the server's done flag (manual end or upstream close) or an
+// upstream `closed` event. `error` deliberately does not count — audio_too_large / tts_failed are
+// recoverable and the conversation continues.
+export function shouldSettleRealtime(result, events) {
+  return result?.done === true || (events || []).some(event => event.type === 'closed')
+}
+
 // ---- playback queue (Web Audio) ------------------------------------------
 // A minimal ring of queued PCM chunks; play via injected AudioContext-like API.
 // The host passes a `scheduler` with {schedule(buffer, rate): void, stop(): void}.

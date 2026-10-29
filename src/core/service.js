@@ -44,6 +44,24 @@ export function createService(config = {}, dependencies = {}) {
   const startedAt = Date.now()
   let settings = structuredClone(defaults), disposed = false
   const realtimeSessions = new Map() // sessionId -> {session, events, cursor, closed, key}
+  // 上游断连后只留只读墓碑（够客户端取完末尾事件），超过上限按插入顺序淘汰。
+  const MAX_CLOSED_REALTIME_SESSIONS = 8
+  // 并发额度只数活会话：墓碑还占着额度等于断连后仍然 429。
+  function liveRealtimeSessionCount() {
+    let live = 0
+    for (const record of realtimeSessions.values()) if (!record.closed) live += 1
+    return live
+  }
+  // 服务端权威收尾：上游 socket 关闭后会话不可再用，不等客户端再来一次请求。
+  function settleRealtimeSession(sid) {
+    const record = realtimeSessions.get(sid)
+    if (!record || record.closed) return
+    record.closed = true
+    record.session.dispose() // disposed 后二次 socket.close 不再 emit，重入安全
+    void dependencies.releaseToolSession?.(sid)
+    const closed = [...realtimeSessions].filter(([, r]) => r.closed)
+    for (const [old] of closed.slice(0, Math.max(0, closed.length - MAX_CLOSED_REALTIME_SESSIONS))) realtimeSessions.delete(old)
+  }
 
   // Normalize + validate a settings-like object against the retained schema.
   function validateSettings(input) {
@@ -242,7 +260,7 @@ export function createService(config = {}, dependencies = {}) {
         version: PLUGIN_VERSION,
         uptimeMs: Date.now() - startedAt,
         tts: { provider, model, voice, ready: ttsReady },
-        realtime: { activeSessions: realtimeSessions.size },
+        realtime: { activeSessions: liveRealtimeSessionCount() },
         tools: { enabled: Array.isArray(settings.enabled_tools) ? settings.enabled_tools.length : 0 },
         credentials: { bailian: !!providers.bailian?.ready, breeze: !!providers.breeze?.ready },
         capabilities: { ...(dependencies.status?.() || {}) },
@@ -334,7 +352,7 @@ export function createService(config = {}, dependencies = {}) {
         requireValue(nativeTools.length === selected.size && nativeTools.every(tool => tool.parameters), '包含不可用的工具或工具参数，请刷新工具列表重新选择', 400)
       }
       const workspace = sessionSettings.workspace
-      requireValue(realtimeSessions.size < 4, '实时语音会话过多，请稍后重试', 429)
+      requireValue(liveRealtimeSessionCount() < 4, '实时语音会话过多，请稍后重试', 429)
       const { key } = await bailianCredential(rt)
       const voiceSettingsPatch = await initializeSessionVoice(sessionSettings, externalSignal)
       externalSignal?.throwIfAborted()
@@ -348,7 +366,7 @@ export function createService(config = {}, dependencies = {}) {
       if (rt.tts_provider === 'breeze' && rt.use_tts_voice !== false) rt.instructions += '\n当前出声提供方为 Breeze，按回复文字的中文、日语、英语自动使用固定预设。Breeze 暂不支持提示词生成或复刻，不调用 design_voice、apply_voice、delete_voice；需要时用 list_voice_presets 查看三语音色。'
       externalSignal?.throwIfAborted()
       requireValue(!disposed, '工作台已关闭', 503)
-      requireValue(realtimeSessions.size < 4, '实时语音会话过多，请稍后重试', 429)
+      requireValue(liveRealtimeSessionCount() < 4, '实时语音会话过多，请稍后重试', 429)
       audit.addSecret(key)
       const sessionId = randomUUID()
       const events = []; let cursor = 0
@@ -363,6 +381,8 @@ export function createService(config = {}, dependencies = {}) {
           }
         } else events.push({ ...event, sessionId, seq: ++cursor, at: Date.now() })
         if (events.length > 256) events.shift()
+        // 上游断连时客户端可能再也不来轮询，服务端必须自己收尾（必须在 push 之后，客户端要拿到 closed）
+        if (event.type === 'closed') settleRealtimeSession(sessionId)
       }
       const voiceState = createVoiceCandidateState()
       const session = createRealtimeSession({ voiceState, settings: rt, key,
@@ -389,6 +409,8 @@ export function createService(config = {}, dependencies = {}) {
         const events = record.events.filter(event => event.seq > after)
         return { body: { events, cursor: record.cursor(), done: record.closed } }
       }
+      // 已结束（含上游断连）的会话只许读事件：写接口一律 404，避免对已 dispose 的会话空转
+      requireValue(!record.closed, '实时语音会话不存在或已结束', 404)
       if (path === '/api/realtime/playback') {
         requireValue(['main', 'filler'].includes(body.kind) && typeof body.active === 'boolean', '播放状态无效')
         record.session.playback({ kind: body.kind, active: body.active })

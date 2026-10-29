@@ -327,3 +327,44 @@ test('a successful tool call records an ok outcome with the first line of its ou
   assert.equal(record.text, 'read')
   session.dispose()
 })
+
+test('上游断开 socket 后服务端自行收尾：事件仍可取、额度释放、写接口 404', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'whale-rt-close-'))
+  const keyFile = join(dir, 'test.env')
+  await writeFile(keyFile, 'DASHSCOPE_API_KEY=test-key')
+  const FakeSocket = makeFakeSocket(), released = []
+  const service = createService({ stateDir: dir }, {
+    realtimeWebSocket: FakeSocket,
+    resolveModelCredential: async provider => ({ key: 'test-key', source: 'provider', provider }),
+    catalog: async () => ({ tools: [readSchema], currentWorkspace: process.cwd(), toolExecutionAvailable: true }),
+    runTool: async () => ({ ok: true }),
+    releaseToolSession: async sid => released.push(sid),
+  })
+  t.after(async () => {
+    await service.dispose()
+    await rm(dir, { recursive: true, force: true })
+  })
+  const initial = (await service.handle('GET', '/api/config')).body.settings
+  const settings = { ...initial, tts_voice_provider: 'qwen', tts_profiles: { ...initial.tts_profiles, qwen: { ...initial.tts_profiles?.qwen, voice: 'longanhuan_v3.1' } }, enabled_tools: [], tools_configured: true, workspace: dir, realtime: { ...initial.realtime, key_file: keyFile, instructions: 'Test' } }
+  await service.handle('PUT', '/api/config', { settings })
+  const sessionId = (await service.handle('POST', '/api/realtime/start', { settings })).body.sessionId
+  assert.equal((await service.handle('GET', '/api/health')).body.realtime.activeSessions, 1)
+
+  // 上游断连：socket 关闭是客户端唯一的信号，客户端可能再也不来轮询
+  FakeSocket.instances[0].close()
+
+  const polled = (await service.handle('POST', '/api/realtime/events', { sessionId })).body
+  assert.equal(polled.done, true, '上游断连后会话必须标记结束，否则轮询永远空转')
+  assert.equal(polled.events.filter(event => event.type === 'closed').length, 1, 'closed 事件仍要能被取到，收尾不得早于 push')
+  // 工具 agent 必须释放，且重入只释放一次
+  assert.deepEqual(released, [sessionId])
+  FakeSocket.instances[0].close()
+  assert.deepEqual(released, [sessionId])
+  // 健康度按活会话计；已结束会话不接受写请求
+  assert.equal((await service.handle('GET', '/api/health')).body.realtime.activeSessions, 0)
+  await assert.rejects(service.handle('POST', '/api/realtime/audio', { sessionId, audio: 'AAAA' }), error => error.status === 404)
+
+  // 额度必须随断连释放：1 个死会话 + 3 个活会话若仍算 4，第 4 次 start 会 429
+  for (let i = 0; i < 4; i++) await service.handle('POST', '/api/realtime/start', { settings })
+  assert.equal((await service.handle('GET', '/api/health')).body.realtime.activeSessions, 4)
+})

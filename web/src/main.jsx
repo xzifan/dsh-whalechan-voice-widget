@@ -3,7 +3,7 @@ import {createRoot} from 'react-dom/client'
 import {api, normalizeSettings} from './lib/core.js'
 import {CompanionView} from './companion-view.jsx'
 import {configIssues,configurationContext,mergeConfigurationErrors} from './lib/configuration.js'
-import {advanceCursor,applyRealtimeEvent,shouldStopPlayback,createPlaybackQueue,startRealtimeMic,listAudioInputs,finalizeRealtimeMessages} from './lib/realtime.js'
+import {advanceCursor,applyRealtimeEvent,shouldStopPlayback,shouldSettleRealtime,createPlaybackQueue,startRealtimeMic,listAudioInputs,finalizeRealtimeMessages} from './lib/realtime.js'
 import {createMicUploader} from './lib/mic-upload.js'
 import {createPreviewPlayer} from './lib/preview-playback.js'
 import {createFillerPlayer,createPlaybackReporter,createPcmScheduler} from './lib/filler-playback.js'
@@ -116,6 +116,8 @@ function App() {
       const result=await api('realtime/events',{sessionId,after:rtEventsCursor.current})
       if(rtSession.current!==sessionId)return
       const events=Array.isArray(result.events)?result.events:[]
+      // 上游断连（closed 事件）或服务端 done 都意味着会话结束，宿主必须自己收尾
+      const ended=shouldSettleRealtime(result,events)
       rtEventsCursor.current=advanceCursor(events,rtEventsCursor.current)
       for(const event of events){
         const underflows = rtPlayback.current?.stats?.underflows ?? 0
@@ -144,8 +146,12 @@ function App() {
         void rtStop().then(()=>rtStart())
         return
       }
-      if(result.done===true)rtSet({done:true})
-    }catch(error){if(error.name!=='AbortError'&&rtSession.current===sessionId)rtSet({error:error.message})}
+      if(ended){rtSet({done:true});void rtStop()}
+    }catch(error){
+      if(error.name==='AbortError'||rtSession.current!==sessionId)return
+      // 服务端已收尾（会话被淘汰或上游断连后清理）：当作正常结束，不报错
+      if(error.status===404)void rtStop();else rtSet({error:error.message})
+    }
   }
   function rtStartPolling() {
     rtStopPolling()

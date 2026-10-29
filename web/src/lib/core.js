@@ -105,7 +105,7 @@ export async function api(endpoint, {signal, ...body} = {}, method = 'POST') {
   }
   if (!(status >= 200 && status < 300)) {
     const detail = payload?.error?.message || (typeof payload?.error === 'string' ? payload.error : null) || payload?.message
-    const error = new Error(detail || `请求失败（${status}）`); error.fields = payload?.fieldErrors || payload?.fields; throw error
+    const error = new Error(detail || `请求失败（${status}）`); error.status = status; error.fields = payload?.fieldErrors || payload?.fields; throw error
   }
   return payload || {}
 }
