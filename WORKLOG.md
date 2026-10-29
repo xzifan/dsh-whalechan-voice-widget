@@ -824,3 +824,25 @@
 **并发**：本班次开始时无 `.release.lock`，已建 `.work.lock`（2026-10-29T18:17:37Z）并在收尾删除。
 
 **下次可做**：清单里剩余的 `- [ ]` 又全是硬阻塞（第 34 条 `⛔ 阻塞待决策`、第 46 条「夜间冒烟接入调度」需人拍板、`[arch]` 事件分发需先立时序断言、`[plan]` 首帧锚点「需先定口径归属」、真实停播时延「单独立项」），所以**下一班次应当走第 7 步**（派只读子代理从证据提 3 个候选，选 1 个入清单），不必再逐个复查这些阻塞项。上一轮候选 3（`POST /api/models/check` 零断言 + `ENDPOINT_METHODS` 漏登记）仍未入清单，可直接补进去。
+
+## 2026-10-30 03:23 · 迭代 J1：无可做条目 → 3 候选取证，选「上游断开 socket 后会话不收尾」入清单（本轮不实现）
+
+**条目**：清单里 5 条 `- [ ]` 全部硬阻塞——第 34 条 `⛔ 阻塞待决策`、第 46 条「夜间冒烟接入调度」需人拍板、`[arch]` 事件分发（属架构决策需先立时序断言）、`[plan]` 首帧锚点「需先定口径归属」、真实停播时延「单独立项」。按第 1 步规则全部跳过，走第 7 步。
+
+**做法**：派 1 个**只读**规划子代理从四类证据提 3 个候选（`TODO/FIXME/XXX/HACK` 扫描、`CHANGELOG` 未完成项、`src/` 与 `test/` 逐模块对照、本机审计高频失败类型 + `docs/` 里标记未做的步骤），禁止一切写操作；收尾 `git status` 仍为空（它只在 `/tmp` 留了两个不到 450 字节的中间文件，仓库内零改动）。三个候选：
+
+1. 上游断开实时 socket 后会话不收尾（真 bug，见下）；
+2. 音色设计的 `error.safe.category`（`model-unavailable` / `quota-or-balance` / `authorization` / `upstream`）被整条丢掉，`src/core/voice-design.js` 抛出的 `Error` 文案恒为「百炼音色请求失败」，审计只剩 `Voice design failed (HTTP 400)`——本机 13 条工具失败里 3 条属这类，现在无法归因；`error.safe` 全仓唯一消费者是 `scripts/nightly-smoke.mjs:36`；
+3. 服务端路由（`src/index.js:25`，23 条）/ `lib/client.js:27` / `web/src/lib/core.js` 的 `ENDPOINT_METHODS`（21 条）三方清单无集合级守卫，且已漂移一处：`/api/models/check` 只在 `lib/client.js` 里，`core.js` 缺它，而 `core.js:63` 对未列路径直接抛「不支持的工作台操作」。
+
+**取舍：选 1。** 它是三条里唯一有真实故障证据的——本机 `~/.dsh/storages/voice-workbench-preview/voice-audit.jsonl` 535 条记录中 `kind:error` 10 条，**4 条是上游主动关 socket**（`Your session was closed because no response was generated for 180 seconds.`）；后果不是「可观测性差」而是「UI 说在听 + 麦克风继续采集 + 服务端死会话占 `< 4` 并发额度，后续请求直接 429」。候选 2 只是让错误更可归因、候选 3 是防回归守卫，都能等。**本轮不实现**（第 7 步规定只入清单）：它跨 5-6 文件且要改 `/realtime/events` 的 `done` 语义，所以标 `[plan]`，下一班次先派只读规划子代理拆解。
+
+**自己复核并纠正了子代理一处判断**：它写「`web/src/lib/realtime.js` 的 `closed` 分支不动 `active`，UI 因 `rt.active` 仍为 true 而显示我在听」——机制对、层找错了。`finalizeRealtimeMessages` 其实会清 `listening`/`speaking`/两个 active message id；`rt.active` 压根不在 reducer 里，而是宿主 `web/src/main.jsx` 的 state（`:198` 置 true，`rtStop()` / 启动失败 / 卸载三处置 false）。所以真因是「`closed` 事件没有触发宿主收尾」，不是 reducer 漏清状态——条目已按这个口径写，避免下一班次改错层。
+
+**根因链（逐处核对过，不是推断）**：`src/core/realtime-service.js:441` 的 `socket.on('close')` 只 `invalidate(true)` + `emit({type:'closed'})`；`src/core/service.js` 的 `record.closed = true` 只在 `:381`（`/api/realtime/end`）与 `:408`（插件 dispose），`:390` 的 `done: record.closed` 因此对上游断连恒 `false`；`web/src/main.jsx:147` 写入的 `rt.done` 全仓无消费方，`:153` 的 `while(rtSession.current&&rtMounted.current)` 也不认它；麦克风/上传器只在 `rtStop()`、启动失败、卸载三处停。
+
+**验收（真跑）**：本轮零源码改动，`npm test` **379 / 379**、`npm run test:web` **103 / 103** 全绿、`npm run format:check` 通过（BACKLOG / WORKLOG 两处 markdown 已 `prettier --write` 跟上）。
+
+**并发**：开始时无 `.release.lock`，建了 `.work.lock`（2026-10-30 03:17:39）并在收尾删除。
+
+**下次可做**：下一班次直接取新条目（`[plan]` → 先派只读规划子代理，再按计划实现）。候选 2、3 仍未入清单，其中候选 3 上一轮也提过，可优先补。
