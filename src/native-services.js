@@ -64,7 +64,8 @@ export function createNativeServices(ctx, _config = {}) {
       })
     } else await credentials.set(target.credentialRef, key)
   }
-  return { status, generateFiller: filler.generateFiller, resolveModelCredential, configureModelCredential, catalog: toolConversation.catalog, runTool: toolConversation.runTool, dispose }
+  return { status, generateFiller: filler.generateFiller, resolveModelCredential, configureModelCredential, catalog: toolConversation.catalog, runTool: toolConversation.runTool,
+    releaseToolSession: toolConversation.releaseToolSession, dispose }
 }
 
 export const PROVIDER = 'sensevoice-local' // retained symbol for any legacy references

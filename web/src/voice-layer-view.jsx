@@ -9,8 +9,8 @@ import {Select,SelectTrigger,SelectValue,SelectContent,SelectItem} from './compo
 import {Switch} from './components/ui/switch'
 import {BrainCircuit,Volume2,ChevronDown} from 'lucide-react'
 import {VOICE_PROVIDERS,REALTIME_PROVIDERS} from './lib/voice-layer.js'
-import {TTS_BUILTINS} from '../../src/tts-config.js'
-import {BREEZE_PRESET_VOICES,BREEZE_ZH_VOICES} from '../../src/breeze-voices.js'
+import {TTS_BUILTINS} from '../../src/core/tts-config.js'
+import {BREEZE_PRESET_VOICES,BREEZE_ZH_VOICES} from '../../src/core/breeze-voices.js'
 import {VoicePresetsEditor} from './voice-presets-editor.jsx'
 
 function ProviderSelect({id,label,value,onChange,items}){return <div className="min-w-0 space-y-2"><Label htmlFor={id}>{label}</Label><Select value={value} onValueChange={onChange}><SelectTrigger id={id} aria-label={label} className="w-full min-w-0"><SelectValue/></SelectTrigger><SelectContent className="max-w-[calc(100vw-16px)]">{items.map(item=><SelectItem key={item.value} value={item.value} disabled={item.disabled} className="whitespace-normal break-words">{item.label}</SelectItem>)}</SelectContent></Select></div>}

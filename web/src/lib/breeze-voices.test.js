@@ -1,9 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {normalizeSettings} from './core.js'
-import {BREEZE_PRESET_VOICES} from '../../../src/breeze-voices.js'
+import {BREEZE_PRESET_VOICES} from '../../../src/core/breeze-voices.js'
 import {VOICE_PRESETS as frontendPresets} from './voice-layer.js'
-import {VOICE_PRESETS as backendPresets} from '../../../src/voice-design.js'
+import {VOICE_PRESETS as backendPresets} from '../../../src/core/voice-design.js'
 
 test('Breeze legacy generated voice normalizes to the shared Chinese preset without changing transport or Qwen',()=>{
  const source={tts_voice_provider:'breeze',tts_profiles:{breeze:{voice:'old-generated-voice',endpoint:'https://breeze.example/v1/text-to-speech/{voice_id}',model:'breeze-tts-2-multilingual',extra:{speed:1.05},key_file:'/legacy/breeze.env'},qwen:{voice:'qwen-unchanged',model:'qwen-audio-3.1-tts-plus'}}}

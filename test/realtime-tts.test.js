@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createRealtimeSession, realtimeDefaults } from '../src/realtime-service.js'
+import { createRealtimeSession, realtimeDefaults } from '../src/core/realtime-service.js'
 import { applyRealtimeEvent, finalizeRealtimeMessages } from '../web/src/lib/realtime.js'
 
 const visibleState = s => s.events.reduce(applyRealtimeEvent, { messages: [], toolCalls: [] })

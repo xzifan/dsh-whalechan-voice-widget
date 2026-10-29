@@ -4,7 +4,7 @@ import { mkdtemp, writeFile, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createBailianProviderResolver } from '../src/bailian-provider.js'
-import { createService } from '../src/service.js'
+import { createService } from '../src/core/service.js'
 
 function host({ ref = 'CUSTOM_BAILIAN_KEY', value = 'provider-test-key', record, nativeEnv = [] } = {}) {
   const calls = []

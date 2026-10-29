@@ -3,8 +3,8 @@ import assert from 'node:assert/strict'
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createAuditLog } from '../src/audit-log.js'
-import { createService } from '../src/service.js'
+import { createAuditLog } from '../src/core/audit-log.js'
+import { createService } from '../src/core/service.js'
 
 async function fixture(t, options = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'voice-history-'))

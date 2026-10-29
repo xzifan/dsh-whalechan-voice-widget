@@ -3,9 +3,9 @@ import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createService } from '../src/service.js'
-import { createVoiceCandidateState, spokenText } from '../src/voice-candidate.js'
-import { MODEL_TTS } from '../src/voice-design.js'
+import { createService } from '../src/core/service.js'
+import { createVoiceCandidateState, spokenText } from '../src/core/voice-candidate.js'
+import { MODEL_TTS } from '../src/core/voice-design.js'
 const tick = () => new Promise(resolve => setImmediate(resolve))
 
 async function setup(t, native = false, delayDesign, retainedBreeze = false) {

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createRealtimeSession } from '../src/realtime-service.js'
-import { createVoiceCandidateState } from '../src/voice-candidate.js'
+import { createRealtimeSession } from '../src/core/realtime-service.js'
+import { createVoiceCandidateState } from '../src/core/voice-candidate.js'
 const tick = () => new Promise(resolve => setImmediate(resolve))
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
 function setup(t, options = {}) {

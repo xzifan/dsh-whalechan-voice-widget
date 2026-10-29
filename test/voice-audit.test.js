@@ -3,9 +3,9 @@ import assert from 'node:assert/strict'
 import { mkdtemp, writeFile, readFile, rm, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createService } from '../src/service.js'
-import { MODEL_TTS_SYNTH, synthesizeTts } from '../src/voice-design.js'
-import { synthesizeHttpTts } from '../src/tts-http.js'
+import { createService } from '../src/core/service.js'
+import { MODEL_TTS_SYNTH, synthesizeTts } from '../src/core/voice-design.js'
+import { synthesizeHttpTts } from '../src/core/tts-http.js'
 
 const mp3 = Buffer.from('ID3fake-audio')
 function sockets() {

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { toolOutcome } from '../src/tool-outcome.js'
+import { toolOutcome } from '../src/core/tool-outcome.js'
 
 test('a non-zero exit code fails a call that itself completed', () => {
   assert.deepEqual(toolOutcome({ stdout: 'listing', stderr: 'ls: bad dir', exit_code: 2 }),

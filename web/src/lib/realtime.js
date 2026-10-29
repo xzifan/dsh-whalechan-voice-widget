@@ -83,7 +83,7 @@ export function advanceCursor(events, currentCursor) {
 export const MAX_REALTIME_MESSAGES = 200
 export const MAX_REALTIME_TOOL_CALLS = 200
 
-import { orderConversationRows } from '../../../src/conversation-order.js'
+import { orderConversationRows } from '../../../src/core/conversation-order.js'
 
 // One local clock orders output first appearances; correlated user input comes first.
 // Assistant continuations get a new bubble after a tool first appears.

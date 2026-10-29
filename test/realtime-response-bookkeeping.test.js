@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
-import {createResponseBookkeeping} from '../src/realtime-response-bookkeeping.js'
+import {createResponseBookkeeping} from '../src/core/realtime-response-bookkeeping.js'
 
 const KEY='tok-abc-secret'
 
@@ -176,7 +176,7 @@ test('redactError 隐藏会话密钥并交给 redactText 兜底',()=>{
 })
 
 test('源码守卫：realtime-service 只通过工厂拿簿记函数',()=>{
- const source=readFileSync(new URL('../src/realtime-service.js',import.meta.url),'utf8')
+ const source=readFileSync(new URL('../src/core/realtime-service.js',import.meta.url),'utf8')
  assert.match(source,/createResponseBookkeeping/)
  for(const name of ['remember','context','transcriptContext','redactError','audit','assistantContext','finalizeResponseAudit','captureResponseUsage','finalizeText','itemText'])
   assert.equal(new RegExp(`function ${name}\\(`).test(source),false,`${name} 应只在 bookkeeping 模块里定义`)

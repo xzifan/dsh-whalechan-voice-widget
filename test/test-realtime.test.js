@@ -3,8 +3,8 @@ import assert from 'node:assert/strict'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createService } from '../src/service.js'
-import { createRealtimeSession, readEnvKey, realtimeDefaults, toolDefinitions } from '../src/realtime-service.js'
+import { createService } from '../src/core/service.js'
+import { createRealtimeSession, readEnvKey, realtimeDefaults, toolDefinitions } from '../src/core/realtime-service.js'
 
 const readSchema = { name: 'read', description: 'Native read', parameters: { type: 'object', properties: { file_path: { type: 'string' }, offset: { type: 'integer', minimum: 1 }, limit: { type: 'integer', maximum: 2000 } }, required: ['file_path'], additionalProperties: false } }
 

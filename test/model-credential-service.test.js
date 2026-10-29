@@ -3,8 +3,8 @@ import assert from 'node:assert/strict'
 import {mkdtemp,writeFile,readFile,rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
-import {createService} from '../src/service.js'
-import {TTS_BUILTINS} from '../src/tts-config.js'
+import {createService} from '../src/core/service.js'
+import {TTS_BUILTINS} from '../src/core/tts-config.js'
 
 async function fixture(t,{keys={},failResolve=false,failSave=false}={}) {
   const dir=await mkdtemp(join(tmpdir(),'model-credential-service-'))

@@ -3,9 +3,9 @@ import assert from 'node:assert/strict'
 import { mkdtemp, rm, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createAuditLog, sanitizeAuditRecord, percentile } from '../src/audit-log.js'
-import { createService } from '../src/service.js'
-import { audioDurationSeconds } from '../src/audio-duration.js'
+import { createAuditLog, sanitizeAuditRecord, percentile } from '../src/core/audit-log.js'
+import { createService } from '../src/core/service.js'
+import { audioDurationSeconds } from '../src/core/audio-duration.js'
 
 async function fixture(t, options = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'voice-statistics-'))

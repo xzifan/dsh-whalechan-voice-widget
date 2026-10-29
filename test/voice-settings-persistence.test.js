@@ -3,8 +3,8 @@ import assert from 'node:assert/strict'
 import { mkdtemp, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createService } from '../src/service.js'
-import { MODEL_TTS } from '../src/voice-design.js'
+import { createService } from '../src/core/service.js'
+import { MODEL_TTS } from '../src/core/voice-design.js'
 import { mergeVoiceSettingsPatch } from '../web/src/lib/voice-settings.js'
 
 const tick = () => new Promise(resolve => setImmediate(resolve))

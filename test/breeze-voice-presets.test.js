@@ -3,9 +3,9 @@ import assert from 'node:assert/strict'
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createService } from '../src/service.js'
-import { designBreezeVoice } from '../src/breeze-voice-design.js'
-import { TTS_BUILTINS } from '../src/tts-config.js'
+import { createService } from '../src/core/service.js'
+import { designBreezeVoice } from '../src/core/breeze-voice-design.js'
+import { TTS_BUILTINS } from '../src/core/tts-config.js'
 
 const audio = Buffer.from('ID3mock-audio')
 const preview = { generated_voice_id: 'gvi_preview', audio_base_64: audio.toString('base64'), media_type: 'audio/mpeg' }

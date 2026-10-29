@@ -3,9 +3,9 @@ import assert from 'node:assert/strict'
 import {mkdtemp,rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
-import {createService} from '../src/service.js'
-import {BREEZE_PRESET_VOICES,BREEZE_ZH_VOICES,resolveBreezeLanguage,normalizeBreezeProfile} from '../src/breeze-voices.js'
-import {sanitizeAuditRecord} from '../src/audit-log.js'
+import {createService} from '../src/core/service.js'
+import {BREEZE_PRESET_VOICES,BREEZE_ZH_VOICES,resolveBreezeLanguage,normalizeBreezeProfile} from '../src/core/breeze-voices.js'
+import {sanitizeAuditRecord} from '../src/core/audit-log.js'
 
 const audio=Buffer.from('ID3fixed-voice-test')
 const tick=()=>new Promise(resolve=>setImmediate(resolve))

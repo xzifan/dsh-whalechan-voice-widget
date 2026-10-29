@@ -2,6 +2,28 @@
 
 本轮工作的技术记录：做了什么、怎么验证的、还欠什么。发布记录由 `scripts/release.sh` 自动追加。
 
+## 2026-10-29 · 核心逻辑抽成 `src/core`（可复用模块第一步）
+
+**为什么**：目标是不依赖 DSH 也能跑（独立 agent core SDK）。审计发现耦合面其实很小——3252 行里只有 6 个文件碰宿主 `ctx`，业务逻辑没有 import 任何宿主包。
+
+**做了什么**
+- 21 个与宿主无关的模块 `git mv` 进 `src/core/`（service、realtime-service、audit-log、tts-*、voice-*、persona、conversation-order、realtime-protocol 等）。
+- 6 个宿主适配文件留在 `src/`：`index.js`、`native-services.js`、`agent-conversation.js`、`conversation-filler.js`、`model-credentials.js`、`bailian-provider.js`。
+- 新增 `src/core/index.js` 桶导出；`package.json` 加 `./core` subpath export。
+- 同步改写 33 处引用（src/test/scripts/web）；`.tools/*backup*` 快照里的改写已回滚。
+
+**新增守卫**（`test/core-contract.test.js`，4 条）
+- 除 `index.js` 外不许 import `@deepseek-ai/*`；
+- core 内不许出现 `from '../'`（不许反向依赖适配器）；
+- 适配器必须覆盖 `runTool/catalog/resolveModelCredential` 与 `releaseToolSession`；
+- 只有注入依赖时 core 也能启动并自检。
+
+**验证**：后端 363/363、前端 102/102、lint 干净、`vite build` 通过。
+
+**顺带修掉两个真 bug**
+1. `native-services.js` 从未暴露 `releaseToolSession`（下午那次替换静默失败），`service.js` 的 `?.` 调用一直空转，复用的工具 agent 只能等 30 分钟 TTL 回收。
+2. `service.js` 移入 core 后，`new URL('../package.json')` 指向了 `src/package.json`，`PLUGIN_VERSION` 退化成 `unknown` —— 被 `adapter.test.js` 的版本断言抓住。
+
 ## 2026-10-28 · 今日优化：健康检查端点 `/api/voice-workbench/health`
 
 **为什么是它**：发布流水线现在只能靠"config 接口返回 200"判断插件挂载，这既不能确认版本，也看不到 TTS 就绪状态和进行中的实时会话。加一个只读自检端点，把"部署成功"从主观判断变成可断言的事实，同时给运维留一个标准探针。

@@ -32,7 +32,7 @@ function requireValue(ok, message, status = 400) { if (!ok) throw new RequestErr
 function id(value) { requireValue(typeof value === 'string' && /^[\w-]{1,100}$/.test(value), '会话或请求标识无效'); return value }
 
 const PLUGIN_VERSION = (() => {
-  try { return JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version || 'unknown' }
+  try { return JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version || 'unknown' }
   catch { return 'unknown' }
 })()
 

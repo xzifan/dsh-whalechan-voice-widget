@@ -4,10 +4,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import { createVoiceToolBridge, breezeDisabled, breezePresets, voiceToolNames } from '../src/voice-tool-bridge.js'
-import { DEFAULT_TOOLS } from '../src/realtime-protocol.js'
-import { RequestError } from '../src/service.js'
-import { BREEZE_PRESET_VOICES } from '../src/breeze-voices.js'
+import { createVoiceToolBridge, breezeDisabled, breezePresets, voiceToolNames } from '../src/core/voice-tool-bridge.js'
+import { DEFAULT_TOOLS } from '../src/core/realtime-protocol.js'
+import { RequestError } from '../src/core/service.js'
+import { BREEZE_PRESET_VOICES } from '../src/core/breeze-voices.js'
 
 // 与 service.js 里的私有 requireValue 同形（它是注入依赖，测试照同样语义提供）。
 const requireValue = (ok, message, status = 400) => { if (!ok) throw new RequestError(message, status) }
@@ -34,7 +34,7 @@ test('语音工具准入集合与 realtime-protocol 的 DEFAULT_TOOLS 同源，�
   assert.deepEqual([...voiceToolNames], DEFAULT_TOOLS)
   assert.equal(DEFAULT_TOOLS.length, 8)
   // 源码守卫：service.js 不能再自带 runVoiceTool，否则抽出的模块成了死代码。
-  return readFile(new URL('../src/service.js', import.meta.url), 'utf8').then(source => {
+  return readFile(new URL('../src/core/service.js', import.meta.url), 'utf8').then(source => {
     assert.match(source, /import \{ createVoiceToolBridge, breezeDisabled \} from '\.\/voice-tool-bridge\.js'/)
     assert.ok(!source.includes('async function runVoiceTool'), 'service.js 不应再定义 runVoiceTool')
     assert.ok(!source.includes("'set_tts_profile'].includes(name)"), 'service.js 不应再硬编码语音工具名清单')

@@ -3,9 +3,9 @@ import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createService } from '../src/service.js'
-import { VOICE_PRESETS, MODEL_TTS } from '../src/voice-design.js'
-import { PRESET_GREETING_TEXT } from '../src/voice-presets.js'
+import { createService } from '../src/core/service.js'
+import { VOICE_PRESETS, MODEL_TTS } from '../src/core/voice-design.js'
+import { PRESET_GREETING_TEXT } from '../src/core/voice-presets.js'
 
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
 async function fixture(t, options = {}) {

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {synthesizeHttpTts} from '../src/tts-http.js'
+import {synthesizeHttpTts} from '../src/core/tts-http.js'
 const mp3=Buffer.from('ID3fake-audio-for-unit-tests')
 const base={name:'test',endpoint:'https://tts.example.test/v1/audio/speech',model:'test-model',voice:'alloy',speed:1.05,format:'mp3',instructions:'',auth_type:'bearer',extra:{}}
 function fixture(profile,reply=()=>new Response(mp3,{headers:{'content-type':'audio/mpeg'}})){

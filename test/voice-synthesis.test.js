@@ -7,10 +7,10 @@ import { readFile } from 'node:fs/promises'
 import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createVoiceSynthesis, readProviderKey } from '../src/voice-synthesis.js'
-import { RequestError } from '../src/service.js'
-import { MODEL_TTS, MODEL_TTS_SYNTH } from '../src/voice-design.js'
-import { BREEZE_PRESET_VOICES } from '../src/breeze-voices.js'
+import { createVoiceSynthesis, readProviderKey } from '../src/core/voice-synthesis.js'
+import { RequestError } from '../src/core/service.js'
+import { MODEL_TTS, MODEL_TTS_SYNTH } from '../src/core/voice-design.js'
+import { BREEZE_PRESET_VOICES } from '../src/core/breeze-voices.js'
 
 const requireValue = (ok, message, status = 400) => { if (!ok) throw new RequestError(message, status) }
 const emptyVoiceState = () => ({ get: () => null, list: () => [], set: () => {}, confirmed: () => null, forget: () => {}, find: () => null })
@@ -135,7 +135,7 @@ test('readProviderKey：按协议优先级取值，缺文件或缺 key_file 一�
 })
 
 test('源码守卫：service.js 只注入工厂，不再自带合成层', async () => {
-  const source = await readFile(new URL('../src/service.js', import.meta.url), 'utf8')
+  const source = await readFile(new URL('../src/core/service.js', import.meta.url), 'utf8')
   assert.match(source, /import \{ createVoiceSynthesis \} from '\.\/voice-synthesis\.js'/)
   assert.ok(!source.includes('async function synthVoiceLayer'), 'service.js 不应再定义 synthVoiceLayer')
   assert.ok(!source.includes('function voiceProfile'), 'service.js 不应再定义 voiceProfile')

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert'
-import { readPersona, REQUIRED_PERSONA, SPOKEN_STYLE, TOOL_HONESTY_RULES, appendRequiredRules, assembleRealtimeInstruction } from '../src/persona.js'
+import { readPersona, REQUIRED_PERSONA, SPOKEN_STYLE, TOOL_HONESTY_RULES, appendRequiredRules, assembleRealtimeInstruction } from '../src/core/persona.js'
 
 test('REQUIRED_PERSONA contains identity and address rules', () => {
   assert.ok(REQUIRED_PERSONA.includes('鲸鱼娘'))

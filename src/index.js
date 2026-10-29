@@ -2,7 +2,7 @@ import Schema from '@deepseek-ai/schemastery'
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { resolve, sep, extname } from 'node:path'
-import { createService, RequestError } from './service.js'
+import { createService, RequestError } from './core/service.js'
 import { createNativeServices } from './native-services.js'
 
 export const name='voice-workbench'

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import * as protocol from '../src/realtime-protocol.js'
-import * as realtime from '../src/realtime-service.js'
+import * as protocol from '../src/core/realtime-protocol.js'
+import * as realtime from '../src/core/realtime-service.js'
 
 // 拆分自 realtime-service.js 的纯常量/提示词/Schema 层：只允许「入参 → 返回值」，
 // 因此这里既锁行为，也锁「没有两份各自演化的实现」。

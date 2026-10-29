@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert'
-import { designVoice, deleteBailianVoice, synthesizeTts, VOICE_PRESETS, DEFAULT_VOICE_ID, readDashKey, MODEL_TTS, MODEL_RT } from '../src/voice-design.js'
-import { toolDefinitions, REALTIME_INSTRUCTIONS, realtimeInstructions, DEFAULT_TOOLS } from '../src/realtime-service.js'
+import { designVoice, deleteBailianVoice, synthesizeTts, VOICE_PRESETS, DEFAULT_VOICE_ID, readDashKey, MODEL_TTS, MODEL_RT } from '../src/core/voice-design.js'
+import { toolDefinitions, REALTIME_INSTRUCTIONS, realtimeInstructions, DEFAULT_TOOLS } from '../src/core/realtime-service.js'
 
 function fakeFetch(handler) { return async (url, options) => { const result = await handler(url, options); return { ok: result.ok !== false, status: result.status || 200, json: async () => result.json, arrayBuffer: async () => result.buffer || new ArrayBuffer(0) } } }
 

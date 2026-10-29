@@ -3,8 +3,8 @@ import assert from 'node:assert/strict'
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createVoicePresets, PRESET_GREETING_TEXT, PRESET_GREETING_INSTRUCTION } from '../src/voice-presets.js'
-import { VOICE_PRESETS, MODEL_TTS } from '../src/voice-design.js'
+import { createVoicePresets, PRESET_GREETING_TEXT, PRESET_GREETING_INSTRUCTION } from '../src/core/voice-presets.js'
+import { VOICE_PRESETS, MODEL_TTS } from '../src/core/voice-design.js'
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
 async function fixture(t, options = {}) {
  const dir = await mkdtemp(join(tmpdir(), 'preset-cache-')), provider = options.provider || 'qwen'

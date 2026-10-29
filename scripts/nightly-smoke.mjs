@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { readDashKey, synthesizeTts } from '../src/voice-design.js'
+import { readDashKey, synthesizeTts } from '../src/core/voice-design.js'
 
 export const TTS_TEXT = '主人，夜间冒烟，链路一切正常。'
 export const WS_HOST = 'wss://dashscope.aliyuncs.com/api-ws/v1/realtime'

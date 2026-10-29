@@ -3,11 +3,11 @@ import assert from 'node:assert/strict'
 import {mkdtemp,rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
-import {createService} from '../src/service.js'
-import {createVoiceInitialization} from '../src/voice-initialization.js'
+import {createService} from '../src/core/service.js'
+import {createVoiceInitialization} from '../src/core/voice-initialization.js'
 import {readFileSync} from 'node:fs'
-import {BREEZE_PRESET_VOICES} from '../src/breeze-voices.js'
-import {MODEL_TTS,VOICE_PRESETS} from '../src/voice-design.js'
+import {BREEZE_PRESET_VOICES} from '../src/core/breeze-voices.js'
+import {MODEL_TTS,VOICE_PRESETS} from '../src/core/voice-design.js'
 
 async function fixture(t,{gate,fail=false}={}){
  const dir=await mkdtemp(join(tmpdir(),'voice-init-')),requests=[],sockets=[]
@@ -189,7 +189,7 @@ test('工厂读 live settings：settings 整体重赋值后同一实例立即用
 })
 
 test('新模块不重复排队：注入表里没有 self-queuing 的包装，只接 raw mutate',()=>{
- const source=readFileSync(new URL('../src/voice-initialization.js',import.meta.url),'utf8')
+ const source=readFileSync(new URL('../src/core/voice-initialization.js',import.meta.url),'utf8')
  // 注入表（工厂签名）不得出现自带队列的包装函数，否则 mutate 套 mutate 会死锁。
  assert.equal(/createVoiceInitialization\(\{[^}]*persistSettings/.test(source),false)
  assert.equal(/persistSettings\s*\(/.test(source),false)
@@ -210,7 +210,7 @@ test('初始化上游 409 原样透传，不降级成 502',async()=>{
 })
 
 test('service.js 只注入初始化工厂，不再自带 initializeSessionVoice',()=>{
- const source=readFileSync(new URL('../src/service.js',import.meta.url),'utf8')
+ const source=readFileSync(new URL('../src/core/service.js',import.meta.url),'utf8')
  assert.equal(source.includes("import { createVoiceInitialization } from './voice-initialization.js'"),true)
  assert.equal(source.includes('async function initializeSessionVoice'),false)
  assert.equal(source.includes('voicePresets.initialize('),false)

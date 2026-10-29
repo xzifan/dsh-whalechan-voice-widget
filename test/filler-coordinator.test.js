@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createFillerCoordinator } from '../src/filler-coordinator.js'
-import { createRealtimeSession, realtimeDefaults } from '../src/realtime-service.js'
+import { createFillerCoordinator } from '../src/core/filler-coordinator.js'
+import { createRealtimeSession, realtimeDefaults } from '../src/core/realtime-service.js'
 const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve() }
 function deferred() { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
 function clock() {

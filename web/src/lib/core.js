@@ -1,5 +1,5 @@
 import {normalizeVoiceLayer,DEFAULT_TOOLS} from './voice-layer.js'
-import {BREEZE_PRESET_VOICES} from '../../../src/breeze-voices.js'
+import {BREEZE_PRESET_VOICES} from '../../../src/core/breeze-voices.js'
 // Generic largest-remainder allocation adapted from the permitted voice-mix.js.
 export function redistributeWeights(entries, changedIndex, value) {
   if (entries.length < 2 || changedIndex < 0 || changedIndex >= entries.length) throw new RangeError('Invalid mix index')

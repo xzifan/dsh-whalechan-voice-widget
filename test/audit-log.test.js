@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, readFile, writeFile, stat, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createAuditLog, sanitizeAuditRecord, sanitizeAuditValue, numericUsage } from '../src/audit-log.js'
+import { createAuditLog, sanitizeAuditRecord, sanitizeAuditValue, numericUsage } from '../src/core/audit-log.js'
 
 async function fixture(t, options = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'voice-audit-store-'))
