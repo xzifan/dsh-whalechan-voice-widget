@@ -120,3 +120,6 @@ jobs:
 
       - name: Breeze voice settings (fixed voices, mock APIs)
         run: npm run test:browser:breeze
+
+      - name: Voice presets (save-before-generate, autoplay retry, mock APIs)
+        run: npm run test:browser:presets

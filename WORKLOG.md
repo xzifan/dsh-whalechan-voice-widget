@@ -390,3 +390,22 @@
 - 验收（都是实跑）：后端 `npm test` 314 → **315**（多的是第 4 条元测试）、前端 **101** 全绿、`npm run lint` 0 问题、`npm run format:check` 通过、`npm run build` 成功（build 后按惯例 `git checkout -- dist/` + 删新 hash 产物 `index-CReRi_3c.js`，未进提交）；`browser-breeze-voice.py` PASS，`browser-pages.py` 仍 `{"statistics": true, "history": true, "audit": true, "pageErrors": []}`。
 - **变异验证**（三条都实跑）：①把 `src/breeze-voices.js` 的 zh id 改成 `voc_mutation0000`（不重建）→ 红在 `#breeze-zh-voice` 的 `to_have_text`，实际仍读到旧 id，证明 ID 真从源码来；②把 UI region 的 `aria-label` 改回 `Breeze 三语预设音色` 并重建 → 红在 region 定位超时，证明断的是当前构建产物而不是别处的旧包；③把 zh id 硬编码回脚本 → 元测试恰好红 1 条（3 pass / 1 fail），还原后 4/4 绿。
 - 下一个可做：S6「重写 `browser-voice-presets.py`」（301 → ≈195 行，保留 12 组语义断言）；这轮从 breeze 脚本里移走的 Qwen 预设生成/应用/试听流程正好由它接住。
+
+## 2026-10-29 · 浏览器脚本 S6：`browser-voice-presets.py` 改走 Harness
+
+**条目**：重写音色预设脚本——旧版断言的是 UI 重构前的入口、自己分发 `dist/web`、在仓库里落截图。
+
+**改动**（`test/browser-voice-presets.py` 全量重写，301 → 287 行；`test/browser_harness.py` +7/−2；`package.json` +1；`ci.yml` +3；`test/browser-scripts.test.js` +28）
+
+- **12 组语义断言一条没删**：单槽位编辑器（一个 textarea）、模板填字不发请求也不改服务端槽位、无候选音色不能应用 / 提示词 <4 字不能生成、**先保存再生成**（保存未返回时按钮停在「保存中…」且不得发生成请求）、生成成功自动试听但不等于应用、改字即停旧音频 + 收走重听 + 应用重新禁用、刷新保留提示词与候选音色但丢掉脏编辑、刷新后「试听音色」只重取试听、应用音色保留无关的对话草稿且不写设置、浏览器拦截自动播放后「重试播放」复用同一份音频、「重试试听」只补试听且「再听一次」零请求、390px 布局与刷新后不自动播放旧试听。
+- **删掉的是属性不是行为**：3 条实现脆断言（两处 `getComputedStyle(overflowX)`、一处 `scrollLeft = scrollWidth` 的机械滚动）与 2 张截图（计划里写 6 条/3 张，实测文件里只有这么多），外加自己分发 `dist/web` 的整段 `route`（约 14 行）。
+- **`Harness` 需要一个硬件借口**：`start()` 里就 `goto`，调用方没有注入时机，所以给 `Harness` 加了 `init_scripts=[]`（默认空）；假 `Audio` 走这个入口注入，所有 `window.__audio` 读写都在 `harness.child`（子框架）里，`browser-smoke`/`pages`/`breeze` 三个脚本实跑未受影响。
+- **390px 的抽屉**：窄屏侧栏是折叠的，`nav('设置')` 会 30s 超时；`open_voice()` 在 <768px 时先点「折叠/展开菜单」、点完设置再 `Escape` 收抽屉。第一次跑就红在这里（桌面段已全绿，所以一眼定位）。
+- **新增断言**：模板按钮数取自 `web/src/lib/voice-layer.js` 的 `VOICE_PRESETS` 表长（不再硬编码 3）；`voice-presets/save` 请求体恰为 `{presetId,prompt}` 且 prompt 已 trim；应用期间不得出现 `PUT config`；`/greeting` 重试恰好一次；每次 `presetId` 都是 `preset-warm`（模板只改当前槽位）。
+- **门禁**：`test:browser:presets` npm 脚本、CI 的 `browser-smoke` job 加一步、元测试第 5 条锁死「走 Harness / 不出现 `dist/web` / 不落截图 / 四个信号在 / npm+CI 都挂上」。
+
+**验证（都是实跑）**：后端 `npm test` 315 → **316**、前端 **101** 全绿；`lint` 0 问题、`format:check` 通过、`build` 成功（`dist/` 已 `git checkout` 还原、新 hash 产物已删）；`browser-voice-presets.py` 连跑 2 次 PASS，`browser-smoke.py`、`browser-pages.py`（`{"statistics":true,"history":true,"audit":true,"pageErrors":[]}`）、`browser-breeze-voice.py` 均 PASS。
+
+**变异验证**：①`use-voice-presets.js` 的 `if(dirty)` → `if(false)`（跳过先保存）→ 红在找不到「保存中…」按钮；②`retryPlayback` 改成重新 `run(id,'generate')` → 红在「重试播放必须复用已拿到的音频」（请求数变多）。两次都还原并重建，`git diff src web/src` 为空。
+
+**下次可做**：S7 重写 `browser-startup-initialization.py`（95 行，start 竞态 / 取消后迟到 session 必 end / `voiceSettingsPatch` 落盘）。另：`Harness` 现在有 `init_scripts` 入口，S7 若也要桩别的浏览器原语直接用，不要再给脚本开第二个 bootstrap。

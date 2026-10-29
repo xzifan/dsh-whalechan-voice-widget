@@ -78,6 +78,34 @@ test('Breeze 脚本从源码读固定音色 ID，且走 browser_harness.Harness'
   assert.ok(ci.includes('npm run test:browser:breeze'), 'CI 必须真的跑 Breeze 脚本，否则等于没有这条断言')
 })
 
+// 音色预设编辑器（BACKLOG「浏览器脚本 S6」）重写后必须走 Harness：旧脚本自己分发
+// `dist/web` 静态资源、在仓库里落截图，等于绕开「宿主页 -> client.js -> iframe」这条唯一生产路径。
+test('音色预设脚本走 browser_harness.Harness，且已被 npm / CI 驱动', () => {
+  const presets = readFileSync(join(TEST_DIR, 'browser-voice-presets.py'), 'utf8')
+  assert.ok(
+    presets.includes('from browser_harness import'),
+    'browser-voice-presets.py 必须走 browser_harness.Harness，不能直连 dist/web',
+  )
+  assert.equal(
+    presets.includes('dist/web'),
+    false,
+    'browser-voice-presets.py 不该自己分发 dist/web：那会绕过宿主页 -> client.js -> iframe 这条生产路径',
+  )
+  assert.equal(presets.includes('screenshot('), false, '浏览器脚本不该把截图写进仓库树')
+  for (const signal of ['保存并生成音色', '重试播放', '重试试听', '正在播放新音色…']) {
+    assert.ok(presets.includes(signal), `browser-voice-presets.py 缺少「${signal}」断言，预设编辑器的回归就没人看了`)
+  }
+
+  const pkg = JSON.parse(readFileSync(join(TEST_DIR, '..', 'package.json'), 'utf8'))
+  assert.equal(
+    pkg.scripts['test:browser:presets'],
+    'python3 test/browser-voice-presets.py',
+    '音色预设脚本要能被 npm 驱动，否则重写完还是没人跑',
+  )
+  const ci = readFileSync(join(TEST_DIR, '..', '.github', 'workflows', 'ci.yml'), 'utf8')
+  assert.ok(ci.includes('npm run test:browser:presets'), 'CI 必须真的跑音色预设脚本，否则等于没有这条断言')
+})
+
 // 日志审计页（BACKLOG「浏览器页断言 S4」）同样并入 browser-pages.py；旧脚本里的列标题点击循环
 // 恒真、3080 探活只是读线上状态，都随文件一起删掉。
 test('日志审计断言已并入 browser-pages.py，没有独立的 browser-audit-table.py', () => {

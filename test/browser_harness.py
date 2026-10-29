@@ -44,11 +44,14 @@ def recording():
 
 class Harness:
     """One browser, one host page. `routes` maps an action name to `callable(method, body)`."""
-    def __init__(self, routes=None, settings=None, mic=True, viewport=None):
+    def __init__(self, routes=None, settings=None, mic=True, viewport=None, init_scripts=None):
         self.routes = routes or {}
         self.settings = json.loads(json.dumps(settings if settings is not None else SETTINGS))
         self.mic = mic
         self.viewport = viewport or {'width': 1440, 'height': 1000}
+        # Runs in every frame before any page script: a caller that needs to stub a browser
+        # primitive (e.g. `window.Audio`) has no other seam, because `start()` navigates.
+        self.init_scripts = list(init_scripts or [])
         self.calls, self.errors = [], []
         self.audio = base64.b64encode(recording()).decode()
 
@@ -123,6 +126,8 @@ class Harness:
         self.browser = await self._playwright.chromium.launch(**options)
         self.context = await self.browser.new_context(viewport=self.viewport, permissions=['microphone'] if self.mic else [])
         await self.context.add_init_script(TRACK_SCRIPT)
+        for script in self.init_scripts:
+            await self.context.add_init_script(script)
         self.page = await self.context.new_page()
         self.page.on('pageerror', lambda error: self.errors.append(str(error)))
         await self.page.route('**/*', self.dispatch)

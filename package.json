@@ -41,6 +41,7 @@
     "test:browser": "python3 test/browser-smoke.py",
     "test:browser:pages": "python3 test/browser-pages.py",
     "test:browser:breeze": "python3 test/browser-breeze-voice.py",
+    "test:browser:presets": "python3 test/browser-voice-presets.py",
     "smoke:nightly": "node scripts/nightly-smoke.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",
