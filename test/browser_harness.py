@@ -5,6 +5,7 @@ production one: host page -> `lib/client.js` bridge -> iframe `voice-workbench/`
 `/api/voice-workbench/*`. Nothing is written into the repo tree (fixtures and screenshots, when a
 caller asks for them, land in a throwaway temp dir).
 """
+import asyncio
 import base64
 import io
 import json
@@ -149,6 +150,39 @@ class Harness:
 
     async def nav(self, name):
         await self.frame.get_by_role('button', name=name, exact=True).click()
+
+    async def until(self, predicate, timeout=5.0, interval=0.05):
+        """Poll a side effect until it is truthy, and return its last value.
+
+        A DOM value that is visible on the first paint is not evidence that a request landed:
+        asserting it returns instantly, and the request list read on the next line is still empty.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while loop.time() < deadline:
+            result = predicate()
+            if result:
+                return result
+            await asyncio.sleep(interval)
+        return predicate()
+
+    async def wait_for_value(self, label, wanted, timeout=5.0, interval=0.05):
+        """Wait until a labelled input holds `wanted`, i.e. the page really rendered server data.
+
+        The settings tabs render before the config GET resolves, so acting on the form while it
+        still shows defaults lets the late load overwrite the edit. Verified with a 500 ms mock:
+        the tabs are visible at ~65 ms with an empty field, and the PUT then carried the seeded
+        prompt plus the untouched tool set.
+        """
+        value = None
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while loop.time() < deadline:
+            value = await self.frame.get_by_label(label).input_value()
+            if value == wanted:
+                return value
+            await asyncio.sleep(interval)
+        raise AssertionError(f'{label} 始终没有变成 {wanted!r}，实际读到 {value!r}')
 
     async def close(self):
         await self.browser.close()

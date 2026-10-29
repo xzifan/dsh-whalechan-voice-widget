@@ -155,6 +155,28 @@ test('browser-smoke.py 走 browser_harness.Harness，且与其它脚本共享同
   }
 })
 
+// 冒烟脚本里曾有两处「拿首屏已可见的东西当副作用信号」（BACKLOG「复查 browser-smoke.py 的同类竞态」）：
+// ①设置页 tab 在 config GET 落地前就渲染完，于是先填表再被晚到的加载覆盖回去——500ms 慢 mock 下
+// PUT 带着种子提示词与未改动的工具表；②保存后从 calls 取 `[-1]`，慢 runner 上直接 IndexError。
+// 这里锁住两点的**文本顺序**：先等到服务端数据、后才动表单；PUT 经 `until` 轮询而不是裸下标。
+test('browser-smoke.py 先等服务端数据落地再改表单，且请求列表走 until 轮询', () => {
+  const smoke = readFileSync(join(TEST_DIR, 'browser-smoke.py'), 'utf8')
+  const waited = smoke.indexOf("wait_for_value('补充提示词'")
+  const edited = smoke.indexOf(".fill('先给结论，保持简短。')")
+  assert.ok(waited !== -1, 'browser-smoke.py 必须用 harness.wait_for_value 等到设置表单拿到服务端数据')
+  assert.ok(edited !== -1, 'browser-smoke.py 应当仍在改「补充提示词」')
+  assert.ok(
+    waited < edited,
+    '等数据必须先于填表：设置在 tab 渲染后、GET 落地前填的会被晚到的加载覆盖（慢 mock 实测 PUT 带种子值）',
+  )
+  assert.equal(
+    smoke.includes("if call[0] == 'PUT'][-1]"),
+    false,
+    'browser-smoke.py 不该对请求列表做裸下标读取：PUT 未必已经在 calls 里，慢 runner 上会 IndexError',
+  )
+  assert.ok(smoke.includes('await harness.until('), 'browser-smoke.py 应当用 harness.until 轮询请求列表')
+})
+
 // 日志审计页（BACKLOG「浏览器页断言 S4」）同样并入 browser-pages.py；旧脚本里的列标题点击循环
 // 恒真、3080 探活只是读线上状态，都随文件一起删掉。
 test('日志审计断言已并入 browser-pages.py，没有独立的 browser-audit-table.py', () => {

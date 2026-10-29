@@ -481,3 +481,30 @@
 **报告文件**：`artifacts/nightly-smoke/2026-10-29.json`（`/artifacts/` 已被 `.gitignore` 覆盖，不进提交）。**保留**该文件而不像上一轮那样删掉：它就是今天这次真跑的原始证据，且限流按上海时区日期分文件，留档不影响次日。
 
 **下次可做**：BACKLOG 里「夜间冒烟接入调度」仍需人拍板（Hermes cron 每日 03:00 / 独立 workflow 二选一，且 `skipped:'no-credential'` 必须单独报一句而不能算通过），本作业按规则不自行建定时任务；再下一条「复查 `browser-smoke.py` 里拿首屏可见文本当副作用信号的竞态」可自动做。
+
+## 2026-10-29 · P1「复查 `browser-smoke.py` 里同类「首屏已可见文本当副作用信号」的竞态」（J1 迭代班次）
+
+**取活说明**：BACKLOG 顶部两条 `- [ ]` 都动不了——「husky + lint-staged」自己标了 ⛔ 阻塞、前置是文末那条「Prettier 大目录迁移是否豁免 200 行」的产品决策；「夜间冒烟接入调度」写明需人拍板（cron 还是 workflow）。所以本班次取第一条可做的：`browser-smoke.py` 的竞态复查。
+
+**先测量再改（本轮全部结论都有探针输出，不是推断）**。临时探针 `~/.hermes/cache/scratch/smoke-race-probe{,2,3}.py`（不进仓库），4 次正常 mock 全记录：设置页 tab 在 **41–73 ms** 就可见、此时 config GET 已记 1 次、提示词已是 `测试`；`已完成` 在 `在呢，主人。` 之前**不可见**（0 → 1），是真等待；结束对话后 `__testTracks` 立刻全 `ended`。
+
+**但「本机全绿」不等于没竞态**——正常 mock 是瞬时返回的，把 `config` 的 GET 拖到 500 ms（probe2 的 v1）立刻复现：
+
+| 变体                 | tab 可见 | 表单一刻           | 保存出去的 PUT                                             |
+| -------------------- | -------- | ------------------ | ---------------------------------------------------------- |
+| 正常 mock            | 65 ms    | `测试`（已加载）   | 编辑后的值 ✅                                              |
+| GET 500 ms（旧顺序） | 65 ms    | `''`（**未加载**） | `system_prompt='测试'`、`enabled_tools=['read','glob']` ❌ |
+
+即：`expect(tab 对话).to_be_visible()` 是首屏渲染的产物，不是「表单已拿到服务端数据」的证据；先填表后加载，晚到的加载把编辑覆盖回种子值，两个断言会假红（且看起来像产品 bug）。另一处 `saved = [... if call[0]=='PUT'][-1]` 是 S4 在 `statistics` 段栽过的同款裸下标，慢 runner 上直接 IndexError。**麦克风释放不是同类问题**：把 `realtime/end` 拖到 400 ms，结束后的 `__testTracks` 仍全 `ended`（`track.stop()` 在响应落地前就调了），所以没动那两条断言。
+
+**改动（5 文件，+93/−2；代码 3 文件 +66/−2，全在这条条目内）**：
+
+- `test/browser_harness.py`（+34）：新增 `Harness.until(predicate, timeout=5.0)`（轮询副作用并返回最后一次取值）与 `Harness.wait_for_value(label, wanted)`（等到带标签输入框真的等于服务端数据，超时报「始终没有变成 X，实际读到 Y」）。放在 Harness 里而不是各脚本各写一份——两份 bootstrap 分叉正是这个仓库反复踩的坑。
+- `test/browser-smoke.py`（+6/−2）：改表单前先 `await harness.wait_for_value('补充提示词', harness.settings['system_prompt'])`；PUT 改为 `puts = await harness.until(lambda: [c for c in calls if c[0] == 'PUT'])` + `assert puts` 再取 `[-1]`。
+- `test/browser-scripts.test.js`（+24）：第 8 条元测试锁死两点的**文本顺序**——`wait_for_value(...)` 必须出现在 `.fill('先给结论…')` 之前、文件里不得再有 `if call[0] == 'PUT'][-1]`、必须存在 `await harness.until(`。
+
+**验证（实跑）**：后端 `npm test` 319 → **320**、前端 `npm run test:web` **101** 全绿；`npm run lint` 0 问题、`npm run format:check` 通过、`npm run build` 成功（`dist/` 已 `git checkout -- dist/` 还原、新 hash 产物 `index-CReRi_3c.js` 已删）。浏览器侧：`browser-smoke.py` 在还原后的 `dist/` 上 PASS，`browser-pages.py` 仍 `{"statistics": true, "history": true, "audit": true, "pageErrors": []}`。
+
+**修复验证（正反都跑）**：同一条 500 ms 慢 mock 换成修复后的顺序（probe3）→ 2/2 `ok:true`，PUT 带 `system_prompt='先给结论，保持简短。'`、`enabled_tools=['read']`、`workspace='/test/workspace'`。**变异验证**：①把 `wait_for_value` 挪到 `.fill` 之后 → 元测试恰好红 1 条（7 pass/1 fail）；②把 `until` 版本换回裸 `[-1]` → 同样恰好红 1 条；两次都从备份 `cp` 还原后 8/8 绿、`git diff` 与修复版一致。
+
+**下次可做**：`Harness.wait_for_value` 已就位，但 `browser-pages.py` / `breeze` / `voice-presets` / `startup` 里各有一份自己的 `until_value`/`until`，可以合并到 Harness 一处（跨 5 文件，留给有预算的班次）；BACKLOG 顶部两条仍等人拍板；`HARNESS` 的慢 mock 目前只是仓库外的探针，若想让 CI 常驻拦这类竞态，可给 `Harness` 加一个 `latency` 参数并在 smoke 里跑一遍慢速变体（需产品/CI 时长的取舍）。

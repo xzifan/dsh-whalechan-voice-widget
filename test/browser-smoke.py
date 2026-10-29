@@ -24,6 +24,10 @@ async def main():
         await expect(frame.get_by_role('button', name='开始对话', exact=True)).to_be_enabled()
         await harness.nav('设置')
         await expect(frame.get_by_role('tab', name='对话', exact=True)).to_be_visible()
+        # 「设置页 tab 可见」只是首屏渲染，不是「表单已是服务端数据」：config GET 还没落地时
+        # 表单是空的/默认值，晚到的加载会把刚填的内容覆盖回种子值。慢速 mock（GET 500ms）实测过：
+        # 不先等这一下，保存出去的 PUT 带着种子提示词和未改动过的工具表。
+        await harness.wait_for_value('补充提示词', harness.settings['system_prompt'])
         await frame.get_by_label('补充提示词', exact=True).fill('先给结论，保持简短。')
         await frame.get_by_role('tab', name='工具', exact=True).click()
         await frame.get_by_role('checkbox', name='read', exact=True).check()
@@ -31,7 +35,11 @@ async def main():
         await frame.get_by_label('工作区路径', exact=True).fill('/test/workspace')
         async with page.expect_response(lambda r: r.url.endswith('/config') and r.request.method == 'PUT'):
             await frame.get_by_role('button', name='保存设置', exact=True).click()
-        saved = [call[2]['settings'] for call in calls if call[0] == 'PUT'][-1]
+        # 保存回环断的是请求列表，不是表单里的值：先等 PUT 真出现在 calls 里再读，
+        # 否则那行 [-1] 在慢 runner 上直接 IndexError（S4 在 statistics 段栽过同款）。
+        puts = await harness.until(lambda: [call for call in calls if call[0] == 'PUT'])
+        assert puts, '保存设置 没有发出 PUT config 请求'
+        saved = puts[-1][2]['settings']
         assert saved['system_prompt'] == '先给结论，保持简短。', saved
         assert saved['enabled_tools'] == ['read'], saved
         assert saved['workspace'] == '/test/workspace', saved
