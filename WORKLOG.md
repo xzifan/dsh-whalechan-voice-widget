@@ -7,12 +7,14 @@
 **为什么**：目标是不依赖 DSH 也能跑（独立 agent core SDK）。审计发现耦合面其实很小——3252 行里只有 6 个文件碰宿主 `ctx`，业务逻辑没有 import 任何宿主包。
 
 **做了什么**
-- 21 个与宿主无关的模块 `git mv` 进 `src/core/`（service、realtime-service、audit-log、tts-*、voice-*、persona、conversation-order、realtime-protocol 等）。
+
+- 21 个与宿主无关的模块 `git mv` 进 `src/core/`（service、realtime-service、audit-log、`tts-*`、`voice-*`、persona、conversation-order、realtime-protocol 等）。
 - 6 个宿主适配文件留在 `src/`：`index.js`、`native-services.js`、`agent-conversation.js`、`conversation-filler.js`、`model-credentials.js`、`bailian-provider.js`。
 - 新增 `src/core/index.js` 桶导出；`package.json` 加 `./core` subpath export。
 - 同步改写 33 处引用（src/test/scripts/web）；`.tools/*backup*` 快照里的改写已回滚。
 
 **新增守卫**（`test/core-contract.test.js`，4 条）
+
 - 除 `index.js` 外不许 import `@deepseek-ai/*`；
 - core 内不许出现 `from '../'`（不许反向依赖适配器）；
 - 适配器必须覆盖 `runTool/catalog/resolveModelCredential` 与 `releaseToolSession`；
@@ -21,6 +23,7 @@
 **验证**：后端 363/363、前端 102/102、lint 干净、`vite build` 通过。
 
 **顺带修掉两个真 bug**
+
 1. `native-services.js` 从未暴露 `releaseToolSession`（下午那次替换静默失败），`service.js` 的 `?.` 调用一直空转，复用的工具 agent 只能等 30 分钟 TTL 回收。
 2. `service.js` 移入 core 后，`new URL('../package.json')` 指向了 `src/package.json`，`PLUGIN_VERSION` 退化成 `unknown` —— 被 `adapter.test.js` 的版本断言抓住。
 
@@ -711,3 +714,29 @@
 - `npm run format:check` 现在是**红的**，但与本轮无关：`WORKLOG.md`、`docs/sdk-extraction.md` 在工作区里本轮未被改动（`git status` 只有本轮 4 个文件），红是 `f397b2e` 留下的。已作为新 `- [ ]` 条目排进 BACKLOG，并写明 `WORKLOG.md` 不能直接 `npm run format` 的原因。
 
 **下次可做**：BACKLOG 新增的「Prettier 门禁回红」（先把 `tts-*` / `voice-*` 包进反引号再格式化，docs 侧只是表格对齐）。
+
+## 2026-10-29 · P0/P2「Prettier 门禁回红：`WORKLOG.md` 与 `docs/sdk-extraction.md`」（J1 迭代班次，未用规划子代理）
+
+**做了什么**
+
+- `WORKLOG.md:10` 的两个裸 glob 改成反引号（`tts-*`、`voice-*`）——这是本条目真正的前提：直接 `npm run format` 会把它们改写成 `tts-_` / `voice-_`，正文静默损坏而 `format:check` 仍然绿。
+- `npx prettier --write WORKLOG.md docs/sdk-extraction.md`：WORKLOG 是 3 处列表前的空行（5 行 churn）；`docs/sdk-extraction.md` 是表格补齐空格（21 行）+ `ts` 围栏重排（`ToolCallContext` 摊成多行、`resolveModelCredential` 参数换行带尾逗号）。全是空白与换行，语义零变化。
+- `test/lint-config.test.js` 新增第 7 条元测试：动态取仓库根与 `docs/` 下全部 `*.md`，对**反引号外的正文**断言既没有 `X-*` 裸 glob（`tts|voice|audit|realtime|breeze`），也没有已改写签名 `X-_`；另用合成串自检正反两向，防止这条守卫空转。
+
+**为什么守卫要写成这样（两版都被自己的断言打回）**
+
+1. 第一版只查 `X-_`，结果 BACKLOG 第 64 条**自己**在反引号里写了 `tts-_` 当例子，一上来就误报 → 改成先剥掉行内代码再查。
+2. 第二版只查 `X-_` + `worklog.includes('tts-*')`，变异 A（WORKLOG 第 10 行去掉反引号）**没红**——第 713 行「下次可做」里本来就有 `tts-*`，`includes` 被别处的正确写法满足 → 改成「正文里不许出现裸 glob」，变异才真红。
+
+**验证（真跑）**
+
+- 后端 **374 → 375**（+1 元测试）/ 前端 **102** 全绿；`lint` 0 问题 0 警告；`npm run format:check` 全仓通过（本条验收口径）；`build` 成功且 `dist/` 无改动。
+- `format:check` 前后对照：改前 `[warn] docs/sdk-extraction.md` + `[warn] WORKLOG.md`，改后 `All matched files use Prettier code style!`。
+- 变异 2 条，各恰好红 1 条并点名文件：①第 10 行去掉反引号 → 报「里有会被 Prettier 改写的 glob：`tts-*`」；②改成裸的改写后形态 → 报「…：`tts-_`」。还原后 7/7 绿。**这两条变异也顺手抓到本文自己的排版**：第一版「下次可做」段落把报错里的 `tts-_` 直接写进正文，守卫立刻报同名错误，说明它盯的是正文而不是某个固定文件。
+
+**没动的**
+
+- `test/`（6181 行）、`web/src/`（10821）、`src/`（4269）的大目录迁移仍卡在「是否豁免单轮 200 行」的产品决策上，`.prettierignore` 账本三行原样保留。
+- `docs/sdk-extraction.md` 里「P1 剩下的 `server.js` + `bin/whale.js`」只是格式化，未实现。
+
+**下次可做**：BACKLOG 里 `[arch]` 事件分发、`[plan]` 统一首帧锚点、火山引擎 Realtime 三条都等人拍板，下一个可做项要等清单更新或从 P2 尾部挑。

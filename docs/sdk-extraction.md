@@ -6,18 +6,18 @@
 
 `createService(config, dependencies)` 早就把宿主能力收进了一个对象。全仓 3252 行里，真正调用宿主的只有 10 个成员：
 
-| 依赖 | 用途 | 谁提供 |
-| --- | --- | --- |
-| `runTool(name, args, {workspace, signal, sessionKey, allow})` | 执行单个工具，走审批/guard/沙箱 | 宿主 `agents.create` + `tools.execute` |
-| `catalog()` | 工具清单 + 是否有执行能力 + 当前工作区 | 同上 |
-| `releaseToolSession(sessionId)` | 语音会话结束时释放复用 agent | 同上 |
-| `status()` | `{chat, tools}` 就绪状态 | `agentDefaultModel` + `llm` |
-| `resolveModelCredential(provider)` | 取百炼/Breeze/火山凭据 | `credentials` 服务 |
-| `configureModelCredential(provider, key)` | 写入凭据 | `credentials.set/modifyRecord` |
-| `resolveBailianProvider()` | 百炼路由与 key | 模型路由 |
-| `generateFiller()` | 插话用的默认 LLM | `llm.prepareCall` |
-| `realtimeWebSocket` | 可注入的 WebSocket 构造器（测试用） | 宿主或 globalThis |
-| `fetch` | 可注入的 fetch（测试用） | globalThis |
+| 依赖                                                          | 用途                                   | 谁提供                                 |
+| ------------------------------------------------------------- | -------------------------------------- | -------------------------------------- |
+| `runTool(name, args, {workspace, signal, sessionKey, allow})` | 执行单个工具，走审批/guard/沙箱        | 宿主 `agents.create` + `tools.execute` |
+| `catalog()`                                                   | 工具清单 + 是否有执行能力 + 当前工作区 | 同上                                   |
+| `releaseToolSession(sessionId)`                               | 语音会话结束时释放复用 agent           | 同上                                   |
+| `status()`                                                    | `{chat, tools}` 就绪状态               | `agentDefaultModel` + `llm`            |
+| `resolveModelCredential(provider)`                            | 取百炼/Breeze/火山凭据                 | `credentials` 服务                     |
+| `configureModelCredential(provider, key)`                     | 写入凭据                               | `credentials.set/modifyRecord`         |
+| `resolveBailianProvider()`                                    | 百炼路由与 key                         | 模型路由                               |
+| `generateFiller()`                                            | 插话用的默认 LLM                       | `llm.prepareCall`                      |
+| `realtimeWebSocket`                                           | 可注入的 WebSocket 构造器（测试用）    | 宿主或 globalThis                      |
+| `fetch`                                                       | 可注入的 fetch（测试用）               | globalThis                             |
 
 其中 `runTool`、`catalog`、`resolveModelCredential` 是**必需项**；其余成员用 `?.` 调用，缺失即降级（例外是 `releaseToolSession`——缺了不会报错，但会漏掉复用的工具 agent，只能等 TTL 回收，所以适配器必须实现）。这条契约已由 `test/core-contract.test.js` 锁住，改依赖面必须同步改测试。
 
@@ -45,7 +45,12 @@
 ## 三、接口契约（草案）
 
 ```ts
-export interface ToolCallContext { workspace: string; signal: AbortSignal; sessionKey: string; allow: string[] }
+export interface ToolCallContext {
+  workspace: string
+  signal: AbortSignal
+  sessionKey: string
+  allow: string[]
+}
 
 export interface AgentCoreDeps {
   fetch?: typeof fetch
@@ -53,8 +58,9 @@ export interface AgentCoreDeps {
   catalog(): Promise<{ tools: ToolSchema[]; currentWorkspace: string; toolExecutionAvailable: boolean }>
   releaseToolSession?(sessionId: string): Promise<void>
   status(): { chat: boolean; tools: boolean }
-  resolveModelCredential(provider: 'bailian' | 'breeze' | 'volcengine'):
-    Promise<{ provider: string; key: string; source: string; routeAvailable?: boolean }>
+  resolveModelCredential(
+    provider: 'bailian' | 'breeze' | 'volcengine',
+  ): Promise<{ provider: string; key: string; source: string; routeAvailable?: boolean }>
   configureModelCredential?(provider: string, key: string): Promise<void>
   generateFiller?(prompt: string, ctx: unknown): Promise<string>
   realtimeWebSocket?: WebSocketCtor
@@ -66,17 +72,20 @@ export interface AgentCoreDeps {
 ## 四、迁移三步（每步都能独立发布）
 
 **P1 · 切开适配器（1–2 天）** — 物理分层已完成（2026-10-29）：21 个模块进 `src/core/`，6 个适配文件留在 `src/`，`./core` 已可作为 subpath 导出；剩下的 `server.js` + `bin/whale.js` 未做。
+
 - `src/index.js` → `adapters/dsh/index.js`，只保留宿主注册与静态资源挂载。
 - 新增 `src/server.js`：Node `http` + 一个 WS 升级处理，把 `handle()` 暴露成 REST，把 realtime 音频走 WS。
 - `package.json` 加 subpath exports：`.`（DSH）、`./standalone`、`./core`。
 - 验收：`node bin/whale.js --port 3081` 起服务，浏览器打开 `/voice-workbench/` 能完整对话一次，且不加载任何 DSH 模块。
 
 **P2 · 工具层标准化（2–3 天）**
+
 - `adapter-node` 用 MCP client 连工具服务器；`runTool` 变成 MCP `tools/call`。
 - 本地工具（文件、bash）用 MCP 官方 filesystem/terminal server，不再自己实现沙箱。
 - 这一步之后，"换宿主"不再等于"重写工具层"。
 
 **P3 · 拆包与版本（按需）**
+
 - pnpm workspace：`packages/core`、`packages/adapter-dsh`、`packages/adapter-node`、`packages/client`。
 - core 独立 semver；适配器跟宿主版本走。第三方可以只装 core + 自写适配器。
 

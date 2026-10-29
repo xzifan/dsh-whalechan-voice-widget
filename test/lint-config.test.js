@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {readFile} from 'node:fs/promises'
+import {readFile,readdir} from 'node:fs/promises'
 import {fileURLToPath} from 'node:url'
 import {join} from 'node:path'
 
@@ -118,5 +118,32 @@ test('eslint wires react-hooks: conditional hook is an error, missing dep is a w
   // warn 而非 error：存量 effect 依赖不全需要逐个确认意图，门禁先观不拦
   assert.equal(deps[0].severity,1,'exhaustive-deps 必须是 warn')
   assert.match(deps[0].message,/'flag'/,`依赖提示没点名 flag：${deps[0].message}`)
+})
+
+test('markdown globs stay inside backticks so Prettier cannot mangle them',async()=>{
+  // 裸写 `tts-*` 时 Prettier 把 `*` 当 markdown 强调标记，静默改写成 `tts-_`：
+  // 格式化本身成功、format:check 也绿，只有正文悄悄坏了。这里按「改写签名」反查。
+  const mangled=/(?:tts|voice|audit|realtime|breeze)-_(?![\w-])/
+  // 裸 glob 本身也是埋雷：它今天没被改写，只是还没人跑过 format。
+  const bare=/(?:tts|voice|audit|realtime|breeze)-\*(?![\w-])/
+  // 只查反引号外的正文：文档里讲这个坑时会把 `tts-_` 写在代码样式里，那不算损坏。
+  const visible=text=>text.replace(/`[^`\n]*`/g,'')
+  assert.ok(mangled.test(visible('裸写的 tts-* 被格式化后是 tts-_')),'守卫自身失效：抓不到改写签名')
+  assert.ok(bare.test(visible('正文里的 tts-*')),'守卫自身失效：抓不到裸 glob')
+  assert.equal(mangled.test(visible('正确写法是 `tts-_` 这样包起来')),false,'守卫误报：代码样式里的字样不该算损坏')
+  assert.equal(bare.test(visible('正确写法是 `tts-*`')),false,'守卫误报：代码样式里的 glob 是安全的')
+  const root=fileURLToPath(new URL('..',import.meta.url))
+  const docs=join(root,'docs')
+  // 取真实的 md 清单而不是硬编码：新增一篇文档不该让守卫漏管
+  const files=[
+    ...(await readdir(root)).filter(name=>name.endsWith('.md')).map(name=>join(root,name)),
+    ...(await readdir(docs)).filter(name=>name.endsWith('.md')).map(name=>join(docs,name)),
+  ]
+  assert.ok(files.length>=5,`md 清单只有 ${files.length} 个文件，路径可能取错了`)
+  for(const file of files){
+    const text=visible(await readFile(file,'utf8'))
+    const hit=mangled.exec(text)||bare.exec(text)
+    assert.equal(hit,null,`${file} 里有会被 Prettier 改写的 glob：${hit?.[0]}`)
+  }
 })
 
