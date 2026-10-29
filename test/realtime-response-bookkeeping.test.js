@@ -65,6 +65,26 @@ test('response 审计字段集固定，音频时长由字节数推出，且只�
  for(const key of ['audioDurationSeconds','text','responseId']) assert.equal(key in second,false,`${key} 不应出现空值`)
 })
 
+test('响应计时只在真有时间戳时写入，打断另记 playedMs，手动取消不得伪造成打断',()=>{
+ const s=fixture()
+ const response={turn:{id:'t1'},id:'r1',requestedAt:1000,firstTextAt:1120,firstAudioAt:1400,audioBytes:24000,speechText:'嗯'}
+ s.book.finalizeResponseAudit(response,'completed')
+ const record=s.events.at(-1).record
+ assert.equal(record.firstTextMs,120);assert.equal(record.firstAudioMs,400)
+ assert.equal('interrupted' in record,false,'正常收尾不得带打断标记')
+ assert.equal('playedMs' in record,false)
+ // 打断以首帧为锚（用户掐断的是正在播的内容），而不是请求时刻
+ const cut={turn:{id:'t2'},id:'r2',requestedAt:2000,firstAudioAt:2500,audioBytes:48000,speechText:'嗯'}
+ s.book.finalizeResponseAudit(cut,'cancelled',undefined,undefined,{interruptedAt:3300})
+ const interrupted=s.events.at(-1).record
+ assert.equal(interrupted.interrupted,true);assert.equal(interrupted.playedMs,800);assert.equal(interrupted.firstAudioMs,500)
+ // 无时间戳：键必须缺席（写 0 会把未知伪装成「瞬时」）
+ const bare={turn:{id:'t3'},id:'r3'}
+ s.book.finalizeResponseAudit(bare,'failed')
+ const plain=s.events.at(-1).record
+ for(const key of ['firstTextMs','firstAudioMs','interrupted','playedMs']) assert.equal(key in plain,false,`${key} 不应出现空值`)
+})
+
 test('迟到 usage 追加同 id 快照，不重复、不改 status',()=>{
  const s=fixture()
  const response={turn:{id:'t1'},id:'r1',audioBytes:24000,speechText:'嗯'}

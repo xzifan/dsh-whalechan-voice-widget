@@ -55,6 +55,9 @@ export function createVoiceSynthesis({ getSettings, credential, modelCredential,
     }
     const { profile, ...metadata } = selected
     const record = { ...context, ...metadata, kind: 'synthesis', role: 'assistant', text }
+    // Wall-clock cost of the request, not the audio length: the audio duration
+    // says nothing about how long the user waited.
+    const startedAt = Date.now()
     try {
       let result
       if (qwen) {
@@ -70,7 +73,7 @@ export function createVoiceSynthesis({ getSettings, credential, modelCredential,
       }
       const usage = numericUsage(result.usage)
       const duration = typeof result.audio === 'string' ? audioDurationSeconds(Buffer.from(result.audio, 'base64')) : null
-      await audit.append({ ...record, status: 'completed', usage, requestId: result.requestId, audioOutput: true, audioDurationSeconds: duration })
+      await audit.append({ ...record, status: 'completed', usage, requestId: result.requestId, audioOutput: true, audioDurationSeconds: duration, durationMs: Date.now() - startedAt })
       return { ...result, ...metadata, usage, usageAvailable: usage !== null }
     } catch (error) {
       if (context.signal?.aborted) throw error

@@ -7,6 +7,16 @@ import { orderConversationRows } from './conversation-order.js'
 const KINDS = new Set(['transcription', 'response', 'synthesis', 'usage', 'tool', 'error'])
 const OUTCOMES = new Set(['ok', 'error', 'cancelled'])
 const sensitive = /(?:api.?key|authorization|headers?|cookies?|pass.?word|secret|credential|access.?token|refresh.?token|audio|base64|url|endpoint|__proto__|constructor|prototype)/i
+// Latency samples are wall-clock durations in milliseconds; a record without a
+// timing contributes no sample at all (an unknown latency is not a zero one).
+const LATENCIES = ['firstTextMs', 'firstAudioMs', 'playedMs', 'durationMs']
+
+/** Nearest-rank percentile (no interpolation): p95 of 4 samples is the largest. */
+export function percentile(values, p) {
+  if (!values.length) return null
+  const sorted = [...values].sort((a, b) => a - b)
+  return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(p / 100 * sorted.length) - 1))]
+}
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value)
 
 /** Keep only provider-reported numeric usage, including nested token breakdowns. */
@@ -76,6 +86,10 @@ export function sanitizeAuditRecord(input = {}, secrets = []) {
   record.usageAvailable = record.usage !== null
   if (typeof input.audioOutput === 'boolean') record.audioOutput = input.audioOutput
   if (typeof input.audioDurationSeconds === 'number' && Number.isFinite(input.audioDurationSeconds) && input.audioDurationSeconds >= 0) record.audioDurationSeconds = input.audioDurationSeconds
+  // Timings are flat scalars on purpose: `audio`/`url` keys are stripped from
+  // nested objects, so a `metrics: {}` sub-object would be silently dropped.
+  for (const key of LATENCIES) if (Number.isFinite(input[key]) && input[key] >= 0) record[key] = Math.round(input[key])
+  if (input.interrupted === true) record.interrupted = true
   return record
 }
 
@@ -228,9 +242,17 @@ export function createAuditLog({ path, maxRecords = 2000, maxBytes = 10 * 1024 *
     const result = { total: 0, sessions: 0, transcriptionCharacters: 0, outputAudioSeconds: null, audioKnown: 0, audioMissing: 0,
       counts: Object.fromEntries([...KINDS].map(kind => [kind, 0])), failed: 0, tokens: null, tokenKnown: 0, tokenMissing: 0, firstAt: null, lastAt: null }
     const sessions = new Set()
+    const buckets = { firstText: [], firstAudio: [], synthesis: [] }
+    let interrupts = 0
     for (const record of visibleRecords()) {
       if ((since !== undefined && record.at < since) || (until !== undefined && record.at > until)) continue
       result.total++; result.counts[record.kind]++
+      if (record.kind === 'response') {
+        if (Number.isFinite(record.firstTextMs)) buckets.firstText.push(record.firstTextMs)
+        if (Number.isFinite(record.firstAudioMs)) buckets.firstAudio.push(record.firstAudioMs)
+        if (record.interrupted === true) interrupts++
+      }
+      if (record.kind === 'synthesis' && Number.isFinite(record.durationMs)) buckets.synthesis.push(record.durationMs)
       if (record.sessionId) sessions.add(record.sessionId)
       result.firstAt = result.firstAt === null ? record.at : Math.min(result.firstAt, record.at)
       result.lastAt = result.lastAt === null ? record.at : Math.max(result.lastAt, record.at)
@@ -252,6 +274,9 @@ export function createAuditLog({ path, maxRecords = 2000, maxBytes = 10 * 1024 *
       }
     }
     result.sessions = sessions.size
+    result.latency = Object.fromEntries(Object.entries(buckets).map(([key, values]) => [key, { samples: values.length, p50: percentile(values, 50), p95: percentile(values, 95) }]))
+    // A manual cancel is not an interruption: only speech-started cuts the rate.
+    result.interrupts = { count: interrupts, rate: result.counts.response ? Math.round(interrupts / result.counts.response * 10000) / 10000 : null }
     return { ...result, ...(storageError ? { storageError } : {}) }
   }
   // History shares audit/statistics normalization. Legacy rows without a session

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, rm, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createAuditLog, sanitizeAuditRecord } from '../src/audit-log.js'
+import { createAuditLog, sanitizeAuditRecord, percentile } from '../src/audit-log.js'
 import { createService } from '../src/service.js'
 import { audioDurationSeconds } from '../src/audio-duration.js'
 
@@ -25,11 +25,41 @@ test('statistics aggregate all retained records, Unicode codepoints and inclusiv
   await log.append({ kind: 'error', at: 201, status: 'failed' })
   const s = await log.statistics()
   assert.equal((await log.query()).records.length, 100)
+  // A legacy audioDurationSeconds is not a latency sample: no timings were recorded.
   assert.deepEqual(s, { total: 211, sessions: 2, transcriptionCharacters: 615, outputAudioSeconds: 3.25, audioKnown: 2, audioMissing: 0,
-    counts: { transcription: 205, response: 2, synthesis: 1, usage: 1, tool: 1, error: 1 }, failed: 2, tokens: 1016, tokenKnown: 3, tokenMissing: 1, firstAt: 90, lastAt: 400 })
+    counts: { transcription: 205, response: 2, synthesis: 1, usage: 1, tool: 1, error: 1 }, failed: 2, tokens: 1016, tokenKnown: 3, tokenMissing: 1, firstAt: 90, lastAt: 400,
+    latency: { firstText: { samples: 0, p50: null, p95: null }, firstAudio: { samples: 0, p50: null, p95: null }, synthesis: { samples: 0, p50: null, p95: null } },
+    interrupts: { count: 0, rate: 0 } })
   assert.equal((await log.statistics({ since: 400, until: 400 })).total, 2)
   assert.equal((await log.statistics({ since: 401 })).firstAt, null)
   assert.deepEqual(await createAuditLog({ path }).statistics(), s)
+})
+
+test('latency percentiles read recorded timings only, and only speech cuts count as interruptions', async t => {
+  const { log } = await fixture(t)
+  for (const ms of [100, 200, 300, 400]) await log.append({ kind: 'response', status: 'completed', at: 1000, firstTextMs: ms, firstAudioMs: ms * 2 })
+  await log.append({ kind: 'response', status: 'cancelled', at: 1001, interrupted: true, playedMs: 900 })
+  await log.append({ kind: 'synthesis', status: 'completed', at: 1002, durationMs: 1200, audioDurationSeconds: 9 })
+  // 只有音频长度、没有墙钟耗时的合成不产生样本（否则会把 9 秒音频当成 9 秒等待）
+  await log.append({ kind: 'synthesis', status: 'completed', at: 1003, audioDurationSeconds: 9 })
+  const s = await log.statistics()
+  assert.deepEqual(s.latency.firstText, { samples: 4, p50: 200, p95: 400 })
+  assert.deepEqual(s.latency.firstAudio, { samples: 4, p50: 400, p95: 800 })
+  assert.deepEqual(s.latency.synthesis, { samples: 1, p50: 1200, p95: 1200 })
+  assert.deepEqual(s.interrupts, { count: 1, rate: 0.2 })
+  // 时间范围同样约束延迟样本与打断率
+  const narrowed = await log.statistics({ since: 1001 })
+  assert.deepEqual(narrowed.latency.firstText, { samples: 0, p50: null, p95: null })
+  assert.deepEqual(narrowed.interrupts, { count: 1, rate: 1 })
+})
+
+test('percentile is nearest rank, keeps the caller array and answers null for no samples', () => {
+  assert.equal(percentile([], 50), null)
+  assert.equal(percentile([7], 95), 7)
+  const values = [10, 1, 4, 9, 2]
+  assert.equal(percentile(values, 50), 4)
+  assert.equal(percentile(values, 95), 10)
+  assert.deepEqual(values, [10, 1, 4, 9, 2], '不得原地排序调用方的数组')
 })
 
 test('known zeros, missing usage/audio, aliases and legacy response policy are explicit', async t => {

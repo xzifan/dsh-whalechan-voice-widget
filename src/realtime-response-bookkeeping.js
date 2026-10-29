@@ -28,12 +28,22 @@ export function createResponseBookkeeping({ emit, isDisposed, isLive, currentTur
     if (!isDisposed()) emit({ type: 'audit', record: { id: randomUUID(), kind, ...ctx, provider: 'bailian', model: model(), status, ...extra } })
   }
   function assistantContext(response, event = {}) { return context(response.turn, 'assistant', response.id, event.item_id || event.item?.id || response.itemId) }
-  function finalizeResponseAudit(response, status, text = response.speechText || response.text, ctx = response.speechContext || assistantContext(response)) {
+  function finalizeResponseAudit(response, status, text = response.speechText || response.text, ctx = response.speechContext || assistantContext(response), meta = {}) {
     if (response.auditFinalized) return
     response.auditFinalized = true
     const bytes = response.audioBytes || 0
+    // Timings only exist when a timestamp was actually taken; an absent timer
+    // must leave the key out instead of claiming 0 ms.
+    const elapsed = at => Number.isFinite(at) && Number.isFinite(response.requestedAt) && at >= 0 && at >= response.requestedAt ? Math.round(at - response.requestedAt) : undefined
+    const firstTextMs = elapsed(response.firstTextAt), firstAudioMs = elapsed(response.firstAudioAt)
+    // Interruption is measured from the first played frame (what the user cut
+    // off), and only exists on a cut — a manual cancel has no such anchor.
+    const played = from => Number.isFinite(from) && from >= 0 && meta.interruptedAt >= from ? Math.round(meta.interruptedAt - from) : undefined
+    const playedMs = Number.isFinite(meta.interruptedAt) ? played(response.firstAudioAt || response.requestedAt) : undefined
     response.auditRecord = { id: randomUUID(), at: Date.now(), kind: 'response', ...ctx, provider: 'bailian', model: model(), status,
       ...(text ? { text } : {}), audioOutput: bytes > 0, ...(bytes > 0 ? { audioDurationSeconds: bytes / (24000 * 2) } : {}),
+      ...(firstTextMs !== undefined ? { firstTextMs } : {}), ...(firstAudioMs !== undefined ? { firstAudioMs } : {}),
+      ...(Number.isFinite(meta.interruptedAt) ? { interrupted: true, ...(playedMs !== undefined ? { playedMs } : {}) } : {}),
       ...(response.usage ? { usage: response.usage } : {}) }
     if (!isDisposed()) emit({ type: 'audit', record: response.auditRecord })
   }

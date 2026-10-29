@@ -53,12 +53,14 @@ test('一次 qwen 合成只落 1 条 synthesis，字段集合与凭据不外泄'
   assert.equal(result.usageAvailable, true)
   assert.equal(h.audit.length, 1)
   assert.deepEqual(Object.keys(h.audit[0]).sort(), [
-    'audioDurationSeconds', 'audioOutput', 'kind', 'model', 'provider', 'requestId', 'role', 'status', 'text', 'usage', 'voice',
+    'audioDurationSeconds', 'audioOutput', 'durationMs', 'kind', 'model', 'provider', 'requestId', 'role', 'status', 'text', 'usage', 'voice',
   ])
   assert.equal(h.audit[0].kind, 'synthesis')
   assert.equal(h.audit[0].status, 'completed')
   assert.equal(h.audit[0].requestId, 'req-1')
   assert.equal(h.audit[0].audioDurationSeconds, 2)
+  // 墙钟耗时与音频时长是两个量：2 秒的音频不是 2 秒的等待。
+  assert.ok(Number.isInteger(h.audit[0].durationMs) && h.audit[0].durationMs >= 0)
   assert.deepEqual(h.credentials, ['bailian-secret-key'], 'qwen 必须取百炼凭据（addSecret 由 modelCredential 负责）')
   assert.ok(!JSON.stringify(result).includes('bailian-secret-key'))
   assert.ok(!JSON.stringify(h.audit).includes('bailian-secret-key'))

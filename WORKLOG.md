@@ -625,3 +625,38 @@
 **churn 297 行**（rt +12/−52、新模块 67、新测试 164），超 200 上限：整块搬迁 + 回归网就是条目本身，与步骤 2（384 行）/ 步骤 3（300 行）同类处置。未用规划子代理——拆解上一轮已由只读规划子代理写进 BACKLOG 条目本身，本轮只按实际代码复核后执行。
 
 **下次可做**：`[arch]` 条目（`runTool` + `onMessage` 的 228 行）与 `[plan]` 延迟指标条目都还在队列里；前者要改事件状态机、会动时序语义，得先立更严的时序断言。
+
+## 2026-10-29 · 延迟指标进 `statistics`：首字 / 首帧 / 合成耗时 / 打断率
+
+**为什么是它**：BACKLOG 里第一个真正可做的 `[plan]` 条目（上面三条分别被 `⛔ 阻塞待决策`、`需人拍板`、产品/架构决策挡住）。目标是把「最近是不是变慢了」从体感变成 p50/p95。
+
+**前提核实**（只读规划子代理盘点 + 我自己逐字段复核，两处旧记录是错的）
+
+- response 记录只有 `audioDurationSeconds`（音频**长度**）；`firstAudioMs` 只在内存里进 `metrics` 事件给前端「通话质量」，从不落盘，重启即失。
+- 打断只有 `status:'cancelled'`，与 `cancel()` / `dispose()` / socket close 完全无法区分。
+- synthesis 没有任何耗时字段；`/api/voice-presets/*` 的试听合成同样只有音频长度。
+- 顺带纠正：BACKLOG 上一版写的测试基线 320 早已过期（实测 **356**）；`docs/iteration-automation.md:44`「延迟目前只在审计里看得到原始记录」不成立——连原始记录都没有。该行已就地更正。
+
+**改动（14 文件 / churn 186 行）**
+
+- `src/realtime-service.js`：`requestedAtQueue`（与 `requestedOutputModes` 同队列语义，`invalidate` 一并清空）、response 上 per-response 的 `firstTextAt`/`firstAudioAt`、`invalidate(clearCandidate, interrupted)`——**只有 `speech_started` 传 true**，手动取消/关闭不传。
+- `src/realtime-response-bookkeeping.js`：`finalizeResponseAudit(..., meta)`，毫秒值**只在真有时间戳时写入**（写 0 会把未知伪装成瞬时，也会打破那条 12 键冻结断言）；打断另写 `interrupted:true` + `playedMs`，`playedMs` 锚**首帧**而非请求时刻。
+- `src/voice-synthesis.js` / `src/service.js`：`durationMs` = 请求墙钟，与 `audioDurationSeconds` 是两回事。
+- `src/audit-log.js`：`percentile`（最近秩、不改调用方数组、空样本 `null`）、5 个字段平铺白名单、`statistics().latency{firstText,firstAudio,synthesis}{samples,p50,p95}` + `interrupts{count,rate}`。
+- `web/src/lib/statistics.js` + `web/src/statistics-view.jsx`：`formatLatency`（未知 `—`，<1 s 用毫秒，≥1 s 用秒）+「延迟与打断」卡片 + 口径段落。
+
+**为什么不写成 `metrics:{...}` 嵌套对象**：`sanitizeAuditRecord` 是白名单构造，且 `sensitive` 正则含 `audio`/`url`，嵌套的 `firstAudioMs` 会被整块静默删掉——而且只有重启后读回才看得出来（内存里的对象还在）。平铺 + 单独数值校验是唯一安全写法。
+
+**验证（真跑，不是推断）**
+
+- 后端 **360** / 前端 **102** 全绿（改前 356 / 101）；`lint` 0、`format:check` 通过、`build` 成功（`dist/` 已 `checkout` 还原、新 hash 产物移出仓库）。
+- `browser-pages.py` 统计段新增 5 条断言（`520 ms / 1.18 s`、`812 ms / 1.96 s`、`40 条样本`、`占回复 12%`、空态必须 `— / —` 而不是 `0 ms`），实跑 `{"statistics": true, "history": true, "audit": true, "pageErrors": []}`；`browser-smoke.py` PASS。
+- 变异 2 条各恰好红：`invalidate` 丢掉 `interrupted` → 红 1 且**只红 `speech-start`**（cancel/dispose 仍绿，正是「两者可区分」的证据）；`LATENCIES` 去掉 `firstTextMs` → 红 2（白名单用例 + 统计用例）。
+- 写测试时自己抓到一个真 bug：`playedMs` 第一版用「到请求时刻的差」算，期望 800 实际 500，被新断言当场打红——先写断言再信实现这一次直接省掉一个静默错误。
+
+**没做的两件事**（已作为新 `- [ ]` 条目排进 BACKLOG）
+
+1. `metrics.firstAudioMs` 锚 `speech_stopped`、统计的 `firstAudioMs` 锚 `response.create`，并排会差几毫秒——统一锚点会动 `web/src/lib/realtime.test.js` 的 `metrics` 断言，需先定口径归属。
+2. 打断后的**真实停播时延**测不到：服务端 `invalidate()` 是同步的，实际停播由前端 180 ms 轮询 + `realtime/playback` 回传决定，要测必须新增记录类型（动 `KINDS`/`counts`/筛选），属行为变化。
+
+**下次可做**：`[arch]` 的 `runTool` + `onMessage` 状态机仍要更严的时序断言才敢动；`夜间冒烟接入调度` 与 `husky + lint-staged` 仍等外部拍板。

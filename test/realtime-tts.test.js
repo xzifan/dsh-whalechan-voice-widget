@@ -375,6 +375,14 @@ for (const interrupt of ['speech-start', 'cancel', 'dispose']) test(`unfinished 
   assert.equal(responses[0].record.text, '还没说完')
   assert.equal(responses[0].record.status, 'cancelled')
   assert.equal(responses[0].record.itemId, 'partial-item')
+  assert.ok(Number.isInteger(responses[0].record.firstTextMs), '文字首字延迟必须落审计')
+  if (interrupt === 'speech-start') {
+    assert.equal(responses[0].record.interrupted, true)
+    assert.ok(Number.isInteger(responses[0].record.playedMs), '打断必须带已播时长（可为 0）')
+  } else {
+    assert.equal('interrupted' in responses[0].record, false, '手动取消/关闭不是打断')
+    assert.equal('playedMs' in responses[0].record, false)
+  }
   s.done('r1', { status: 'cancelled', usage: { input_tokens: 2, output_tokens: 1 } })
   responses = s.events.filter(e => e.type === 'audit' && e.record.kind === 'response')
   assert.equal(responses.length, interrupt === 'dispose' ? 1 : 2)

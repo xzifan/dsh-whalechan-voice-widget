@@ -41,7 +41,7 @@
 
 11. **火山引擎 Realtime**：下拉框现在挂着 `WorkInProgress` 且禁用。要么给出接入时间点，要么先移除入口，避免用户以为"配了凭据就能用"。
 12. **拆分 `src/service.js`（592 行）与 `src/realtime-service.js`（558 行）**：会话生命周期、工具桥接、配置读写可以分层，这俩文件是目前回归风险最集中的地方。
-13. **延迟指标化**：首字延迟、打断响应、TTS 合成耗时目前只在审计里看得到原始记录。加一条 `statistics` 聚合（p50/p95），把"首字变慢"从风险描述变成可观测指标。
+13. **延迟指标化**：~~目前只在审计里看得到原始记录~~（2026-10-29 核实：连原始记录都没有，`firstAudioMs` 只在内存的 `metrics` 事件里）。已在 `audit` 记录层补 `firstTextMs/firstAudioMs/playedMs/interrupted/durationMs`，并由 `statistics` 聚合出 `latency{p50,p95}` 与 `interrupts{count,rate}`；剩「真实停播时延」需要新记录类型。
 14. **审计容量策略**：2000 条 / 10 MiB 在重度使用下会滚动覆盖。加按周归档或导出，避免历史被静默丢弃。
 
 ## 3. 定时发布：先纠正一个前提

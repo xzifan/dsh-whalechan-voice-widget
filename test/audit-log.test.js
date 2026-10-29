@@ -215,3 +215,21 @@ test('tool records keep an explicit outcome, a one-line summary and the exit cod
   assert.equal(reloadError.outcome, 'error'); assert.equal(reloadError.exitCode, 2)
   assert.equal(reloadOk.resultSummary, 'key [redacted] kept')
 })
+
+test('timing fields survive the whitelist and a restart, invalid values are dropped, and they stay out of full-text search', async t => {
+  const {store, path} = await fixture(t)
+  await store.append({kind: 'response', status: 'completed', firstTextMs: 120.4, firstAudioMs: 0, playedMs: 900, durationMs: 40, interrupted: true})
+  const [record] = (await store.query({kind: 'response'})).records
+  assert.equal(record.firstTextMs, 120, '毫秒取整')
+  assert.equal(record.firstAudioMs, 0)
+  assert.equal(record.playedMs, 900)
+  assert.equal(record.durationMs, 40)
+  assert.equal(record.interrupted, true)
+  const reloaded = createAuditLog({path})
+  assert.deepEqual((await reloaded.statistics()).latency.firstText, {samples: 1, p50: 120, p95: 120})
+  assert.equal((await reloaded.statistics()).interrupts.count, 1, '重启后不得丢样本')
+  for (const value of [-1, NaN, Infinity, '2', null]) assert.equal(sanitizeAuditRecord({kind: 'response', firstTextMs: value}).firstTextMs, undefined)
+  assert.equal(sanitizeAuditRecord({kind: 'response', interrupted: 'true'}).interrupted, undefined)
+  // 检索列只认既有标识/文本/用量：迟延数字混进去会造出假匹配
+  assert.equal((await store.query({search: '900'})).total, 0)
+})

@@ -157,9 +157,10 @@ export function createService(config = {}, dependencies = {}) {
       const metadata = { provider: 'bailian', model: options.model, voice: options.voice }
       const record = { ...metadata, kind: 'synthesis', role: 'assistant', text: options.text }
       try {
+        const startedAt = Date.now()
         const result = await synthesizeTts({ ...options, fetcher })
         const duration = typeof result.audio === 'string' ? audioDurationSeconds(Buffer.from(result.audio, 'base64')) : null
-        await audit.append({ ...record, status: 'completed', usage: numericUsage(result.usage), requestId: result.requestId, audioOutput: true, audioDurationSeconds: duration })
+        await audit.append({ ...record, status: 'completed', usage: numericUsage(result.usage), requestId: result.requestId, audioOutput: true, audioDurationSeconds: duration, durationMs: Date.now() - startedAt })
         return result
       } catch (error) {
         const cancelled = options.signal?.aborted || error.status === 499

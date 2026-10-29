@@ -35,6 +35,9 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
   const responses = new Map(), items = new Map(), calls = new Map(), userFinals = new Set()
   let turn = null, activeResponse = null
   const requestedOutputModes = []
+  // Same queue discipline as requestedOutputModes: the timestamp belongs to the
+  // response it produced, not to whatever arrives later.
+  const requestedAtQueue = []
   let turnStartedAt = 0, firstAudioAt = 0, audioBytes = 0
   let mainPlaying = false, userSpeaking = false
   const {
@@ -68,7 +71,7 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
     let response = (id && responses.get(id)) || (itemId && items.get(itemId)?.response)
     if (!response && !id) response = activeResponse
     if (!response) {
-      response = { tts: requestedOutputModes.shift() ?? ttsActive(), id: id || null, turn: currentTurn(), pending: new Set(), done: false, continued: false, terminal: false, cancelled: blocked, text: '', finalized: false }
+      response = { tts: requestedOutputModes.shift() ?? ttsActive(), requestedAt: requestedAtQueue.shift() ?? Date.now(), firstTextAt: 0, firstAudioAt: 0, id: id || null, turn: currentTurn(), pending: new Set(), done: false, continued: false, terminal: false, cancelled: blocked, text: '', finalized: false }
       if (id) responses.set(id, response)
       activeResponse = response
     }
@@ -85,19 +88,20 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
     audit('tool', call.context, status, { outcome, ...(detail ? { resultSummary: detail } : {}),
       ...(Number.isInteger(exitCode) ? { exitCode } : {}), text: redactError(`${call.name}${detail && status !== 'completed' ? ': ' + detail : ''}`) })
   }
-  function invalidate(clearCandidate = false) {
+  function invalidate(clearCandidate = false, interrupted = false) {
     fillers.cancel()
     controller.abort()
     controller = new AbortController()
     voiceQueue = Promise.resolve()
     requestedOutputModes.length = 0
+    requestedAtQueue.length = 0
     if (clearCandidate) voiceState?.clear()
     generation++
     blocked = true
     for (const response of new Set([...responses.values(), activeResponse])) {
       if (!response) continue
       response.cancelled = true
-      if (response.text || response.speechText || response.audioBytes) finalizeResponseAudit(response, 'cancelled')
+      if (response.text || response.speechText || response.audioBytes) finalizeResponseAudit(response, 'cancelled', undefined, undefined, interrupted ? { interruptedAt: Date.now() } : undefined)
     }
     for (const call of calls.values()) if (!call.finished) finishTool(call, 'cancelled')
     audioTotal = 0; audioBytes = 0; firstAudioAt = 0; turnStartedAt = 0
@@ -105,6 +109,7 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
   function requestResponse() {
     fillers.schedule('thinking')
     requestedOutputModes.push(ttsActive())
+    requestedAtQueue.push(Date.now())
     send({ type: 'response.create', response: { modalities: modalities() } })
   }
   function deliverDone(response) {
@@ -299,7 +304,7 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
       const interrupted = mainPlaying || !!(activeResponse && live(activeResponse) && (!activeResponse.done || activeResponse.pending.size))
       userSpeaking = true
       mainPlaying = false
-      invalidate()
+      invalidate(false, interrupted)
       blocked = false
       turn = { id: `turn-${randomUUID()}`, generation }
       fillers.newTurn(turn.id)
@@ -397,6 +402,7 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
         audioTotal += bytes
         if (audioTotal > MAX_AUDIO_BYTES) { emit({ type: 'error', code: 'audio_too_large', message: '语音输出过大，已停止。' }); return }
         if (!firstAudioAt) firstAudioAt = Date.now()
+        response.firstAudioAt ||= firstAudioAt
         audioBytes += bytes
         response.audioBytes = (response.audioBytes || 0) + bytes
         fillers.mainOutput()
@@ -407,6 +413,7 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
         response.transcriptSource ||= source
         if (response.transcriptSource !== source) return
         response.text += event.delta
+        response.firstTextAt ||= Date.now()
         const chunk = spokenText((response.transcriptPending || '') + event.delta)
         let held = 0
         for (const name of DEFAULT_TOOLS) for (let n = 1; n < name.length; n++) if (chunk.toLowerCase().endsWith(name.slice(0, n))) held = Math.max(held, n)

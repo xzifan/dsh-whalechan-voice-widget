@@ -16,9 +16,15 @@ SAMPLE = {'total': 235, 'sessions': 12, 'transcriptionCharacters': 12580, 'outpu
           'audioKnown': 40, 'audioMissing': 2,
           'counts': {'transcription': 50, 'response': 60, 'synthesis': 42, 'usage': 60, 'tool': 20, 'error': 3},
           'failed': 5, 'tokens': 48200, 'tokenKnown': 80, 'tokenMissing': 22,
-          'firstAt': 1793100000000, 'lastAt': 1793110000000}
+          'firstAt': 1793100000000, 'lastAt': 1793110000000,
+          'latency': {'firstText': {'samples': 40, 'p50': 520, 'p95': 1180},
+                      'firstAudio': {'samples': 20, 'p50': 800, 'p95': 1900},
+                      'synthesis': {'samples': 42, 'p50': 812, 'p95': 1955}},
+          'interrupts': {'count': 7, 'rate': 0.1167}}
 EMPTY = {**{key: 0 for key in SAMPLE}, 'counts': dict.fromkeys(SAMPLE['counts'], 0),
-         'outputAudioSeconds': None, 'tokens': None, 'firstAt': None, 'lastAt': None}
+         'outputAudioSeconds': None, 'tokens': None, 'firstAt': None, 'lastAt': None,
+         'latency': {key: {'samples': 0, 'p50': None, 'p95': None} for key in ('firstText', 'firstAudio', 'synthesis')},
+         'interrupts': {'count': 0, 'rate': None}}
 SESSIONS = [
     {'sessionId': 'session-a', 'title': '聊聊今天的计划', 'preview': '计划已经整理好了。',
      'firstAt': 1793110000000, 'lastAt': 1793110100000, 'messageCount': 3, 'recordCount': 5},
@@ -62,6 +68,11 @@ async def statistics(harness, frame):
     await expect(frame.get_by_text('12,580', exact=True)).to_be_visible()
     await expect(frame.get_by_text('1 小时 1 分 1.2 秒', exact=True)).to_be_visible()
     await expect(frame.get_by_text('48,200', exact=True)).to_be_visible()
+    # 延迟卡片：p50/p95 由后端算好，前端只负责格式化（未知不得显示 0 ms）
+    await expect(frame.get_by_text('520 ms / 1.18 s', exact=True)).to_be_visible()
+    await expect(frame.get_by_text('812 ms / 1.96 s', exact=True)).to_be_visible()
+    await expect(frame.get_by_text('40 条样本', exact=True)).to_be_visible()
+    await expect(frame.get_by_text('占回复 12%', exact=True)).to_be_visible()
     # 全量范围不带 since，是"全部保留记录"的唯一表达方式
     assert state['windows'] == [], state['windows']
     await frame.get_by_label('统计时间范围').click()
@@ -86,6 +97,8 @@ async def statistics(harness, frame):
     await expect(frame.get_by_text('所选时间内暂无记录，开始对话后刷新查看。')).to_be_visible()
     # 空数据时输出语音时长必须显示"未知"而不是 0 秒
     await expect(frame.get_by_text('未知', exact=True).first).to_be_visible()
+    # 无样本时延迟必须显示"—"而不是 0 ms：未知不等于零
+    await expect(frame.get_by_text('— / —', exact=True).first).to_be_visible()
     return {'statistics': True}
 
 
