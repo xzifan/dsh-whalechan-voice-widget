@@ -134,6 +134,27 @@ test('实时启动脚本走 browser_harness.Harness，并被 npm / CI 驱动', (
   assert.ok(ci.includes('npm run test:browser:startup'), 'CI 必须真的跑实时启动脚本，否则等于没有这条断言')
 })
 
+// 冒烟脚本（BACKLOG「把 browser-smoke.py 也迁到 browser_harness.Harness」）曾自带一份 bootstrap：
+// 挂载 HTML / 路由分派 / 假麦克风各写一遍，改 mock 要改两处，那处忘改就静默失真。这里锁住
+// 「只有一份 bootstrap」，以及「别再把假音频 fixture 写进仓库树」（旧版写 `.tools/browser-tone.wav`）。
+test('browser-smoke.py 走 browser_harness.Harness，且与其它脚本共享同一份 bootstrap', () => {
+  const smoke = readFileSync(join(TEST_DIR, 'browser-smoke.py'), 'utf8')
+  assert.ok(
+    smoke.includes('from browser_harness import Harness'),
+    'browser-smoke.py 必须走 browser_harness.Harness，否则又变成两份 bootstrap 各改各的 mock',
+  )
+  assert.equal(smoke.includes('async_playwright'), false, 'browser-smoke.py 不该自己起 playwright：那是 Harness.start() 的职责')
+  assert.equal(smoke.includes('dist/web'), false, 'browser-smoke.py 不该自己分发 dist/web：那会绕过宿主页 -> client.js -> iframe 这条生产路径')
+  assert.equal(
+    smoke.includes('.tools/browser-tone.wav'),
+    false,
+    '假音频 fixture 由 Harness 写进临时目录，别落回仓库树',
+  )
+  for (const signal of ['保存设置', '结束对话', 'Call ID: call-1', 'realtime/audio']) {
+    assert.ok(smoke.includes(signal), `browser-smoke.py 缺少「${signal}」断言，核心链路冒烟就名不副实了`)
+  }
+})
+
 // 日志审计页（BACKLOG「浏览器页断言 S4」）同样并入 browser-pages.py；旧脚本里的列标题点击循环
 // 恒真、3080 探活只是读线上状态，都随文件一起删掉。
 test('日志审计断言已并入 browser-pages.py，没有独立的 browser-audit-table.py', () => {

@@ -427,3 +427,18 @@
 **变异验证**：①删掉 `rtStart` 里「取消后迟到 session 必 end」那行并重建 → 红在 `until(lambda: ended == ['cancel-1'])`，实际 `[]`；②把 `onVoiceSettingsPatch(result.voiceSettingsPatch)` 换成空操作并重建 → 红在 `put['tts_profiles']['qwen']['voice'] == 'initialized-1'`，实际 `''`。两次都还原并重建，`git diff src web/src` 为空。
 
 **下次可做**：把 `test/browser-smoke.py` 也迁到 `browser_harness.Harness`（现在两份 bootstrap 各约 50 行重复，改 mock 分派要改两处）。
+
+## 2026-10-29 · 浏览器脚本收尾：`browser-smoke.py` 改走 `Harness`
+
+**条目**：把冒烟脚本自己那份 bootstrap 删掉，与 `browser-pages` / `breeze` / `presets` / `startup` 共用 `browser_harness.Harness`——之前挂载 HTML、路由分派、假麦克风各写一遍，改 mock 要改两处，漏改一处就静默失真。
+
+**改动**（`test/browser-smoke.py` 100 → 59 行，diff +59/−98；`test/browser-scripts.test.js` +21；共 2 文件 178 行 churn，未用规划子代理）
+
+- **删掉的重复**：`MOUNT_HTML`（宿主页 `__ModuleLoader__` 桩）、`route()` 里 `/api/voice-workbench/*` 的 8 个分支、`/react.js` `/plugin.js` `dist/web` 的静态分发、`recording()` 合成 440 Hz、`--use-file-for-fake-audio-capture` 启动参数、`page.frames[1]` 取 iframe，全部由 `Harness` 提供（`start()` / `default_result()` / `dispatch()` / `child`）。
+- **顺带修的仓库卫生**：旧版每次跑都往仓库树写 `.tools/browser-tone.wav`（96 KB，靠 `.gitignore` 的 `*.wav` 掩盖）；`Harness` 写进 `tempfile.mkdtemp()`，那个陈旧 fixture 已移到 `~/.hermes/cache/scratch/`，全仓无引用。
+- **5 段语义断言原样保留**：①挂载 + `主导航` 可见 + `开始对话` 可用；②设置页改「补充提示词」/勾 `read` 取消 `glob`/填工作区后 `PUT config` 的 `system_prompt`、`enabled_tools == ['read']`、`workspace`；③实时对话工具时间线（`在呢，主人。` → `已完成` → 展开 `read` → `Call ID: call-1`）+ `realtime/audio` 真的收到麦克风帧 + `__testTracks` 非空；④`结束对话` 后回到起始 heading 且所有 track `readyState === 'ended'`；⑤110/390px 无横向溢出、零 pageerror。溢出探针提成模块常量 `OVERFLOW`，失败时仍打印冒犯元素。
+- **门禁**：元测试第 7 条锁死「`from browser_harness import Harness` 在、`async_playwright`/`dist/web`/`.tools/browser-tone.wav` 不在、四个关键信号在」，防止下一轮又长回第二份 bootstrap。
+
+**验证（都是实跑）**：后端 `npm test` 317 → **318**、前端 **101** 全绿；`lint` 0 问题、`format:check` 通过、`build` 成功（`dist/` 已 `git checkout` 还原，新 hash 产物 `index-CReRi_3c.js` 移出仓库）；`browser-smoke.py` 连跑 2 次 PASS，`browser-pages.py` 仍 `{"statistics":true,"history":true,"audit":true,"pageErrors":[]}`。
+
+**变异验证（这条最有说服力）**：把 `browser_harness.py` 的 `catalog` mock 改成空工具表 —— 新 smoke **红**（`waiting for checkbox[name=read]`，exit 1），同一变异下**旧** smoke 仍 **PASS**（exit 0）：这正是「两份 bootstrap 各改各的」的反证，改完 harness 后冒烟脚本跟着动，其它脚本不再有盲区。另把 `git show HEAD:test/browser-smoke.py` 还原回旧文件 → 元测试恰红 1 条（6 pass/1 fail），删回后 7/7。两次变异都已还原，`git diff test/browser_harness.py` 为空。
