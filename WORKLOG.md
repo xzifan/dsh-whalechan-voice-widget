@@ -785,3 +785,22 @@
 **下次可做**：候选 2（在 `test/browser-scripts.test.js` 加一条通用循环，把 5 条 `test:browser*` npm 脚本与 `ci.yml` 的 `run:` 行一一对上，并断言没有孤儿 `browser-*.py`；注意 `test:browser` 是 `test:browser:pages` 的前缀，必须整行匹配否则假通过）；候选 3（`test/models-check.test.js`，先钉住现状——breeze 且无同名 `tts_profiles` 条目时返回的是 400「所选语音提供方不存在」而不是 503，别为了让断言好看去改对外行为）。
 
 **验证（真跑）**：本轮零源码改动，`npm test` **375 / 375** 全绿、`npm run test:web` **103 / 103** 全绿（基线未漂）。
+
+## 2026-10-30 01:20 · 迭代 J1：覆盖率门禁零守卫（`test/coverage-config.test.js`）
+
+**条目**：BACKLOG 上一条「覆盖率门禁零守卫」——两条 `test:coverage*` 脚本的六个阈值只写在 `README.md` 表格里靠人手工同步，`test/` 下 `grep test:coverage` 零命中；而 `docs/prettier-migration-plan.md` 的 S7 排定要同 commit 把后端行阈值降到 93.5，那次手工同步一旦漏掉，守卫就变成「文档说 96%、脚本已 93.5%」的静默漂移。
+
+**改动**：只新增 `test/coverage-config.test.js`（105 行 / 3 条用例），零源码、零 `package.json` 改动。
+
+- 用例 1：`parseCoverageScript()` 从两个 npm 脚本里读 `include` 与三个百分比（正则吃小数，S7 的 93.5 不会让守卫失效），`include` 必须严格等于 `src/**/*.js` / `web/src/**/*.js`（顺带守住「后端不许把前端文件聚进来」这个既有测量陷阱）；再解析 README 那段表格（只取「覆盖率是 CI 里的独立门槛」之后的第一张表，单元格必须匹配百分比格式，按范围列是否含 `web/src` 分前后端，要求各恰好 1 行，多/少一行都红），逐一 `deepEqual`。
+- 用例 2：`ci.yml` 的 `run:` 行做**整行相等**比较，断言 `npm run test:coverage` 与 `npm run test:coverage:web` 都在——不能用 `includes`，前者是后者的前缀，只剩后者也会假通过（与上一轮 `test:browser` 那个前缀坑同源）。
+- 用例 3：反空转自检。合成串 `93.5/82.25/91` 解析正确；裸 `node --test test/*.test.js` 解析出三个 `undefined`——证明解析器不会编默认值蒙混过关。
+- 解析器**缺 flag 时不给默认值**（留 `undefined`），避免「脚本删掉一个 `--test-coverage-lines` 后仍报 96 通过」。
+
+**变异验证（4 条，各恰好红 1 条）**：①README 后端行 `96%`→`93.5%` → 红在「README 后端下限与 test:coverage 不一致」；②脚本后端行阈值→`93.5` → 同一处反向红；③后端 `--test-coverage-include` 改成 `srcx/**/*.js` → 红在 include 断言；④删掉 `ci.yml` 的 `run: npm run test:coverage` 行 → 红在「CI 缺少步骤」。四次改完都从 scratch 备份还原，`git status` 只剩新增文件。
+
+**验收（真跑）**：后端 375 → **378** / 前端 **103** 全绿、`npm run lint` 0 问题、`npm run format:check` 通过、`npm run build` 成功（`dist/web/index.html` 与旧 hash 产物已 `git checkout`，新 hash 产物移到 scratch，未进提交）。
+
+**未用规划子代理**：单文件纯测试、不碰对外行为、预估 <200 行，按 J1 分级直接实现。
+
+**下次可做**：清单里剩余的 `- [ ]` 仍全是硬阻塞（第 34 条 `⛔ 阻塞待决策`、第 46 条「夜间冒烟接入调度」需人拍板、`[arch]` 事件分发、`[plan]` 首帧锚点、真实停播时延），所以本轮把上一轮候选队列的第 2 项**结转成新条目**放在 BACKLOG 末尾（浏览器 e2e 门禁零守卫：把 `test/browser-*.py` / npm `test:browser*` / `ci.yml` `run:` 行三者对齐，整行相等比较）——下一班次可直接取用，不必再走一遍候选发现。候选 3（`POST /api/models/check` 零断言 + `ENDPOINT_METHODS` 漏登记）仍未入清单。
