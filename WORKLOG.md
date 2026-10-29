@@ -804,3 +804,23 @@
 **未用规划子代理**：单文件纯测试、不碰对外行为、预估 <200 行，按 J1 分级直接实现。
 
 **下次可做**：清单里剩余的 `- [ ]` 仍全是硬阻塞（第 34 条 `⛔ 阻塞待决策`、第 46 条「夜间冒烟接入调度」需人拍板、`[arch]` 事件分发、`[plan]` 首帧锚点、真实停播时延），所以本轮把上一轮候选队列的第 2 项**结转成新条目**放在 BACKLOG 末尾（浏览器 e2e 门禁零守卫：把 `test/browser-*.py` / npm `test:browser*` / `ci.yml` `run:` 行三者对齐，整行相等比较）——下一班次可直接取用，不必再走一遍候选发现。候选 3（`POST /api/models/check` 零断言 + `ENDPOINT_METHODS` 漏登记）仍未入清单。
+
+## 2026-10-30 02:20 · 迭代 J1：浏览器 e2e 门禁零守卫（`test/browser-scripts.test.js` 第 9 条）
+
+**条目**：BACKLOG「浏览器 e2e 门禁零守卫」（上一轮从证据提候选后结转的那条）。原有 8 条元测试只盯各脚本**内部**信号（走 `Harness`、不含 `dist/web`、某些文案在），没有一条把 `test/browser-*.py`、`package.json` 的 `test:browser*` 脚本、`ci.yml` 的 `run:` 行对起来——删掉 CI 里某个 `run: npm run test:browser:pages` step 也不会红，门禁就这么静默变空。
+
+**改动**：只改 `test/browser-scripts.test.js`（+67 行，1 条用例 + 1 个 8 行的 `ciBrowserCommands()` 解析器），零源码、零 `package.json` / `ci.yml` 改动。
+
+- **py ↔ npm script（双向）**：从 `package.json` 里取所有 `test:browser` 前缀脚本，命令必须严格匹配 `^python3 (test/<脚本>\.py)$`——取**目标文件**而不是靠脚本名反推；再反向遍历磁盘上 `test/browser-*.py`，要求每个都有 script 驱动（有 py 无 script = 写好也没人跑）。附带三条：没有两个 script 跑同一个 py、每个 script 指向的文件真的存在、两个清单都 ≥5 个（防止路径取错后整条变成空转）。
+- **script ↔ CI（整行相等）**：`ciBrowserCommands()` 把 `run: npm run x` 的内联写法和 `run: |` 多行块里的裸命令都取出来（`trim` → 去 `- ` / `run: ` 前缀 → `startsWith('npm run test:browser')`），然后 `commands.includes('npm run <name>')` 是**数组整行相等**，不是字符串 `includes`——`npm run test:browser` 是 `npm run test:browser:pages` 的前缀，子串匹配时只剩后者也能冒充前者（和上一轮覆盖率门禁踩的是同一个坑）。反向再遍历 CI 命令，要求每个名字都在 `package.json` 里。
+- **反空转自检**：用合成 yml（一个内联 `run:` + 一个多行块）断言解析器恰好取出 `['npm run test:browser:pages', 'npm run test:browser']`，证明两种写法都被覆盖、且不会把两个脚本混成一条。
+
+**变异验证（3 条，各恰好红 1 条）**：①删掉 CI 的 `Page assertions` step → 红在「CI 里没有整行 `npm run test:browser:pages`」；②`cp test/browser-smoke.py test/browser-orphan.py`（有 py 无 script）→ 红在「没有对应的 npm test:browser* 脚本」；③加一个 `run: npm run test:browser:ghost` step → 红在「CI 跑了不存在的脚本」。三次改完都从 `/tmp` 备份 `cp` 还原，第二次跑 `git status` 只剩本用例文件。
+
+**验收（真跑）**：后端 378 → **379** / 前端 **103** 全绿、`npm run lint` 0 问题、`npm run format:check` 通过（`test/` 仍在 `.prettierignore` 账本里，本文件不受格式化门禁约束，但仍按仓库风格写）、`npm run build` 成功（`dist/web/index.html` 已 `git checkout`，新 hash 产物 `index-Q9A1lrTm.js` 移到 scratch，未进提交）。
+
+**未用规划子代理**：单文件纯测试、单文件 67 行、不碰对外行为，按 J1 分级直接实现。
+
+**并发**：本班次开始时无 `.release.lock`，已建 `.work.lock`（2026-10-29T18:17:37Z）并在收尾删除。
+
+**下次可做**：清单里剩余的 `- [ ]` 又全是硬阻塞（第 34 条 `⛔ 阻塞待决策`、第 46 条「夜间冒烟接入调度」需人拍板、`[arch]` 事件分发需先立时序断言、`[plan]` 首帧锚点「需先定口径归属」、真实停播时延「单独立项」），所以**下一班次应当走第 7 步**（派只读子代理从证据提 3 个候选，选 1 个入清单），不必再逐个复查这些阻塞项。上一轮候选 3（`POST /api/models/check` 零断言 + `ENDPOINT_METHODS` 漏登记）仍未入清单，可直接补进去。

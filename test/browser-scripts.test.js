@@ -177,6 +177,72 @@ test('browser-smoke.py 先等服务端数据落地再改表单，且请求列表
   assert.ok(smoke.includes('await harness.until('), 'browser-smoke.py 应当用 harness.until 轮询请求列表')
 })
 
+// 从 ci.yml 里取「所有真的执行 npm run test:browser* 的行」：`run: npm run x` 的内联写法与
+// 多行块（`run: |` 下面裸写命令）都要算，去掉前缀后按整行取值。
+const ciBrowserCommands = (ci) =>
+  ci
+    .split('\n')
+    .map((line) => line.trim().replace(/^-\s+/, '').replace(/^run:\s*/, ''))
+    .filter((line) => line.startsWith('npm run test:browser'))
+
+// 浏览器 e2e 门禁的「三处对不上」缺口（BACKLOG 2026-10-30）：上面的用例只盯各脚本**内部**信号
+// （走 Harness、不含 dist/web、某些文案在），没有一条把 `test/browser-*.py`、`package.json` 的
+// `test:browser*` 脚本、`ci.yml` 的 `run:` 行对起来——删掉 CI 里某个 step 也不会红。
+// 比较必须**整行相等**：`npm run test:browser` 是 `npm run test:browser:pages` 的前缀，
+// 用 includes 匹配前缀时只剩后者也能冒充前者。
+test('每个浏览器脚本都有 npm script 与 CI step，三处一一对应', () => {
+  const root = join(TEST_DIR, '..')
+  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+  const scripts = Object.entries(pkg.scripts).filter(
+    ([name]) => name === 'test:browser' || name.startsWith('test:browser:'),
+  )
+  assert.ok(scripts.length >= 5, `test:browser* 脚本只有 ${scripts.length} 个，前缀可能取错了`)
+
+  // npm script -> 它跑的 py 文件
+  const targets = new Map()
+  for (const [name, command] of scripts) {
+    const match = command.match(/^python3 (test\/[A-Za-z0-9_.-]+\.py)$/)
+    assert.ok(match, `${name} 应当就是「python3 test/<脚本>.py」，实际：${command}`)
+    targets.set(name, match[1])
+  }
+  assert.equal(
+    new Set(targets.values()).size,
+    targets.size,
+    `有两个 script 跑同一个 py 文件：${[...targets.values()].join(', ')}`,
+  )
+
+  // 反向：磁盘上每个 test/browser-*.py 都得有 script 驱动，否则写好也没人跑
+  const driven = new Set(targets.values())
+  const onDisk = readdirSync(TEST_DIR)
+    .filter((name) => /^browser-.*\.py$/.test(name))
+    .map((name) => `test/${name}`)
+  assert.ok(onDisk.length >= 5, `test/browser-*.py 只有 ${onDisk.length} 个，路径可能取错了`)
+  for (const file of onDisk) {
+    assert.ok(driven.has(file), `${file} 没有对应的 npm test:browser* 脚本，等于没人跑它`)
+  }
+  for (const [name, file] of targets) {
+    assert.equal(existsSync(join(root, file)), true, `${name} 指向的 ${file} 不存在`)
+  }
+
+  // CI：script 与 step 双向对齐
+  const ci = readFileSync(join(root, '.github', 'workflows', 'ci.yml'), 'utf8')
+  const commands = ciBrowserCommands(ci)
+  for (const name of targets.keys()) {
+    assert.ok(
+      commands.includes(`npm run ${name}`),
+      `CI 里没有整行「npm run ${name}」：删掉那个 step 也不会红，等于脚本没进门禁`,
+    )
+  }
+  for (const command of commands) {
+    const name = command.slice('npm run '.length)
+    assert.ok(targets.has(name), `CI 跑了不存在的脚本 ${name}，发布后才发现门禁是空的`)
+  }
+
+  // 反空转自检：解析器真的在取整行（内联与多行块两种写法都算），不会把两个脚本混为一条
+  const probe = ciBrowserCommands('\n      - run: npm run test:browser:pages\n      - run: |\n          npm run test:browser\n')
+  assert.deepEqual(probe, ['npm run test:browser:pages', 'npm run test:browser'], `run: 解析器失效：${JSON.stringify(probe)}`)
+})
+
 // 日志审计页（BACKLOG「浏览器页断言 S4」）同样并入 browser-pages.py；旧脚本里的列标题点击循环
 // 恒真、3080 探活只是读线上状态，都随文件一起删掉。
 test('日志审计断言已并入 browser-pages.py，没有独立的 browser-audit-table.py', () => {
