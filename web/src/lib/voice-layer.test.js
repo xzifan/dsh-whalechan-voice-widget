@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {normalizeVoiceLayer,normalizeVoiceLayerSettings,VOICE_PRESETS,VOICE_PROVIDERS,DEFAULT_VOICE_ID} from './voice-layer.js'
+import {normalizeVoiceLayer,normalizeVoiceLayerSettings,VOICE_PRESETS,VOICE_PROVIDERS,DEFAULT_VOICE_ID,REALTIME_PROVIDERS} from './voice-layer.js'
 
 test('voice layer defaults to Qwen TTS with the TTS mouth on',()=>{
   const value=normalizeVoiceLayer({})
@@ -31,6 +31,16 @@ test('presets and providers expose the default warm voice and three presets',()=
   assert.equal(VOICE_PRESETS[1].id,'preset-warm')
   assert.equal(DEFAULT_VOICE_ID,'qwen-audio-3.1-realtime-plus-whalebrt-86754649b8a14117ac9c0f9e1716ac2b')
   assert.equal(VOICE_PROVIDERS[0].value,'qwen')
+})
+test('realtime provider list only offers brains that actually work',()=>{
+  // 火山引擎曾以 `WorkInProgress` 禁用项挂在实时模型下拉里：没有音频协议、没有连接，
+  // 却能预存凭据，读起来像"配了凭据就能用"。入口已移除，接入时再和实现一起加回来。
+  assert.deepEqual(REALTIME_PROVIDERS.map(p=>p.value),['qwen'])
+  for(const item of REALTIME_PROVIDERS){
+    assert.equal(item.disabled,undefined)
+    assert.doesNotMatch(item.label,/WorkInProgress/i)
+    assert.doesNotMatch(item.label,/火山/)
+  }
 })
 test('voice presets: only the warm preset carries a real voiceId',async()=>{
   const {VOICE_PRESETS,DEFAULT_VOICE_ID}=await import('./voice-layer.js')

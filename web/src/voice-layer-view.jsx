@@ -122,7 +122,6 @@ export function VoiceLayerView(p){
         <ProviderSelect id="realtime-provider" label="实时模型" value="qwen" onChange={()=>{}} items={REALTIME_PROVIDERS}/>
         <p className="break-all text-xs text-muted-foreground">{rt.model||'qwen-audio-3.1-realtime-plus'}</p>
         <div className="flex flex-wrap gap-2"><Badge variant="secondary">说话即可打断</Badge><Badge variant="secondary">支持工具调用</Badge></div>
-        <p className="text-xs text-muted-foreground">火山引擎正在开发，暂不可选。</p>
         <ProviderCredentials provider="bailian" label="百炼" status={p.providerCredentials?.bailian} disabled={!!configBusy} onCheck={p.checkProviderCredentials} onSave={p.saveProviderCredential}/>
         <details className="min-w-0 rounded-lg border p-3"><summary className="cursor-pointer text-sm font-medium">高级设置：火山引擎凭据</summary><div className="mt-3 space-y-3"><p className="text-xs leading-relaxed text-muted-foreground">可选，仅保存共享凭据；实时音频接入尚未实现，所需鉴权以接入时为准。目前无需配置。</p><ProviderCredentials provider="volcengine" label="火山引擎" status={p.providerCredentials?.volcengine} disabled={!!configBusy} onCheck={p.checkProviderCredentials} onSave={p.saveProviderCredential}/></div></details>
       </CardContent>

@@ -4,7 +4,7 @@ Runs through the production mount path (`browser_harness.Harness`): host page ->
 bridge -> iframe -> mocked `/api/voice-workbench/*`, so the bridge's method whitelist and abort
 handling are exercised too. No network, no screenshots, nothing written into the repo tree.
 
-Fixed voice ids are read from `src/breeze-voices.js` / `src/tts-config.js` rather than copied here:
+Fixed voice ids are read from `src/core/breeze-voices.js` / `src/core/tts-config.js` rather than copied here:
 a voice swap must not be able to leave this script asserting yesterday's id (it did before).
 
 Run after build with `.tools/pw-venv/bin/python test/browser-breeze-voice.py`.
@@ -22,8 +22,8 @@ from browser_harness import ROOT, Harness
 def breeze_source():
     """The single source of truth for the fixed voice table, endpoint and model."""
     script = (
-        f"Promise.all([import('{(ROOT / 'src/breeze-voices.js').as_uri()}'),"
-        f"import('{(ROOT / 'src/tts-config.js').as_uri()}')])"
+        f"Promise.all([import('{(ROOT / 'src/core/breeze-voices.js').as_uri()}'),"
+        f"import('{(ROOT / 'src/core/tts-config.js').as_uri()}')])"
         '.then(([voices,config])=>console.log(JSON.stringify({preset:voices.BREEZE_PRESET_VOICES,'
         'zh:voices.BREEZE_ZH_VOICES,endpoint:config.TTS_BUILTINS.breeze.endpoint,'
         'model:config.TTS_BUILTINS.breeze.model})))'
@@ -129,13 +129,16 @@ async def main():
         await expect(bailian.get_by_text('llm-pi-ai/bailian', exact=True)).to_be_visible()
         await expect(bailian.get_by_text('DASHSCOPE_API_KEY', exact=True)).to_have_count(0)
 
-        # 火山引擎仍是 WorkInProgress：键盘和鼠标都选不中
+        # 火山引擎 WorkInProgress 入口已移除：实时模型下拉只剩百炼，且不再有"暂不可选"提示
         realtime = frame.locator('#realtime-provider')
         await realtime.click()
-        volcano = frame.get_by_role('option', name='火山引擎 · WorkInProgress', exact=True)
-        await expect(volcano).to_have_attribute('aria-disabled', 'true')
-        await volcano.dispatch_event('click')
-        await expect(realtime).to_have_text('百炼 · Qwen-Audio-Realtime')
+        options = frame.get_by_role('option')
+        await expect(options).to_have_count(1)
+        await expect(options.first).to_have_text('百炼 · Qwen-Audio-Realtime')
+        await expect(frame.get_by_role(
+            'option', name='火山引擎 · WorkInProgress', exact=True)).to_have_count(0)
+        await expect(frame.get_by_text('火山引擎正在开发，暂不可选。', exact=True)).to_have_count(0)
+        # 键盘也翻不到第二项：End + Enter 仍停在百炼
         await harness.page.keyboard.press('Escape')
         await realtime.click()
         await harness.page.keyboard.press('End')
@@ -234,9 +237,9 @@ async def main():
         assert not harness.errors, harness.errors
     finally:
         await harness.close()
-    print('PASS: Breeze fixed trilingual voices read from src/breeze-voices.js; no prompt editor for Breeze; '
+    print('PASS: Breeze fixed trilingual voices read from src/core/breeze-voices.js; no prompt editor for Breeze; '
           'advanced model/endpoint/JSON validation; credential save/status/cancel; zh voice + profile persisted '
-          'without touching Qwen; disabled Volcano; 390px layout; zero design API calls')
+          'without touching Qwen; no Volcano entry; 390px layout; zero design API calls')
 
 
 asyncio.run(main())

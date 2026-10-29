@@ -4,9 +4,13 @@
 // / list_voice_presets tools (src/voice-design.js), so the settings page can
 // expose them without depending on a running Realtime session.
 
+// Only shipped realtime brains are listed. 火山引擎 used to sit here as a disabled
+// `WorkInProgress` entry with nothing behind it (credentials could be stored, no
+// audio protocol implemented), which reads as "配了凭据就能用" and can never be
+// selected — dead UI. Removed until the connection actually exists; add it back
+// in the same commit that ships the integration.
 export const REALTIME_PROVIDERS = [
   {value:'qwen',label:'百炼 · Qwen-Audio-Realtime'},
-  {value:'volcengine',label:'火山引擎 · WorkInProgress',disabled:true},
 ]
 
 export const REALTIME_BRAIN = {

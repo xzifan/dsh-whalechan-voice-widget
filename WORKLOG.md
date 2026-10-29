@@ -740,3 +740,32 @@
 - `docs/sdk-extraction.md` 里「P1 剩下的 `server.js` + `bin/whale.js`」只是格式化，未实现。
 
 **下次可做**：BACKLOG 里 `[arch]` 事件分发、`[plan]` 统一首帧锚点、火山引擎 Realtime 三条都等人拍板，下一个可做项要等清单更新或从 P2 尾部挑。
+
+## 2026-10-29 · P2「火山引擎 Realtime：移除 WorkInProgress 入口」（J1 迭代班次，未用规划子代理）
+
+**为什么选这条**：清单里排在它前面的 `- [ ]` 全是硬阻塞——第 34 条标着 `⛔ 阻塞待决策`（等 Prettier 大目录是否豁免），第 46 条是「需人拍板」（夜间冒烟接入调度）。本条给了两个可接受出路（给出接入时间点 / 移除入口），后者是纯代码改动，所以按「移除入口」落地；**没有**替用户拍「要不要接火山引擎」这个板，接入时间点原样留在「需要产品决策」小节。
+
+**做了什么**
+
+- `web/src/lib/voice-layer.js`：`REALTIME_PROVIDERS` 删掉 `{value:'volcengine',label:'火山引擎 · WorkInProgress',disabled:true}`，只剩百炼；注释写明「只有凭据、没有音频协议时挂着入口等于死 UI，接入时和实现一起加回来」，防止有人再挂一个纯占位项。
+- `web/src/voice-layer-view.jsx`：删掉下拉下方的「火山引擎正在开发，暂不可选。」——入口没了，这句就是死文案。
+- `README.md` 两处改口径：「未来实时音频模型」bullet 与「声音」段落都改成「实时模型只有百炼一项 / 火山引擎入口已移除」。
+- `docs/iteration-automation.md` 第 11 条标注已按「移除入口」处理，接入时间点仍待定。
+- `web/src/lib/voice-layer.test.js` 新增 1 条：`REALTIME_PROVIDERS` 恰好 `['qwen']`、每项无 `disabled`、标签不含 `WorkInProgress` 与「火山」。
+- `test/browser-breeze-voice.py`：原来那段「火山引擎仍是 WorkInProgress：键盘和鼠标都选不中」改成「只剩一项」——打开下拉断言 `option` 计数恰 1、首项是百炼、`火山引擎 · WorkInProgress` 计数 0、「暂不可选」文案计数 0，再 End + Enter 确认焦点仍停在百炼。
+
+**刻意不动的**
+
+- 后端 `volcengine` 凭据链路（`credentials` 状态表、`VOLCENGINE_API_KEY`、`src/core/service.js` 的 provider 列表）一律未改，设置页「高级设置：火山引擎凭据」也留着——它自己写着「可选，仅保存共享凭据；实时音频接入尚未实现…目前无需配置」，属预留位而不是「配了就能用」。连这块一起删是另一条产品决策，不在本班次范围内。
+
+**顺带修掉一个真回归（不修就没法验收）**
+
+- `test/browser-breeze-voice.py` 仍用 `ROOT / 'src/breeze-voices.js'` 与 `src/tts-config.js` 动态 import 取固定音色表，`f397b2e` 把这两个文件搬进 `src/core/` 后没同步，脚本一跑就 `ERR_MODULE_NOT_FOUND: …/src/breeze-voices.js`（注释里自称的「single source of truth」成了断点）。改到 `src/core/…`，并用 `grep` 确认没有第二个浏览器脚本踩同一个坑。
+
+**验证（真跑）**
+
+- 后端 **375 / 375**（未变，本轮零后端改动）、前端 **102 → 103**、`lint` 0 问题、`format:check` 全仓通过、`build` 成功（`dist/` 已 `git checkout --`，新 hash 产物移出仓库到 scratch）。
+- 浏览器实跑（`.tools/pw-venv/bin/python`）：`browser-breeze-voice.py` PASS（含新的「只剩一项」断言），`browser-smoke.py` 仍 PASS（挂载 + 设置回环 + 工具时间线）。
+- 变异 2 条，各恰好红 1 条：①把 `volcengine` 项加回 `REALTIME_PROVIDERS` → 前端恰红 1 条（`realtime provider list only offers brains that actually work`），`build` 后浏览器脚本红在 `to_have_count` 实际 `2`；②还原后 103/103、浏览器 PASS。两道防线都验证过会咬人。
+
+**下次可做**：清单里可做的条目已用尽——第 34 / 46 条硬阻塞，`[arch]` 事件分发、`[plan]` 首帧锚点、真实停播时延、审计导出四条都要人拍板。建议下一班次改走「从证据提候选」流程，或先由用户答掉「火山引擎接入时间点」与「Prettier 大目录是否豁免」。

@@ -39,7 +39,7 @@
 
 ### P2 — 月度改进
 
-11. **火山引擎 Realtime**：下拉框现在挂着 `WorkInProgress` 且禁用。要么给出接入时间点，要么先移除入口，避免用户以为"配了凭据就能用"。
+11. **火山引擎 Realtime**：下拉框现在挂着 `WorkInProgress` 且禁用。要么给出接入时间点，要么先移除入口，避免用户以为"配了凭据就能用"。（2026-10-29：按后者处理——下拉与"暂不可选"提示已移除，只剩百炼；接入时间点仍待定，见 BACKLOG 需要产品决策小节。）
 12. **拆分 `src/service.js`（592 行）与 `src/realtime-service.js`（558 行）**：会话生命周期、工具桥接、配置读写可以分层，这俩文件是目前回归风险最集中的地方。
 13. **延迟指标化**：~~目前只在审计里看得到原始记录~~（2026-10-29 核实：连原始记录都没有，`firstAudioMs` 只在内存的 `metrics` 事件里）。已在 `audit` 记录层补 `firstTextMs/firstAudioMs/playedMs/interrupted/durationMs`，并由 `statistics` 聚合出 `latency{p50,p95}` 与 `interrupts{count,rate}`；剩「真实停播时延」需要新记录类型。
 14. **审计容量策略**：2000 条 / 10 MiB 在重度使用下会滚动覆盖。加按周归档或导出，避免历史被静默丢弃。
