@@ -442,3 +442,20 @@
 **验证（都是实跑）**：后端 `npm test` 317 → **318**、前端 **101** 全绿；`lint` 0 问题、`format:check` 通过、`build` 成功（`dist/` 已 `git checkout` 还原，新 hash 产物 `index-CReRi_3c.js` 移出仓库）；`browser-smoke.py` 连跑 2 次 PASS，`browser-pages.py` 仍 `{"statistics":true,"history":true,"audit":true,"pageErrors":[]}`。
 
 **变异验证（这条最有说服力）**：把 `browser_harness.py` 的 `catalog` mock 改成空工具表 —— 新 smoke **红**（`waiting for checkbox[name=read]`，exit 1），同一变异下**旧** smoke 仍 **PASS**（exit 0）：这正是「两份 bootstrap 各改各的」的反证，改完 harness 后冒烟脚本跟着动，其它脚本不再有盲区。另把 `git show HEAD:test/browser-smoke.py` 还原回旧文件 → 元测试恰红 1 条（6 pass/1 fail），删回后 7/7。两次变异都已还原，`git diff test/browser_harness.py` 为空。
+
+## 2026-10-29 · lockfile 的 engines 与 package.json 对齐（并锁死不再分叉）
+
+**条目**：`package-lock.json` 的 `packages[""].engines` 还写着 `>=18`，与 `package.json` 的 `^20.19.0 || >=22.12.0` 不一致（上一轮 Node 下限只改了 package.json / README / CI 三处）。
+
+**查证结果：条目本身已过期**。`git blame -L 21,23 package-lock.json` 显示根 lockfile 那行早在 `74ea1bd`（2026-10-28 17:29，ESLint/Prettier 那次 `npm i -D` 顺手重写 lockfile）就变成 `^20.19.0 || >=22.12.0`；`web/package-lock.json` 的对应行从初版提交 `97a0845` 起就是对的。今天两份都已是正确值，照原条目「去改 lockfile」会是一次空提交。
+
+**所以本轮做的是防回归**（`test/node-version-consistency.test.js` +23，单文件，未用规划子代理）：
+
+- 新增用例 `lockfile engines stay aligned with package.json engines`：对根包与前端各断言 `lockfileVersion === 3`、`packages[""]` 存在、`packages[""].name` 与 `packages[""].engines.node` 分别等于对应 `package.json`。分叉的典型成因是「只改 package.json 不重装」，而 CI 的 `npm ci` 在这行不一致时并不会报错，所以只能靠断言兜。
+- **没有**去动 lockfile 里 8 处 `>=18`（443/458/468/492/895/1094/1321/1607 行）：那是 `jsdom`、`eslint` 等传递依赖自己的 engines 声明，改上游声明才是错。
+
+**验证（都是实跑）**：后端 `npm test` 318 → **319**、前端 `npm run test:web` **101** 全绿；`npm run lint` 0 问题、`npm run format:check` 通过、`npm run build` 成功（`dist/` 已 `git checkout -- dist/` 还原，新 hash 产物 `index-CReRi_3c.js` 移到 `~/.hermes/cache/scratch/dist-junk/`，未进提交）。
+
+**变异验证**：把根 lockfile 的 engines 临时改回 `"node": ">=18"` → 只跑这个测试文件得 1 pass / 1 fail，失败信息正是「根包 lockfile 的 packages[""].engines.node 与 package.json 不一致（改 Node 下限时必须同步 lockfile）」；还原后 2/2 绿，`git diff package-lock.json` 为空。
+
+**下次可做**：BACKLOG 下一条是「夜间冒烟接入调度」，需人拍板（Hermes cron 还是独立 workflow），本作业不自行建定时任务；再之后「夜间冒烟首次真跑留基线」需要真打百炼 API，也留给人工。可自动做的是「复查 `browser-smoke.py` 里拿首屏可见文本当副作用信号的同类竞态」。

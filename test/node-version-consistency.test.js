@@ -38,3 +38,26 @@ test('Node requirement is consistent across engines, README and CI matrix',async
     assert.ok(majors.includes(major),`CI matrix 缺少 engines 范围下的 Node ${major}`)
   }
 })
+
+// Node 下限曾只改 package.json/README/CI 三处，lockfile 的 packages[""] 各改各的
+// （根包 74ea1bd 才补上，前端那份碰巧初版就对）。npm install 会顺手重写这一行，
+// 但只要有人只改 package.json 而没重装，两处就会再次分叉，所以在这里锁死。
+test('lockfile engines stay aligned with package.json engines',async()=>{
+  const packs=[
+    ['根包','../package.json','../package-lock.json'],
+    ['前端','../web/package.json','../web/package-lock.json'],
+  ]
+  for(const [label,pkgPath,lockPath] of packs){
+    const pkg=JSON.parse(await read(pkgPath))
+    const lock=JSON.parse(await read(lockPath))
+    assert.equal(lock.lockfileVersion,3,`${label} lockfile 不是 v3，packages[""] 结构不成立`)
+    const self=lock.packages?.['']
+    assert.ok(self,`${label} lockfile 缺少 packages[""]`)
+    assert.equal(self.name,pkg.name,`${label} lockfile 的 name 与 package.json 不一致`)
+    assert.equal(
+      self.engines?.node,
+      pkg.engines?.node,
+      `${label} lockfile 的 packages[""].engines.node 与 package.json 不一致（改 Node 下限时必须同步 lockfile）`,
+    )
+  }
+})
