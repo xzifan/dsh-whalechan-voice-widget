@@ -409,3 +409,21 @@
 **变异验证**：①`use-voice-presets.js` 的 `if(dirty)` → `if(false)`（跳过先保存）→ 红在找不到「保存中…」按钮；②`retryPlayback` 改成重新 `run(id,'generate')` → 红在「重试播放必须复用已拿到的音频」（请求数变多）。两次都还原并重建，`git diff src web/src` 为空。
 
 **下次可做**：S7 重写 `browser-startup-initialization.py`（95 行，start 竞态 / 取消后迟到 session 必 end / `voiceSettingsPatch` 落盘）。另：`Harness` 现在有 `init_scripts` 入口，S7 若也要桩别的浏览器原语直接用，不要再给脚本开第二个 bootstrap。
+
+## 2026-10-29 · 浏览器脚本 S7：`browser-startup-initialization.py` 改走 Harness
+
+**条目**：重写实时对话启动脚本——旧版自己分发 `dist/web`、自己 mock `/api/*`，且麦克风计数读错了 window。
+
+**改动**（`test/browser-startup-initialization.py` 全量重写，95 → 185 行，diff +188/−94；`test/browser-scripts.test.js` +28；`package.json` +1；`ci.yml` +3）
+
+- **两处假通过（旧脚本一直在空转）**：①`window.__micCalls` 是 `page.evaluate` 从**宿主页**读的，真实 `getUserMedia` 发生在插件 iframe 里，宿主页那个计数恒为 0，于是「连接前不得开麦」「初始化失败不得开麦」两条断言永远成立。改走 `Harness(init_scripts=[...])` 注入计数器 + `harness.child.evaluate` 读（`init_scripts` 是 S6 给音频桩开的入口，这里复用，没有第二份 bootstrap）。②`for 100 × sleep(.02)` 只有 2 s 预算，而保存链要过 `config/check` → `PUT config` → `GET config` 三次桥接往返，换 `until()`/`until_async()`（5 s）等**已记录的副作用**。
+- **必须自定义两个 route**：`realtime/start`（第一场请求 hold 在 `asyncio.Event` 上复现「连接中」，按场景返回 502 或 `voiceSettingsPatch`；patch 里故意不带 `tts_voice_provider`，要证明的是只 patch profile）与 `realtime/events`（`Harness.default_result` 会在 >2 帧音频后灌脚本化事件，本用例需要空流，否则消息区被塞内容、`shouldStopPlayback` 也会被触发）。
+- **5 个场景原样保留**：`qwen/normal`（无 patch → 保存时仍是 `existing-voice`）、`qwen/success`、`breeze/success`（patch 落进 breeze profile）、`qwen/failure`（502 → `role=alert` 带错误文案、不开麦、不轮询、不 end）、`qwen/cancel`（取消后点「再次开始」→ 第二轮开麦，放行第一轮后迟到的 `cancel-1` 必须被 end，`starts == 2`）。
+- **新增断言**：首个 `realtime/start` 的 `settings` 带未保存草稿与当前提供方（旧脚本只从后来的 PUT 间接推）；取消后 `realtime/end` 列表**恰为** `['cancel-1']`（麦克风失败也会走 end，所以不能用 `in`）；结束对话后 `__testTracks` 恰 1 条且全部 `ended`；失败路径没有 `realtime/events`/`realtime/audio`；patch 是深合并（`realtime.use_tts_voice` 仍在、`tts_voice_provider` 未被改写）。
+- **门禁**：`test:browser:startup` npm 脚本、CI 的 `browser-smoke` job 加一步、元测试第 6 条锁死「走 Harness / 不出现 `dist/web` / 麦克风计数必须在 `harness.child` 里读 / 五个信号在 / npm+CI 都挂上」。
+
+**验证（都是实跑）**：后端 `npm test` 316 → **317**、前端 **101** 全绿；`lint` 0 问题、`format:check` 通过、`build` 成功（`dist/` 已 `git checkout` 还原，新 hash 产物 `index-CReRi_3c.js` 移到 `~/.hermes/cache/scratch/dist-stale/`，未进提交）；`browser-startup-initialization.py` 连跑 2 次 PASS（五个场景 `lateSessionEnded` 全 True），`browser-pages.py`（`{"statistics":true,"history":true,"audit":true,"pageErrors":[]}`）与 `browser-breeze-voice.py` 仍 PASS。
+
+**变异验证**：①删掉 `rtStart` 里「取消后迟到 session 必 end」那行并重建 → 红在 `until(lambda: ended == ['cancel-1'])`，实际 `[]`；②把 `onVoiceSettingsPatch(result.voiceSettingsPatch)` 换成空操作并重建 → 红在 `put['tts_profiles']['qwen']['voice'] == 'initialized-1'`，实际 `''`。两次都还原并重建，`git diff src web/src` 为空。
+
+**下次可做**：把 `test/browser-smoke.py` 也迁到 `browser_harness.Harness`（现在两份 bootstrap 各约 50 行重复，改 mock 分派要改两处）。

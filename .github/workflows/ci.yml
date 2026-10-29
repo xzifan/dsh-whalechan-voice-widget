@@ -123,3 +123,6 @@ jobs:
 
       - name: Voice presets (save-before-generate, autoplay retry, mock APIs)
         run: npm run test:browser:presets
+
+      - name: Realtime startup races (duplicate start, cancelled session end, mock APIs)
+        run: npm run test:browser:startup

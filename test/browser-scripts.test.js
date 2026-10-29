@@ -106,6 +106,34 @@ test('音色预设脚本走 browser_harness.Harness，且已被 npm / CI 驱动'
   assert.ok(ci.includes('npm run test:browser:presets'), 'CI 必须真的跑音色预设脚本，否则等于没有这条断言')
 })
 
+// 实时对话启动竞态（BACKLOG「浏览器脚本 S7」）：旧脚本自己分发 `dist/web` 并在宿主页数
+// `window.__micCalls`——真实 getUserMedia 在插件 iframe 里，宿主页那个计数恒为 0，等于
+// 「不得开麦」的断言一直在假通过。这里锁住走 Harness、从 iframe 读麦克风、且被 npm/CI 驱动。
+test('实时启动脚本走 browser_harness.Harness，并被 npm / CI 驱动', () => {
+  const startup = readFileSync(join(TEST_DIR, 'browser-startup-initialization.py'), 'utf8')
+  assert.ok(
+    startup.includes('from browser_harness import'),
+    'browser-startup-initialization.py 必须走 browser_harness.Harness，不能直连 dist/web',
+  )
+  assert.equal(startup.includes('dist/web'), false, '实时启动脚本不该自己分发 dist/web：那会绕过宿主页 -> client.js -> iframe 这条生产路径')
+  assert.ok(
+    startup.includes('harness.child.evaluate') && startup.includes('__micCalls'),
+    '麦克风计数必须在插件 iframe 里读（宿主页的 window 没有真实 getUserMedia）',
+  )
+  for (const signal of ['准备声音并连接', '取消连接', '再次开始', 'voiceSettingsPatch', 'realtime/end']) {
+    assert.ok(startup.includes(signal), `browser-startup-initialization.py 缺少「${signal}」断言，启动竞态/迟到 session 的回归就没人看了`)
+  }
+
+  const pkg = JSON.parse(readFileSync(join(TEST_DIR, '..', 'package.json'), 'utf8'))
+  assert.equal(
+    pkg.scripts['test:browser:startup'],
+    'python3 test/browser-startup-initialization.py',
+    '实时启动脚本要能被 npm 驱动，否则重写完还是没人跑',
+  )
+  const ci = readFileSync(join(TEST_DIR, '..', '.github', 'workflows', 'ci.yml'), 'utf8')
+  assert.ok(ci.includes('npm run test:browser:startup'), 'CI 必须真的跑实时启动脚本，否则等于没有这条断言')
+})
+
 // 日志审计页（BACKLOG「浏览器页断言 S4」）同样并入 browser-pages.py；旧脚本里的列标题点击循环
 // 恒真、3080 探活只是读线上状态，都随文件一起删掉。
 test('日志审计断言已并入 browser-pages.py，没有独立的 browser-audit-table.py', () => {

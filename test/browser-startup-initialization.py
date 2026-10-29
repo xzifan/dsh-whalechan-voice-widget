@@ -1,95 +1,189 @@
-"""Realtime startup initialization/browser cancellation regressions; synthetic APIs only."""
-import asyncio,json,mimetypes,subprocess
-from pathlib import Path
-from urllib.parse import urlparse
-from playwright.async_api import async_playwright,expect
-ROOT=Path(__file__).resolve().parents[1]
-ORIGIN='http://localhost:39876'
-DEFAULTS=json.loads(subprocess.check_output(['node','--input-type=module','-e',"import {defaults} from './src/service.js'; console.log(JSON.stringify(defaults))"],cwd=ROOT))
+"""Realtime startup initialization / cancellation regressions, through the production mount path.
+
+Runs via `browser_harness.Harness`: host page -> `lib/client.js` bridge -> iframe -> mocked
+`/api/voice-workbench/*`, so the bridge's method whitelist, concurrency lanes and abort handling are
+covered too. Five cases keep the four behaviours that only the browser can prove:
+
+* start race: the button is disabled while connecting, and a synthetic DOM click cannot create a
+  second `realtime/start`;
+* cancel: a session that resolves after the user cancelled must be ended, and only that one;
+* `voiceSettingsPatch` from `realtime/start` lands in the draft and is what gets saved;
+* failure: no microphone, no session polling, no `realtime/end`.
+
+The microphone counter has to live in the plugin iframe (`harness.child`); reading it from the host
+page silently returned 0 for every case.
+"""
+
+import asyncio
+
+from playwright.async_api import expect
+
+from browser_harness import Harness
+
+DRAFT = '尚未保存的聊天草稿'
+CONNECTING = '准备声音并连接' + '\u2026'
+MIC_SCRIPT = """window.__micCalls=0;const capture=navigator.mediaDevices?.getUserMedia?.bind(navigator.mediaDevices);if(capture)navigator.mediaDevices.getUserMedia=options=>{window.__micCalls++;return capture(options)};"""
+CASES = [('qwen', 'normal'), ('qwen', 'success'), ('breeze', 'success'), ('qwen', 'failure'), ('qwen', 'cancel')]
+
+
+async def until(predicate, timeout=5.0, interval=0.1):
+    """Poll for the recorded side effect instead of trusting an already-visible DOM value."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        if predicate():
+            return True
+        await asyncio.sleep(interval)
+    return predicate()
+
+
+async def until_async(predicate, timeout=5.0, interval=0.1):
+    """Same, for predicates that must read the plugin iframe (an awaitable)."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        if await predicate():
+            return True
+        await asyncio.sleep(interval)
+    return await predicate()
+
+
+def settings_for(provider, mode):
+    profile = {
+        'model': 'breeze-tts-2-multilingual' if provider == 'breeze' else 'qwen-audio-3.1-tts-flash',
+        'voice': 'existing-voice' if mode == 'normal' else '',
+    }
+    if provider == 'breeze':
+        profile.update({'protocol': 'breeze-tts', 'endpoint': 'https://api.breeze.blue/v1/text-to-speech/{voice_id}',
+                        'key_file': '/synthetic/breeze.env'})
+    return {
+        'system_prompt': '已保存的对话设置', 'workspace': '', 'enabled_tools': [],
+        # tools_configured 必须是 True：否则挂载时 loadConfig 会用 catalog 初始化工具选择，
+        # 一进设置页就 dirty，“草稿保留”断言就失去意义了。
+        'tools_configured': True,
+        'tts_voice_provider': provider, 'tts_profiles': {provider: profile},
+        'realtime': {'credential_source': 'provider', 'use_tts_voice': True},
+    }
+
+
+def routes_for(provider, mode, starts, ended, release):
+    async def realtime_start(method, body):
+        starts.append(body)
+        index = len(starts)
+        if index == 1:
+            await release.wait()
+        if mode == 'failure':
+            return 502, {'error': '默认音色初始化失败'}
+        if mode == 'normal':
+            return {'sessionId': f'{mode}-{index}'}
+        # 不带 tts_voice_provider：这一条要证明的是“只 patch profile”，不是切提供方
+        return {'sessionId': f'{mode}-{index}', 'voiceSettingsPatch': {
+            'tts_profiles': {provider: {'voice': f'initialized-{index}', 'model': settings_for(provider, mode)['tts_profiles'][provider]['model']}}}}
+
+    async def realtime_events(method, body):
+        # Harness 的默认 mock 会在 >2 帧音频后灌脚本化事件，本用例的上下文需要空流
+        return {'events': [], 'cursor': 0, 'done': False}
+
+    async def realtime_end(method, body):
+        ended.append(body.get('sessionId'))
+        return {'ok': True}
+
+    return {'realtime/start': realtime_start, 'realtime/events': realtime_events, 'realtime/end': realtime_end}
+
+
+async def mic_calls(harness):
+    return await harness.child.evaluate('window.__micCalls')
+
+
+async def mic_is(harness, expected):
+    return await mic_calls(harness) == expected
+
+
+async def run_case(provider, mode):
+    release = asyncio.Event()
+    starts, ended = [], []
+    harness = Harness(routes=routes_for(provider, mode, starts, ended, release),
+                      settings=settings_for(provider, mode), init_scripts=[MIC_SCRIPT])
+    try:
+        frame = await harness.start()
+        # 配置没加载完就点开始，发出去的是 normalizeSettings() 的默认值，草稿断言会假通过
+        await harness.nav('设置')
+        await expect(frame.get_by_text('已保存', exact=True)).to_be_visible()
+        await frame.get_by_role('tab', name='对话', exact=True).click()
+        await frame.locator('#system-prompt').fill(DRAFT)
+        await harness.nav('实时对话')
+
+        start = frame.get_by_role('button', name='开始对话', exact=True)
+        await expect(start).to_be_enabled()
+        await start.click()
+        assert await until(lambda: len(starts) == 1), starts
+        await expect(frame.get_by_role('button', name=CONNECTING, exact=True)).to_be_disabled()
+        await expect(frame.get_by_role('button', name='取消连接', exact=True)).to_be_visible()
+        assert await mic_calls(harness) == 0, '连接尚未成功就不该开麦'
+        # 未保存草稿与提供方必须原样进 start 请求
+        assert starts[0]['settings']['system_prompt'] == DRAFT, starts[0]['settings'].get('system_prompt')
+        assert starts[0]['settings']['tts_voice_provider'] == provider, starts[0]['settings'].get('tts_voice_provider')
+
+        # 合成 DOM click 绕过 actionability：只证明 disabled 不会重复派发（JS 守卫另由 rtStartAttempt 兜）
+        await frame.get_by_role('button', name=CONNECTING, exact=True).evaluate('(button) => button.click()')
+        await asyncio.sleep(0.3)
+        assert len(starts) == 1, '起始按钮 disabled 期间不得发出第二次 realtime/start'
+
+        if mode == 'cancel':
+            await frame.get_by_role('button', name='取消连接', exact=True).click()
+            again = frame.get_by_role('button', name='再次开始', exact=True)
+            await expect(again).to_be_visible()
+            await again.click()
+            assert await until(lambda: len(starts) == 2), starts
+            assert await until_async(lambda: mic_is(harness, 1))
+            release.set()
+            # 取消后迟到的 session 必须被 end，而且只能 end 它（麦克风失败也会走 end，所以要精确断言）
+            assert await until(lambda: ended == ['cancel-1']), ended
+            await expect(frame.get_by_role('button', name='结束对话', exact=True)).to_be_visible()
+        elif mode == 'failure':
+            release.set()
+            await expect(frame.get_by_role('alert').filter(has_text='默认音色初始化失败')).to_be_visible()
+            assert await mic_calls(harness) == 0, '初始化失败不得开麦'
+            await expect(frame.locator('[data-call-view="active"]')).to_have_count(0)
+            assert not ended, ended
+            assert not [call for call in harness.calls if call[1] in ('realtime/events', 'realtime/audio')], '会话没建立就不该轮询或上传'
+        else:
+            release.set()
+            await expect(frame.get_by_role('button', name='结束对话', exact=True)).to_be_visible()
+            assert await until_async(lambda: mic_is(harness, 1)), '开始对话后应恰好开麦一次'
+
+        if mode != 'failure':
+            await frame.get_by_role('button', name='结束对话', exact=True).click()
+            assert await until(lambda: ended == (['cancel-1', 'cancel-2'] if mode == 'cancel' else [f'{mode}-1'])), ended
+            # 结束对话必须真的释放麦克风：一次通话只开一次，且轨道都已 ended
+            tracks = await harness.child.evaluate('(() => {const list=window.__testTracks||[];return {count:list.length,ended:list.every(t=>t.readyState==="ended")}})()')
+            assert tracks == {'count': 1, 'ended': True}, tracks
+
+            await harness.nav('设置')
+            await expect(frame.locator('#system-prompt')).to_have_value(DRAFT)
+            save = frame.get_by_role('button', name='保存设置', exact=True)
+            await expect(save).to_be_enabled()
+            await save.click()
+            assert await until(lambda: any(m == 'PUT' and a == 'config' for m, a, _ in harness.calls)), harness.calls
+            put = [body['settings'] for m, a, body in harness.calls if (m, a) == ('PUT', 'config')][-1]
+            expected = 'existing-voice' if mode == 'normal' else ('initialized-2' if mode == 'cancel' else 'initialized-1')
+            assert put['tts_profiles'][provider]['voice'] == expected, put['tts_profiles'][provider]
+            assert put['tts_voice_provider'] == provider, put['tts_voice_provider']
+            assert put['system_prompt'] == DRAFT, put['system_prompt']
+            # patch 是深合并：没在 patch 里的字段不能被整段覆盖掉
+            assert put['realtime']['use_tts_voice'] is True, put['realtime']
+
+        assert not harness.errors, harness.errors
+        return {'provider': provider, 'mode': mode, 'starts': len(starts), 'ended': list(ended),
+                'lateSessionEnded': mode != 'cancel' or ended[:1] == ['cancel-1']}
+    finally:
+        release.set()
+        await harness.close()
+
+
 async def main():
- async with async_playwright() as p:
-  browser=await p.chromium.launch(headless=True,executable_path=p.chromium.executable_path,args=['--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream'])
-  async def scenario(provider='qwen',mode='success'):
-   context=await browser.new_context(permissions=['microphone'],viewport={'width':1400,'height':950})
-   await context.add_init_script("""window.__micCalls=0;const capture=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);navigator.mediaDevices.getUserMedia=(...args)=>{window.__micCalls++;return capture(...args)};""")
-   page=await context.new_page();errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
-   settings=json.loads(json.dumps(DEFAULTS));settings['tools_configured']=True;settings['tts_voice_provider']=provider
-   if provider=='breeze':settings['tts_profiles']['breeze']={'protocol':'breeze-tts','model':'breeze-tts-2-multilingual','endpoint':'https://api.breeze.blue/v1/text-to-speech/{voice_id}','voice':'','key_file':'/synthetic/breeze.env'}
-   if mode=='normal':settings['tts_profiles'][provider]={'voice':'existing-voice','model':'qwen-audio-3.1-tts-flash'}
-   starts=[];ended=[];saved=[];release=asyncio.Event();first_waiting=asyncio.Event()
-   async def route(r):
-    path=urlparse(r.request.url).path
-    if path.startswith('/api/'):
-     action=path.removeprefix('/api/');data=r.request.post_data_json if r.request.post_data else {};result={}
-     if action=='config' and r.request.method=='GET':result={'settings':settings,'capabilities':{},'models':{'tts':{'ready':False,'provider':provider}},'credentials':{'bailian':{'ready':True}},'voicePresets':[],'breezeVoicePresets':[]}
-     elif action=='config' and r.request.method=='PUT':saved.append(data['settings']);result={'settings':data['settings']}
-     elif action=='config/check':result={'valid':True,'errors':{},'warnings':{}}
-     elif action=='catalog':result={'tools':[],'toolExecutionAvailable':True}
-     elif action=='realtime/start':
-      index=len(starts)+1;starts.append(data);first_waiting.set()
-      if index==1:await release.wait()
-      if mode=='failure':await r.fulfill(status=502,content_type='application/json',body=json.dumps({'error':'默认音色初始化失败'}));return
-      if mode=='normal':result={'sessionId':f'{mode}-{index}'}
-      else:result={'sessionId':f'{mode}-{index}','voiceSettingsPatch':{'tts_profiles':{provider:{'voice':f'initialized-{index}','model':'qwen-audio-3.1-tts-flash' if provider=='qwen' else 'breeze-tts-2-multilingual'}}}}
-     elif action=='realtime/end':ended.append(data['sessionId']);result={'ok':True}
-     elif action=='realtime/events':result={'events':[],'cursor':0,'done':False}
-     else:result={'ok':True}
-     await r.fulfill(content_type='application/json',body=json.dumps(result));return
-    file=ROOT/'dist/web'/(path.lstrip('/') or 'index.html')
-    await r.fulfill(status=200 if file.is_file() else 404,content_type=mimetypes.guess_type(str(file))[0] or 'application/octet-stream',body=file.read_bytes() if file.is_file() else b'missing')
-   await page.route(ORIGIN+'/**',route)
-   await page.goto(ORIGIN,wait_until='domcontentloaded')
-   await page.get_by_role('button',name='设置',exact=True).click();await page.get_by_role('tab',name='对话',exact=True).click();await page.locator('#system-prompt').fill('尚未保存的聊天草稿')
-   await page.get_by_role('button',name='实时对话',exact=True).click()
-   start=page.get_by_role('button',name='开始对话',exact=True)
-   await expect(start).to_be_enabled();await start.click();await asyncio.wait_for(first_waiting.wait(),5)
-   await expect(page.get_by_role('button',name='准备声音并连接…',exact=True)).to_be_disabled()
-   await expect(page.get_by_role('button',name='取消连接',exact=True)).to_be_visible()
-   assert await page.evaluate('window.__micCalls')==0
-   # Even a synthetic duplicate DOM click cannot create a second start request.
-   await page.get_by_role('button',name='准备声音并连接…',exact=True).evaluate('(button)=>button.click()')
-   assert len(starts)==1
-   if mode=='cancel':
-    await page.get_by_role('button',name='取消连接',exact=True).click()
-    await page.get_by_role('button',name='再次开始',exact=True).click()
-    await expect(page.get_by_role('button',name='结束对话',exact=True)).to_be_visible()
-    for _ in range(100):
-     if await page.evaluate('window.__micCalls')==1:break
-     await asyncio.sleep(.02)
-    release.set()
-    for _ in range(100):
-     if 'cancel-1' in ended:break
-     await asyncio.sleep(.02)
-    assert 'cancel-1' in ended,ended
-    assert await page.evaluate('window.__micCalls')==1
-    assert len(starts)==2
-   else:release.set()
-   if mode=='failure':
-    await expect(page.get_by_role('alert')).to_contain_text('默认音色初始化失败')
-    assert await page.evaluate('window.__micCalls')==0
-    assert not ended
-    await expect(page.locator('[data-call-view="active"]')).to_have_count(0)
-   else:
-    await expect(page.get_by_role('button',name='结束对话',exact=True)).to_be_visible()
-    for _ in range(100):
-     if await page.evaluate('window.__micCalls')==1:break
-     await asyncio.sleep(.02)
-    assert await page.evaluate('window.__micCalls')==1
-    await page.get_by_role('button',name='结束对话',exact=True).click()
-    await page.get_by_role('button',name='设置',exact=True).click();await page.get_by_role('tab',name='对话',exact=True).click()
-    await expect(page.locator('#system-prompt')).to_have_value('尚未保存的聊天草稿')
-    await page.get_by_role('button',name='保存设置',exact=True).click()
-    for _ in range(100):
-     if saved:break
-     await asyncio.sleep(.02)
-    assert saved,saved
-    assert saved[-1]['tts_profiles'][provider]['voice']==('existing-voice' if mode=='normal' else 'initialized-2' if mode=='cancel' else 'initialized-1'),saved[-1]['tts_profiles']
-    assert saved[-1]['system_prompt']=='尚未保存的聊天草稿'
-   assert not errors,errors
-   await context.close()
-   return {'provider':provider,'mode':mode,'starts':len(starts),'lateSessionEnded':mode!='cancel' or 'cancel-1' in ended}
-  results=[]
-  for provider,mode in [('qwen','normal'),('qwen','success'),('breeze','success'),('qwen','failure'),('qwen','cancel')]:results.append(await scenario(provider,mode))
-  print(json.dumps({'startupRegressions':results,'noRealApiCalls':True},ensure_ascii=False))
-  await browser.close()
+    results = [await run_case(provider, mode) for provider, mode in CASES]
+    print({'startupRegressions': results, 'noRealApiCalls': True})
+
+
 asyncio.run(main())
