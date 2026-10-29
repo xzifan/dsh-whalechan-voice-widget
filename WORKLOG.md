@@ -769,3 +769,19 @@
 - 变异 2 条，各恰好红 1 条：①把 `volcengine` 项加回 `REALTIME_PROVIDERS` → 前端恰红 1 条（`realtime provider list only offers brains that actually work`），`build` 后浏览器脚本红在 `to_have_count` 实际 `2`；②还原后 103/103、浏览器 PASS。两道防线都验证过会咬人。
 
 **下次可做**：清单里可做的条目已用尽——第 34 / 46 条硬阻塞，`[arch]` 事件分发、`[plan]` 首帧锚点、真实停播时延、审计导出四条都要人拍板。建议下一班次改走「从证据提候选」流程，或先由用户答掉「火山引擎接入时间点」与「Prettier 大目录是否豁免」。
+
+## 2026-10-30 00:20 · 迭代 J1：无可做条目 → 从证据提候选（本轮不实现）
+
+**本轮没有实现任何条目。** 清单里剩下的 `- [ ]` 全部自带阻塞标记：第 34 条 `⛔ 阻塞待决策`、第 46 条 `需人拍板`、`[arch]` 事件分发（架构决策）、`[plan]` 首帧锚点（需先定口径归属）、真实停播时延（单独立项）。按 J1 规则这些一律不动，不自行拍板。
+
+**用了一个只读规划子代理**（禁止写文件 / git 写操作，只读 grep + git log），从四类证据提候选：代码 `TODO/FIXME/待实现`、测试与 CI 门禁缺口、`CHANGELOG.md` 的 `[Unreleased]`、审计与历史反复出现的失败类型。产出 3 个：
+
+1. 覆盖率门禁零守卫 —— **采纳，已追加到 BACKLOG 末尾**
+2. `browser-smoke` / `browser-pages` 这两条最大的 e2e 门禁没有 CI 接线元测试，删掉 `ci.yml` 里对应 step 也不会红
+3. `POST /api/models/check` 有实现、有路由注册、有宿主放行，但 `test/` 里零断言，且 `web/src/lib/core.js` 的 `ENDPOINT_METHODS` 漏登记该路由
+
+**取舍**：选 1。它是唯一「文档明说必须手工同步、而且 S7 一落地就会触发」的静默漂移（`docs/prettier-migration-plan.md:57` 要把后端行阈值降到 93.5 并同步 README 表格，而 `test/` 下 `grep test:coverage` 零命中）；纯测试改动约 70 行、零对外行为变化、与所有挂起项零冲突。候选 2 价值也真实但收益是「防删除」而非「防漂移」，按优先级排后。
+
+**下次可做**：候选 2（在 `test/browser-scripts.test.js` 加一条通用循环，把 5 条 `test:browser*` npm 脚本与 `ci.yml` 的 `run:` 行一一对上，并断言没有孤儿 `browser-*.py`；注意 `test:browser` 是 `test:browser:pages` 的前缀，必须整行匹配否则假通过）；候选 3（`test/models-check.test.js`，先钉住现状——breeze 且无同名 `tts_profiles` 条目时返回的是 400「所选语音提供方不存在」而不是 503，别为了让断言好看去改对外行为）。
+
+**验证（真跑）**：本轮零源码改动，`npm test` **375 / 375** 全绿、`npm run test:web` **103 / 103** 全绿（基线未漂）。
