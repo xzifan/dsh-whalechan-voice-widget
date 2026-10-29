@@ -2,7 +2,8 @@
 
 > 由规划子代理（只读）于 2026-10-28 产出，主代理已采纳并拆成三张独立票。
 > 基线：`npm test` 279 / `npm run test:web` 100 全绿。
-> 现状行数：`src/service.js` **617 行**、`src/realtime-service.js` **558 行**。
+> 现状行数（2026-10-29，步骤 1 完成后）：`src/service.js` **624 行**、`src/realtime-service.js` **506 行**、`src/realtime-protocol.js` **66 行**。
+> 立项时为 617 / 558；步骤 1 于 2026-10-29 落地，`realtime-service.js` 565 → 506，后端 320 → 327。
 
 ## 分工原则
 
@@ -10,7 +11,7 @@
 - 对外行为零变化：HTTP 路径与字段、审计记录形状、测试断言都不动。
 - `createRealtimeSession`（rt 85–556）与 `initializeSessionVoice`（svc 191–236）**本轮不动**，单独开票。
 
-## 步骤 1 · `src/realtime-protocol.js`（先做）
+## 步骤 1 · `src/realtime-protocol.js`（先做 · 2026-10-29 已落地）
 
 纯常量 / 提示词 / 工具 Schema，无状态：
 

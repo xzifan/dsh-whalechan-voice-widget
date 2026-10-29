@@ -508,3 +508,21 @@
 **修复验证（正反都跑）**：同一条 500 ms 慢 mock 换成修复后的顺序（probe3）→ 2/2 `ok:true`，PUT 带 `system_prompt='先给结论，保持简短。'`、`enabled_tools=['read']`、`workspace='/test/workspace'`。**变异验证**：①把 `wait_for_value` 挪到 `.fill` 之后 → 元测试恰好红 1 条（7 pass/1 fail）；②把 `until` 版本换回裸 `[-1]` → 同样恰好红 1 条；两次都从备份 `cp` 还原后 8/8 绿、`git diff` 与修复版一致。
 
 **下次可做**：`Harness.wait_for_value` 已就位，但 `browser-pages.py` / `breeze` / `voice-presets` / `startup` 里各有一份自己的 `until_value`/`until`，可以合并到 Harness 一处（跨 5 文件，留给有预算的班次）；BACKLOG 顶部两条仍等人拍板；`HARNESS` 的慢 mock 目前只是仓库外的探针，若想让 CI 常驻拦这类竞态，可给 `Harness` 加一个 `latency` 参数并在 smoke 里跑一遍慢速变体（需产品/CI 时长的取舍）。
+
+## 2026-10-29 · P2「拆分 service.js / realtime-service.js · 步骤 1：抽 `src/realtime-protocol.js`」（J1 迭代班次，用了只读规划子代理）
+
+**取活说明**：BACKLOG 顶部三条 `- [ ]` 都动不了——「husky + lint-staged」自带 ⛔ 且前置是文末的 Prettier 豁免决策；「夜间冒烟接入调度」写明需人拍板；P2 第一条「火山引擎给出接入时间点或移除 WIP 项」两个分支都是产品决定（`是否把火山引擎列为正式支持的第二大脑` 就在决策小节）。于是取第一条可做的：拆分步骤 1。
+
+**规划子代理（只读，~155 s，22 次工具调用）** 修正了旧计划的两处失真：①行号（`docs/refactor-split-plan.md` 写 617/558，实测 624/565）；②`realtimeDefaults()` 实际是 **10 个键**不是 8 个；并指出 `realtimeDefaults` 在 `realtime-service.js` 内**没有**本地调用点，只能走 `export … from`，否则 ESLint `no-unused-vars` 会红。采纳计划，按其 Commit 1+2 合并成一次提交（测试与搬迁同提交，否则提交本身无法被新断言证伪）。
+
+**改动（3 个代码文件 +144/−65，churn 209 行；条目属「整块搬迁」，比 200 行上限多 9 行）**：
+
+- `src/realtime-protocol.js`（新，66 行）：搬走 `realtime-service.js` 的纯常量/提示词/Schema —— `MODEL`、`DEFAULT_HOST`、`SYSTEM_VOICE`、`DEFAULT_TOOLS`、`MAX_AUDIO_BYTES`、`safeCode`、`redactText`、`readEnvKey`、`realtimeDefaults`、`toolDefinitions`、`REALTIME_INSTRUCTIONS`、`realtimeInstructions`。**用 `sed -n '19,80p'` 逐行切片迁移，不手抄**：`REALTIME_INSTRUCTIONS` 那行 600+ 字符、`redactText` 三条脱敏正则、`realtimeInstructions` 里 `replace(/当主人想调整你的音色时/, …)` 的目标串任何一字差异都会让注入静默失效。新模块只 import `node:fs/promises` 与 `node:os`，零 src 依赖、零模块级可变态，`DEFAULT_TOOLS` **没有** `Object.freeze`（`realtimeDefaults()` 靠 `[...DEFAULT_TOOLS]` 浅拷贝语义）。
+- `src/realtime-service.js`（565 → 506 行）：删掉搬走的 62 行与只被 `readEnvKey` 用的 `readFile`/`homedir` import，改为一条具名 import（`realtimeDefaults`/`readEnvKey` 不进本地绑定），底部 `export { toolDefinitions, MODEL, DEFAULT_TOOLS, SYSTEM_VOICE }` 换成两行 `export … from './realtime-protocol.js'`。**没动** ws 兜底 `createRequire`（`WebSocketCtor = WebSocket` 是默认参数、调用时求值，挪错会让 `connect()` 静默 return 而全部测试都注入 `WebSocketCtor`、套件抓不到）；`readProviderKey` 仍在 `service.js`（与 `readEnvKey` 语义不同，不合并）。
+- `test/realtime-protocol.test.js`（新，72 行，7 条）：①**引用同一性**（`realtime.toolDefinitions === protocol.toolDefinitions` 等 7 个符号），杜绝两份各自演化；②`realtimeDefaults()` 键集与顺序 + 每次返回新 tools 数组（防默认值被就地污染）；③`DEFAULT_TOOLS` 8 项顺序；④`toolDefinitions([])` → `[]` 与 `toolDefinitions(undefined)` → 8 条的区别、原生工具重名被丢、`parameters` 深拷贝；⑤`realtimeInstructions` 仅在 `use_tts_voice` 时注入且只一次；⑥`readEnvKey` 缺文件/不可读返回 `''` 不抛；⑦`safeCode`/`redactText` 脱敏契约。
+
+**验证（实跑）**：后端 `npm test` 320 → **327**、前端 `npm run test:web` **101** 全绿；`npm run lint` 0 问题、`npm run format:check` 通过、`npm run build` 成功（`dist/` 已 `git checkout -- dist/` 还原、新 hash 产物 `index-CReRi_3c.js` 移到 `~/.hermes/cache/scratch/build-artifacts/`）；`npm run test:coverage` 通过（新文件 100/85.19/100，聚合 97.88/86.21/93.29，floor 96/83/92）；`npm pack --dry-run` 含 `realtime-protocol` 且 `prepack` 的 lint 通过。**变异验证**：把底部 re-export 里的 `toolDefinitions` 删掉 → 新测试恰好红 1 条（6 pass/1 fail），还原后 7/7 绿。
+
+**过程中被实测推翻的一处假设**：原打算断言「原生工具名为空串会被过滤」，实测 `toolDefinitions` 只校验 `typeof tool.name === 'string'`，空串**会**透传成一条无名函数声明。这是既有行为、不属本条目（改它就是改对外行为），故从测试里撤掉该 case，未动代码。
+
+**下次可做**：步骤 2「抽 `src/voice-tool-bridge.js`」仍是 BACKLOG 里的独立 `- [ ]`（`service.js` 现 624 行）；步骤 2 的两个硬约束已由规划子代理复核——`settings` 必须传 live getter（13 处读取，传快照会打挂 voice-presets-cache 与 voice-settings-persistence）、`mutate` 不可重入（`commitSettings` 三处调用，封装自带队列的 save 会死锁成挂起而非失败）。
