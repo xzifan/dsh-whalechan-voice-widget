@@ -898,3 +898,22 @@
 **并发**：开始时无 `.release.lock`，建了 `.work.lock`（2026-10-30T05:17:37+0800），收尾删除。未做任何发版动作（无 version 改动、无 pack/tag/push、未重装插件、未重启 dsh、未碰 `~/.dsh/AGENTS.md`）。
 
 **下次可做**：清单剩下的 `- [ ]` 又全是硬阻塞（第 34 条 `⛔ 阻塞待决策`、第 46 条「夜间冒烟接入调度」需人拍板、第 58 条 `[arch]` 要改时序语义、第 60 条「需先定口径归属」、第 61 条「单独立项」），所以下一班次走第 7 步（派只读子代理从证据提 3 个候选）。本轮规划子代理顺带挖到一条**有事实支撑的候选**，建议排在候选首位：`ws` **不在 `package.json` 的 `dependencies` 里**（只有 `@deepseek-ai/schemastery`），本机 `node_modules/ws` 不存在，`realtime-service.js:13` 的主解析路径在干净安装下必然失败，生产只能靠 `:14` 那条**硬编码 `/Applications/DSH Desktop.app` 的 macOS 路径**兜底；且 `src/index.js` 从未 wire `realtimeWebSocket`。也就是说「无 ctor」在 Linux / 非标准安装路径下是**默认命运**而不只是边缘情况（本轮修的是它的后果，不是成因）。另有旧候选 2（`error.safe.category` 被丢弃）、候选 3（`ENDPOINT_METHODS` 三方清单无守卫）仍未入清单。
+
+## 2026-10-30 · 无可做条目，从证据追加「`delete_voice` 恒报成功」到 BACKLOG
+
+**条目**：无。清单剩的 5 个 `- [ ]`（第 34 / 46 / 58 / 60 / 61 行）全是硬阻塞——`⛔ 阻塞待决策`、夜间冒烟调度「需人拍板」、「`[arch]` 要改时序语义」、「需先定口径归属」、「单独立项」——按 J1 规则一个都不碰，走第 7 步：派一个只读子代理从证据提 3 个候选，选 1 个入清单，**本轮不实现**。
+
+**候选来源（子代理只读盘点，我复核了入选那条）**：①`grep -rnE '\b(TODO|FIXME|HACK|XXX)\b' src web/src lib test scripts` **0 命中**，所以候选全部来自其余四类证据；②测试/CI 对账：CI 的 test/coverage/lint/format/pack 与 5 条 browser 都已有元测试守卫（覆盖率、e2e、Node 版本、lint 四处），这条线暂时无缺；③CHANGELOG `[Unreleased]` 三条均已落地，docs 未完成项只剩 `sdk-extraction.md` 的 `server.js`/`bin/whale.js`（属立项）与 cron 调度（需人拍板）；④审计日志 `~/.dsh/storages/voice-workbench-preview/voice-audit.jsonl` 535 条：`tool 168 / response 154 / synthesis 100 / transcription 81 / usage 22 / error 10`，`kind:error` 里 4 条是「180 s 无响应」上游关连接（已由前两轮修掉，**不再作为候选**）、3 条 `Voice design failed (HTTP 400)`、3 条 `Cannot create response…`。
+
+**三个候选与取舍**
+
+- **入选（已写入 BACKLOG）**：`delete_voice` 恒报成功。`src/core/voice-tool-bridge.js:123` 先 `forget` 再删、`:124` `const existed = true` 让 else 分支不可达、`:126` 两个删除各包空 `catch`，于是删除失败仍回 `{deleted:true}` +「已释放配额」；`test/voice-candidate.test.js:155` 锁的还是这个错误行为（其 fetcher 对所有非 `create_voice` 恒回 `ok:true`）。选它的理由：唯一一条「对用户撒谎 + 真实配额损失 + 连审计都不留痕迹」的缺陷（审计只留 `kind:'tool' outcome:'ok'`，而 `design_voice` 失败是留 `kind:'error'` 的），且正好补上 P1「工具失败不得宣称成功」缺失的最后一块写操作；3 文件 ≈75 行，无接口变化，不需决策。
+- **未入选 1**：`error.safe.category` 被整条丢掉（`src/core/voice-design.js` 已算出 model-unavailable / quota / authorization / upstream 四类，全仓唯一消费者是 `scripts/nightly-smoke.mjs`；主链路只剩恒定 HTTP 码），≈60 行——价值真实但属同一模块的相邻病灶，排在入选条之后连着做。
+- **未入选 2**：路由三方清单无集合级守卫且已漂移（服务端 23 / `lib/client.js` 22 / `web/src/lib/core.js` 21，`/api/models/check` 与 `/api/health` 缺登记；未登记时 `core.js` 在 iframe 内直接 reject、服务端零日志），≈90 行——今天没有用户可见后果（面板还没调用 `/api/models/check`），纯防回归，优先级最低。
+- **`ws` 不在 `dependencies` 这条被降级**：上一班次建议排首位，子代理实测 `~/.dsh/profiles/{desktop,web}/node_modules/ws` 与 `DSH Desktop.app/Contents/Resources/app/node_modules/ws` 都存在（上层提升），当前 DSH 宿主不受影响；它只在非 DSH 宿主致命，而那个宿主（`docs/sdk-extraction.md` 的 `server.js`/`bin/whale.js`）还没立项，应随立项一起做，不单独立票——这也是上一轮判断被实测修正的地方。
+
+**验收**：本轮**零源码改动**，只动 `BACKLOG.md`（+1 条 `- [ ]`）与 `WORKLOG.md`（本节），所以没跑 `npm test` / `test:web`（后端 384 / 前端 104 的基线未受影响）；改完仍跑 `npm run format:check` 确认 markdown 没被 Prettier 打红（教训来自「Prettier 门禁回红」那条：`WORKLOG.md` 正文里裸写的 glob 会被改写，本节的 `tts`/`voice` 类 glob 已全部包进反引号）。
+
+**并发**：开始时无 `.release.lock`，建了 `.work.lock`（2026-10-30T06:17:50+0800），收尾删除。未做任何发版动作（无 version 改动、无 pack/tag/push、未重装插件、未重启 dsh、未碰 `~/.dsh/AGENTS.md`）。
+
+**下次可做**：清单新入 1 条 `delete_voice` 恒报成功（可直接取，证据已精确到行）；`[ ]` 里剩下的仍是那 5 条硬阻塞。紧随其后可排「`error.safe.category` 被丢弃」、「路由三方清单守卫」两个候选——子代理本轮已把证据给全，下一轮可省掉一次盘点。
