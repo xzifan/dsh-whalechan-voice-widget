@@ -4,9 +4,9 @@ import { spokenText } from './voice-candidate.js'
 import { appendRequiredRules } from './persona.js'
 import { createRequire } from 'node:module'
 import { randomUUID } from 'node:crypto'
-import { numericUsage } from './audit-log.js'
 import { toolOutcome } from './tool-outcome.js'
 import { audioDurationSeconds } from './audio-duration.js'
+import { createResponseBookkeeping } from './realtime-response-bookkeeping.js'
 
 const require = createRequire(import.meta.url)
 let WebSocket
@@ -15,7 +15,7 @@ try { WebSocket = require('ws') } catch {
 }
 
 import {
-  MODEL, DEFAULT_HOST, SYSTEM_VOICE, DEFAULT_TOOLS, MAX_AUDIO_BYTES, safeCode, redactText,
+  MODEL, DEFAULT_HOST, SYSTEM_VOICE, DEFAULT_TOOLS, MAX_AUDIO_BYTES, safeCode,
   toolDefinitions, realtimeInstructions,
 } from './realtime-protocol.js'
 
@@ -37,13 +37,16 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
   const requestedOutputModes = []
   let turnStartedAt = 0, firstAudioAt = 0, audioBytes = 0
   let mainPlaying = false, userSpeaking = false
-  const history = []
-  function remember(role, text) {
-    if (!text?.trim()) return
-    if (history.at(-1)?.role === role && history.at(-1)?.text === text) return
-    history.push({ role, text: redactError(text).slice(0, 700) })
-    if (history.length > 12) history.shift()
-  }
+  const {
+    history, remember, context, transcriptContext, redactError, audit,
+    assistantContext, finalizeResponseAudit, captureResponseUsage, finalizeText, itemText,
+  } = createResponseBookkeeping({
+    emit, key,
+    isDisposed: () => disposed,
+    isLive: live,
+    currentTurn,
+    getSettings: () => settings,
+  })
   const fillers = createFillerCoordinator({
     ...fillerOptions, generate: generateFiller, synthesize: synthesizeFiller, emit,
     context: () => ({ history: [...history], persona: settings.instructions || realtimeInstructions(useTts), language: settings.language || 'zh' }),
@@ -58,14 +61,6 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
   function voiceId() { return (settings.voice || '').trim() || SYSTEM_VOICE }
   function modalities() { return ttsActive() ? ['text'] : ['text', 'audio'] }
   function currentTurn() { if (!turn) { turn = { id: `turn-${randomUUID()}`, generation }; fillers.newTurn(turn.id) }; return turn }
-  function context(owner = currentTurn(), role = 'assistant', responseId, itemId, callId) {
-    return { messageId: `${owner.id}:${role}`, turnId: owner.id, ...(responseId ? { responseId } : {}), ...(itemId ? { itemId } : {}), ...(callId ? { callId } : {}) }
-  }
-  function transcriptContext(ctx) { return { ...ctx, provider: 'bailian', model: settings.model || MODEL } }
-  function redactError(value) { return redactText(key ? String(value ?? '').split(key).join('[已隐藏]') : value) }
-  function audit(kind, ctx, status, extra = {}) {
-    if (!disposed) emit({ type: 'audit', record: { id: randomUUID(), kind, ...ctx, provider: 'bailian', model: settings.model || MODEL, status, ...extra } })
-  }
   function live(response) { return !disposed && !blocked && !response.cancelled && response.turn.generation === generation }
   function responseFor(event) {
     const id = event.response_id || event.response?.id
@@ -82,43 +77,6 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
       items.set(itemId, { turn: response.turn, response })
     }
     return response
-  }
-  function assistantContext(response, event = {}) { return context(response.turn, 'assistant', response.id, event.item_id || event.item?.id || response.itemId) }
-  function finalizeResponseAudit(response, status, text = response.speechText || response.text, ctx = response.speechContext || assistantContext(response)) {
-    if (response.auditFinalized) return
-    response.auditFinalized = true
-    const bytes = response.audioBytes || 0
-    response.auditRecord = { id: randomUUID(), at: Date.now(), kind: 'response', ...ctx, provider: 'bailian', model: settings.model || MODEL, status,
-      ...(text ? { text } : {}), audioOutput: bytes > 0, ...(bytes > 0 ? { audioDurationSeconds: bytes / (24000 * 2) } : {}),
-      ...(response.usage ? { usage: response.usage } : {}) }
-    if (!disposed) emit({ type: 'audit', record: response.auditRecord })
-  }
-  function captureResponseUsage(response, value) {
-    const usage = numericUsage(value)
-    if (!usage || JSON.stringify(usage) === JSON.stringify(response.usage)) return
-    response.usage = usage
-    if (!response.auditRecord) return
-    // Cancellation or fast TTS can finalize before provider usage arrives. The
-    // append-only log receives an immutable same-ID snapshot; its projection
-    // folds this into the original response without changing status or timing.
-    response.auditRecord = { ...response.auditRecord, usage }
-    if (!disposed) emit({ type: 'audit', record: response.auditRecord })
-  }
-  function finalizeText(response, text, event = {}) {
-    if (!live(response) || response.finalized || !text) return
-    response.finalized = true
-    text = spokenText(text)
-    response.text = text
-    remember('assistant', text)
-    const ctx = assistantContext(response, event)
-    if (!response.tts) emit({ type: 'transcript-done', ...transcriptContext(ctx), text })
-    // Text may finish before audio. Audit only at response.done/cancellation.
-    response.speechContext = ctx
-  }
-  function itemText(item) {
-    const content = item?.content || []
-    const text = content.map(part => part.text || '').join('')
-    return text || content.map(part => part.transcript || '').join('')
   }
   function finishTool(call, status, detail, outcome = status === 'completed' ? 'ok' : status === 'failed' ? 'error' : 'cancelled', exitCode) {
     if (call.finished) return

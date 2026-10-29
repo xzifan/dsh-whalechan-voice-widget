@@ -600,3 +600,28 @@
 **变异验证（5 条）**：入口快照 `s` 冻结 `getSettings()` → 红 6；注入表混入 `persistSettings` → 红 1（静态守卫）；`isDisposed` 恒真 → 红 1（新增那条）；`sameScope` 只比 input → 红 2；`commitSettings` 换成 `persistSettings` → **TIMEOUT**。全部用 `cp` 备份还原，还原后 18/18。
 
 **下次可做**：步骤 4b（`src/realtime-response-bookkeeping.js`，51 行响应簿记层，rt 506 → ≈460）已作为普通条目进 BACKLOG；`runTool` + `onMessage` 剩下的 228 行**不该**继续机械抽取，已单列为 `[arch]`（要变小只能改事件状态机，会动打断 / TTS 投递 / 审计去重的时序语义）。
+
+## 2026-10-29 · 拆分步骤 4b：抽出 `src/realtime-response-bookkeeping.js`（响应簿记层）
+
+**为什么是它**：`createRealtimeSession` 里散着 11 个纯记账函数（`remember`/`context`/`transcriptContext`/`redactError`/`audit`/`assistantContext`/`finalizeResponseAudit`/`captureResponseUsage`/`finalizeText`/`itemText`）和它们共享的 `history` 数组——它们不碰 socket、不发请求，却夹在 `runTool` / `onMessage` 之间，读时序代码时要跨过 51 行无关逻辑。抽走后 `realtime-service.js` **506 → 464 行**，新增模块 **67 行**。
+
+**实现**
+
+- `createResponseBookkeeping({emit, isDisposed, isLive, currentTurn, getSettings, key})` 返回同名函数 + `history`，因此 **28 处调用点零改动**。
+- 搬移只改了三处形态：`settings.model || MODEL` → 模块内 `const model = () => getSettings().model || MODEL`；`!disposed` → `!isDisposed()`；`!live(response)` → `!isLive(response)`。
+- 注入侧：`isDisposed: () => disposed`（getter，不是布尔快照）、`isLive: live`（`live` 本体留在会话里，另有 12 处调用）、`currentTurn` **直接传函数引用**、`getSettings: () => settings`。
+- `realtime-service.js` 删掉搬走后无人用的 `numericUsage` import 与 `redactText` 具名导入；`randomUUID`、`spokenText`、`MODEL` 仍被会话本体使用，保留。
+
+**三条不可替换的契约**（换成「更干净」的写法会静默改行为）
+
+1. `history` 必须是**同一个数组实例**：fillers 的 `context()` 每次 spread 它，拿到副本就永远读到空历史（变异实测红 2 条）。
+2. `currentTurn` 必须**传函数引用**：`context()` 的默认参数在调用时求值。**复核时把规划的说法改准了**——本文件里绝大多数 `context(...)` 调用都显式传 owner，真正走默认值的只有 `type === 'error'` 那一条，所以风险不是「现在会塌」，而是「以后新增无参调用会静默塌」；测试用 `setTurn` 连换两次 turn 把这条锁死。
+3. `isDisposed` / `getSettings` 都必须是 getter：`dispose()` 之后审计必须静默，`settings` 会被原地改（`tts_provider`）也会被整体重赋值。
+
+**验证（实跑）**：后端 **345 → 356**、前端 **101** 全绿；`lint` 0 问题、`format:check` 通过、`build` 成功（`dist/` 零改动）；`test:coverage` 聚合 98.57/86.83/93.99（新文件 100/95.59/100、`realtime-service.js` 98.92/90.13/90.00），仍高于 96/83/92。原有 `test/realtime-tts.test.js` 的 24 条字段断言**一行未改**就通过，是「对外行为零变化」的直接证据；新文件 11 条覆盖工厂直连路径：`context` 形状与缺省 owner、`audit` 的 live model + dispose 静默、response 审计**冻结 12 键** + `bytes/48000` + 幂等、迟到 usage 同 id 快照（不改 status/at）、usage 早于审计、`remember` 去重/700 截断/上限 12/脱敏 + 同一实例、`finalizeText` 走 `spokenText` 且非 TTS 才发 `transcript-done`、非 live 不落痕迹、`itemText` 回落、`redactError`、源码守卫。
+
+**变异验证（2 条，各恰好红）**：`history` 返回 `[...history]` → 红 2；`audit` 去掉 `isDisposed()` 守卫 → 红 1。还原后 11/11。
+
+**churn 297 行**（rt +12/−52、新模块 67、新测试 164），超 200 上限：整块搬迁 + 回归网就是条目本身，与步骤 2（384 行）/ 步骤 3（300 行）同类处置。未用规划子代理——拆解上一轮已由只读规划子代理写进 BACKLOG 条目本身，本轮只按实际代码复核后执行。
+
+**下次可做**：`[arch]` 条目（`runTool` + `onMessage` 的 228 行）与 `[plan]` 延迟指标条目都还在队列里；前者要改事件状态机、会动时序语义，得先立更严的时序断言。
