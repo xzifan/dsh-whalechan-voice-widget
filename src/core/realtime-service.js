@@ -430,11 +430,18 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
     }
   }
 
+  // 连不上也必须结束会话：error 只给用户看原因，closed 才是「dispose + 释放并发额度 + 前端停麦」的信号。
+  // 走到这里的两条失败路径（没有 WebSocketCtor、构造抛错）都不可能有 socket，所以都走同一个出口。
+  function connectionFailed(message) {
+    emit({ type: 'error', code: 'connection', message })
+    emit({ type: 'closed' })
+  }
   function connect() {
-    if (disposed || !WebSocketCtor) return
+    if (disposed) return
+    if (!WebSocketCtor) return connectionFailed('实时语音组件未加载，无法连接')
     try {
       socket = new WebSocketCtor(url, { headers: { Authorization: `Bearer ${key}` }, handshakeTimeout: 20000 })
-    } catch { emit({ type: 'error', code: 'connection', message: '实时语音连接失败' }); return }
+    } catch { return connectionFailed('实时语音连接失败') }
     socket.on('message', onMessage)
     socket.on('error', () => { if (!disposed) emit({ type: 'error', code: 'connection', message: '实时语音连接失败' }) })
     socket.on('unexpected-response', (_req, res) => { res?.resume?.(); if (!disposed) emit({ type: 'error', code: 'handshake_' + (res?.statusCode || 'error'), message: '实时语音鉴权或握手失败' }) })

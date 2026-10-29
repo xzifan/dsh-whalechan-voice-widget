@@ -873,3 +873,28 @@
 **并发**：开始时无 `.release.lock`，建了 `.work.lock`（2026-10-30T04:17:37+0800）并在收尾删除。
 
 **下次可做**：清单新入第 1 条「`connect()` 的 `!WebSocketCtor` 与构造抛错两条路径同样不收尾」（`ws` 缺失时连 error 都不发，仍会永久卡「我在听」+ 占额度）——同一病根的另一半，可直接取。再往后仍全是硬阻塞（产品决策 / 口径归属 / 单独立项 / 夜间冒烟调度需人拍板），届时按第 7 步从证据提候选即可；上一班次留的候选 2（`error.safe.category` 被丢弃）与候选 3（`ENDPOINT_METHODS` 三方清单无守卫、`/api/models/check` 已漂移）仍未入清单。
+
+## 2026-10-30 · 连不上实时语音时也收尾（`!WebSocketCtor` / 构造抛错）
+
+**条目**：BACKLOG 第 72 行「上游 / 本地无 socket 时同样卡死」。上一轮修的是「socket 建立后断开」；这一轮补同一病根的另一半——`ws` 解析失败时 `connect()` 直接 `return`（连 error 都不发），构造函数抛错只发 error 不发 closed，两条都让 record 永久留在 `realtimeSessions` 里、占着 `< 4` 的并发额度，UI 停在「我在听，主人」。
+
+**规划子代理（只读，2 个）纠正了两处前提，省掉了一处不必要的产品改动**
+
+- **不用给 `createRealtimeSession` 加 deps 参数**：`service.js:391` 已经原样透传 `dependencies.realtimeWebSocket`，`realtime-service.js:27` 的默认参数就是注入点。但默认参数只在实参为 `undefined` 时生效，而本机 Desktop bundle 里有 `ws`，所以测试里传 `undefined` 等于「能连上」，**必须传 `null`**（`!WebSocketCtor` 对 `null` 成立）。这一点不查清就会写出「假绿」的用例。
+- **`service.js` 与 `web/` 都是 0 行改动**：`service.js:392` 先入 Map、`:393` 才 `connect()`，所以 `emit closed` 时收尾钩子一定找得到 record；前端 `main.jsx:149` 的 `shouldSettleRealtime` 只看 `done === true` 或任意 `closed`，不依赖 `session.created`。上一轮的收尾钩子把这一轮变成了纯「补一个事件」。
+
+**改动（源码 11 行 / 测试 83 行，churn 92 行 + CHANGELOG 1 行）**
+
+- `src/core/realtime-service.js`：抽出 `connectionFailed(message)` → `emit({type:'error',code:'connection',message})` + `emit({type:'closed'})`（顺序固定，closed 会同步触发 settle/dispose），两条失败路径都走它：`if (!WebSocketCtor) return connectionFailed('实时语音组件未加载，无法连接')`、`catch { return connectionFailed('实时语音连接失败') }`。原 `if (disposed || !WebSocketCtor) return` 拆成 `if (disposed) return` + 上面那条——拆开是为了让「已结束不再发事件」有独立的分支可断言（不拆的话覆盖率会掉在一条没人测的复合条件上）。
+- `test/test-realtime.test.js` +4 条：`unconnectable()` 脚手架（`realtimeWebSocket: null` / 抛错类）+ `assertSettles()` 公共验收（`activeSessions === 0`、`done === true`、信号序列严格 `['error:connection','closed']`、`released` 深等于 `[sessionId]`、`/audio` 404、`/end` 仍 `{ok:true}`、连试 5 次后额度仍 0）、会话级「dispose 后再 connect 不许再发事件」、源码守卫（`connect()` 恰好三条 return、失败路径必须 `connectionFailed`、`error` 早于 `closed`）。
+- `socket.on('error')` / `unexpected-response` / `close` 三行**刻意不动**：ws 在 error 之后必发 close（`:441` 已接管整条「建连后断开」路径），改它会在会话中途制造双 closed 与双收尾。条目只点名这两条早退。
+
+**变异验证（2 条各红 4 条，都真跑）**：①`git checkout -- src/core/realtime-service.js` 恢复到旧行为 → 4 条新用例全红（`git apply` 还原后 19/19）；②只把 `connectionFailed` 的 `emit closed` 换成 `return` → 同样 4 条全红——证明断言认的是 closed 本身，不是「有没有走到 connectionFailed」。
+
+**验收（真跑）**：后端 380 → **384** / 前端 **104**（不变）全绿，`npm run lint` 0 问题、`npm run format:check` 通过、`npm run build` 成功（`dist/` 已 `git checkout`、新 hash 产物移到 `~/.hermes/cache/scratch/dist-orphans/`）、`npm run test:coverage` 98.63/87.50/93.76（分支 86.94 → 87.50，都在 96/83/92 之上）。CHANGELOG 写成 `[Unreleased] · 修复` 第 3 条。
+
+**没做的两件事**：①`/api/realtime/start` 仍返回 200 + sessionId，不改成 503 快速失败——那要在 `service.js:342` 复制一份 `!WebSocketCtor` 判断，两处真相必然漂移；②`MAX_CLOSED_REALTIME_SESSIONS = 8` 的淘汰顺序、`unexpected-response` 单独到达（无后续 close）时的收尾都还没有断言，属既有缺口，不在本条范围。
+
+**并发**：开始时无 `.release.lock`，建了 `.work.lock`（2026-10-30T05:17:37+0800），收尾删除。未做任何发版动作（无 version 改动、无 pack/tag/push、未重装插件、未重启 dsh、未碰 `~/.dsh/AGENTS.md`）。
+
+**下次可做**：清单剩下的 `- [ ]` 又全是硬阻塞（第 34 条 `⛔ 阻塞待决策`、第 46 条「夜间冒烟接入调度」需人拍板、第 58 条 `[arch]` 要改时序语义、第 60 条「需先定口径归属」、第 61 条「单独立项」），所以下一班次走第 7 步（派只读子代理从证据提 3 个候选）。本轮规划子代理顺带挖到一条**有事实支撑的候选**，建议排在候选首位：`ws` **不在 `package.json` 的 `dependencies` 里**（只有 `@deepseek-ai/schemastery`），本机 `node_modules/ws` 不存在，`realtime-service.js:13` 的主解析路径在干净安装下必然失败，生产只能靠 `:14` 那条**硬编码 `/Applications/DSH Desktop.app` 的 macOS 路径**兜底；且 `src/index.js` 从未 wire `realtimeWebSocket`。也就是说「无 ctor」在 Linux / 非标准安装路径下是**默认命运**而不只是边缘情况（本轮修的是它的后果，不是成因）。另有旧候选 2（`error.safe.category` 被丢弃）、候选 3（`ENDPOINT_METHODS` 三方清单无守卫）仍未入清单。

@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -367,4 +368,86 @@ test('上游断开 socket 后服务端自行收尾：事件仍可取、额度释
   // 额度必须随断连释放：1 个死会话 + 3 个活会话若仍算 4，第 4 次 start 会 429
   for (let i = 0; i < 4; i++) await service.handle('POST', '/api/realtime/start', { settings })
   assert.equal((await service.handle('GET', '/api/health')).body.realtime.activeSessions, 4)
+})
+
+// 「连不上」的三条路径共用一个脚手架：stateDir + key_file + enabled_tools: [] 就够，不需要 catalog。
+// 注意 dependencies.realtimeWebSocket 必须显式给值——默认参数只在 undefined 时回退到模块级 ws，
+// 本机 Desktop bundle 里有 ws，所以传 undefined 等于「能连上」，测不到失败路径。
+async function unconnectable(t, dependencies) {
+  const dir = await mkdtemp(join(tmpdir(), 'whale-rt-nosocket-'))
+  const keyFile = join(dir, 'test.env')
+  await writeFile(keyFile, 'DASHSCOPE_API_KEY=test-key')
+  const released = []
+  const service = createService({ stateDir: dir }, {
+    resolveModelCredential: async provider => ({ key: 'test-key', source: 'provider', provider }),
+    runTool: async () => ({ ok: true }),
+    releaseToolSession: async sid => released.push(sid),
+    ...dependencies,
+  })
+  t.after(async () => {
+    await service.dispose()
+    await rm(dir, { recursive: true, force: true })
+  })
+  const initial = (await service.handle('GET', '/api/config')).body.settings
+  const settings = { ...initial, tts_voice_provider: 'qwen', tts_profiles: { ...initial.tts_profiles, qwen: { ...initial.tts_profiles?.qwen, voice: 'longanhuan_v3.1' } }, enabled_tools: [], tools_configured: true, workspace: dir, realtime: { ...initial.realtime, key_file: keyFile, instructions: 'Test' } }
+  await service.handle('PUT', '/api/config', { settings })
+  return { service, settings, released }
+}
+
+// 三条路径的公共验收：立刻 done、不占额度、工具 agent 释放、写接口 404、/end 仍幂等
+async function assertSettles(t, service, settings, released) {
+  const sessionId = (await service.handle('POST', '/api/realtime/start', { settings })).body.sessionId
+  assert.equal((await service.handle('GET', '/api/health')).body.realtime.activeSessions, 0, '连不上的会话不得占并发额度（否则连续试 4 次后新会话一律 429）')
+  const polled = (await service.handle('POST', '/api/realtime/events', { sessionId })).body
+  assert.equal(polled.done, true, 'connect 从未建立也必须标记结束，否则前端轮询永远空转、UI 停在「我在听，主人」')
+  const signals = polled.events.filter(event => event.type === 'error' || event.type === 'closed').map(event => (event.type === 'error' ? `error:${event.code}` : 'closed'))
+  assert.deepEqual(signals, ['error:connection', 'closed'], 'error 只是提示，closed 必须紧随其后——服务端收尾与前端停麦都只认 closed')
+  assert.deepEqual(released, [sessionId], '工具 agent 必须释放，且只释放一次')
+  await assert.rejects(service.handle('POST', '/api/realtime/audio', { sessionId, audio: 'AAAA' }), error => error.status === 404)
+  assert.equal((await service.handle('POST', '/api/realtime/end', { sessionId })).body.ok, true, '客户端收尾时的 /end 仍须幂等成功（墓碑上也不例外）')
+  // 额度不得被连续失败吃满
+  for (let i = 0; i < 5; i++) await service.handle('POST', '/api/realtime/start', { settings })
+  assert.equal((await service.handle('GET', '/api/health')).body.realtime.activeSessions, 0)
+}
+
+test('没有 WebSocketCtor（ws 解析失败）时 /start 立刻收尾，不再静默占额度', async t => {
+  const { service, settings, released } = await unconnectable(t, { realtimeWebSocket: null })
+  await assertSettles(t, service, settings, released)
+})
+
+test('WebSocket 构造抛错时同样发 closed，不只是 error', async t => {
+  class BoomSocket { constructor() { throw new Error('boom') } }
+  const { service, settings, released } = await unconnectable(t, { realtimeWebSocket: BoomSocket })
+  await assertSettles(t, service, settings, released)
+})
+
+test('会话级：缺组件时自行发 error→closed，dispose 之后 connect 不再发事件', () => {
+  const emitted = []
+  const session = createRealtimeSession({ settings: realtimeDefaults(), key: 'k', executeTool: async () => ({}), emit: event => emitted.push(event), WebSocketCtor: null })
+  session.connect()
+  assert.deepEqual(emitted.map(event => (event.type === 'error' ? `error:${event.code}` : event.type)), ['error:connection', 'closed'])
+  assert.ok(emitted[0].message, '缺组件要有可读文案，不能只给 code')
+  session.dispose()
+  const settled = emitted.length
+  session.connect()
+  assert.equal(emitted.length, settled, 'dispose 之后 connect() 不许再发 closed（会话已收尾，重复 closed 会重复收尾）')
+})
+
+test('源码守卫：connect() 的两条失败路径都必须经 connectionFailed 同时发 error 与 closed', () => {
+  const source = readFileSync(new URL('../src/core/realtime-service.js', import.meta.url), 'utf8')
+  const bodyOf = name => {
+    const at = source.indexOf(`function ${name}(`)
+    assert.ok(at > 0, `找不到 ${name}()`)
+    // 函数体内嵌套块缩进 4 空格，首个 "\n  }" 即函数收尾
+    return source.slice(at, source.indexOf('\n  }', at + 1))
+  }
+  const connect = bodyOf('connect')
+  const returns = (connect.match(/return\b[^\n]*/g) || []).map(line => line.trim())
+  assert.equal(returns.length, 3, 'connect() 只允许三条 return：已 dispose、缺 ctor、构造抛错')
+  assert.ok(returns.includes('return'), '「已 dispose」是唯一允许的裸早退')
+  for (const line of returns.filter(line => line !== 'return')) assert.match(line, /connectionFailed\('/, '失败路径必须走 connectionFailed——只发 error 不发 closed 正是本 bug 的形态')
+  const failed = bodyOf('connectionFailed')
+  assert.match(failed, /emit\(\{ type: 'error', code: 'connection', message \}\)/, 'error 事件不能丢：前端要显示原因')
+  assert.match(failed, /emit\(\{ type: 'closed' \}\)/, 'closed 事件不能丢：服务端收尾与前端停麦都只认它')
+  assert.ok(failed.indexOf("type: 'error'") < failed.indexOf("type: 'closed'"), 'error 必须先于 closed（closed 会同步触发 settle/dispose）')
 })
