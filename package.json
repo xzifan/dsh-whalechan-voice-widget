@@ -40,6 +40,7 @@
     "test:coverage:web": "node --test --experimental-test-coverage --test-coverage-include=\"web/src/**/*.js\" --test-coverage-lines=90 --test-coverage-branches=86 --test-coverage-functions=89 web/src/lib/*.test.js",
     "test:browser": "python3 test/browser-smoke.py",
     "test:browser:pages": "python3 test/browser-pages.py",
+    "test:browser:breeze": "python3 test/browser-breeze-voice.py",
     "smoke:nightly": "node scripts/nightly-smoke.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",

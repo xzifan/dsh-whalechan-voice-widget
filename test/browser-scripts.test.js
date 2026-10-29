@@ -49,6 +49,35 @@ test('会话记录断言已并入 browser-pages.py，没有独立的 browser-his
   )
 })
 
+// Breeze 语音脚本（BACKLOG「浏览器脚本 S5」）里那个 `voc_47j4uzfyuxqc` 是硬编码的旧中文预设，
+// 产品换成 `voc_u3nxkd5578wc` 后脚本照样"绿"。这里锁住两条：ID 只能从 `src/breeze-voices.js`
+// 读回来，脚本必须走 `Harness`（直连 dist/web 就绕过了宿主页 -> client.js 的生产路径）。
+test('Breeze 脚本从源码读固定音色 ID，且走 browser_harness.Harness', () => {
+  const breeze = readFileSync(join(TEST_DIR, 'browser-breeze-voice.py'), 'utf8')
+  const hardcoded = breeze.match(/voc_[0-9a-zA-Z]+/g)
+  assert.equal(
+    hardcoded,
+    null,
+    `browser-breeze-voice.py 硬编码了固定音色 ID ${hardcoded}；请从 src/breeze-voices.js 读，否则换音色后断言仍是旧的`,
+  )
+  assert.ok(
+    breeze.includes('from browser_harness import'),
+    'browser-breeze-voice.py 必须走 browser_harness.Harness，不能直连 dist/web',
+  )
+  for (const signal of ['Breeze 预设音色', '中文音色', '合成接口']) {
+    assert.ok(breeze.includes(signal), `browser-breeze-voice.py 缺少「${signal}」断言，Breeze 设置的回归就没人看了`)
+  }
+
+  const pkg = JSON.parse(readFileSync(join(TEST_DIR, '..', 'package.json'), 'utf8'))
+  assert.equal(
+    pkg.scripts['test:browser:breeze'],
+    'python3 test/browser-breeze-voice.py',
+    'Breeze 脚本要能被 npm 驱动，否则重写完还是没人跑',
+  )
+  const ci = readFileSync(join(TEST_DIR, '..', '.github', 'workflows', 'ci.yml'), 'utf8')
+  assert.ok(ci.includes('npm run test:browser:breeze'), 'CI 必须真的跑 Breeze 脚本，否则等于没有这条断言')
+})
+
 // 日志审计页（BACKLOG「浏览器页断言 S4」）同样并入 browser-pages.py；旧脚本里的列标题点击循环
 // 恒真、3080 探活只是读线上状态，都随文件一起删掉。
 test('日志审计断言已并入 browser-pages.py，没有独立的 browser-audit-table.py', () => {

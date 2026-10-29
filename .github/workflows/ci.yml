@@ -117,3 +117,6 @@ jobs:
 
       - name: Page assertions (statistics, mock APIs)
         run: npm run test:browser:pages
+
+      - name: Breeze voice settings (fixed voices, mock APIs)
+        run: npm run test:browser:breeze
