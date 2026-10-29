@@ -917,3 +917,26 @@
 **并发**：开始时无 `.release.lock`，建了 `.work.lock`（2026-10-30T06:17:50+0800），收尾删除。未做任何发版动作（无 version 改动、无 pack/tag/push、未重装插件、未重启 dsh、未碰 `~/.dsh/AGENTS.md`）。
 
 **下次可做**：清单新入 1 条 `delete_voice` 恒报成功（可直接取，证据已精确到行）；`[ ]` 里剩下的仍是那 5 条硬阻塞。紧随其后可排「`error.safe.category` 被丢弃」、「路由三方清单守卫」两个候选——子代理本轮已把证据给全，下一轮可省掉一次盘点。
+
+## 2026-10-30 · `delete_voice` 不再谎报成功（删除失败如实返回、候选可重试、已不存在按幂等）
+
+**条目**：BACKLOG「`delete_voice` 恒报成功」。旧实现 `voiceState.forget(candidate)` 在删除之前执行、`const existed = true` 让 else 分支不可达、两个 `deleteBailianVoice` 各包空 `catch`——删除失败仍然回 `{deleted:true}` +「候选音色已删除并释放配额」，而百炼音色配额是账号级真资源，且候选已从会话里消失（`list_voice_presets` 再也列不出来，用户无从重试）。未用规划子代理：条目已精确到行，改动集中在两个模块，没有跨模块不确定性。
+
+**先实测上游，再定幂等口径（条目要点④）**：本机拿 `~/.dsh/secrets/bailian.env` 的凭据删一个不存在的 id（`voc_probe-not-exist-000000`），百炼回 **HTTP 400 + `BadRequest.ResourceNotExist`**（`"The Required resource not exist"`），**不是 404**。所以「已删除」的判定不能只认状态码——只认 404 的话重试会永远失败，配额永远卡着。探针是一次性真实调用，脚本放在 `~/.hermes/cache/scratch/probe-delete.mjs`，没有进仓库。
+
+**改动（源码 53 行 / 测试 92 行，churn 145 行 + CHANGELOG 1 行）**
+
+- `src/core/voice-design.js`：新增 `voiceAlreadyGone(error)`——`404`/`410`，或 `error.safe.code` 命中 `not.?exist|not.?found|gone|already.?delet`。只读 `problem()` 已归一化的 `safe.code`，不去解析上游中文/英文 message。
+- `src/core/voice-tool-bridge.js` 的 `delete_voice`：逐个 id `await` 删除并按 `deleted` / `alreadyGone` / `failed` 三组收集结果；**任一失败就抛**（message 点名失败的 id + `safe.code` + HTTP 码，加一句「配额尚未释放，候选已保留，可以重试删除」，错误上带 `upstream:true` 与 `failed:[ids]`）；**两个 id 都删干净（含「已不存在」）才 `voiceState.forget`**；成功返回 `{deleted, voiceId, deletedIds, alreadyGone, note}`。取消（`signal.aborted` / 499）原样抛出，不算失败。
+- 审计：`dispatchRealtimeTool` 的 catch 新增 `delete_voice && error.upstream` → `kind:'error'` + `Voice delete failed (HTTP n)`（照 `design_voice` 的写法）。**本地 400 刻意不记**（「没找到候选」不是配额问题，工具调用本身已经落了 `kind:'tool' outcome:'error'`）。
+- `test/voice-tool-bridge.test.js` 5 → **10** 条：新增 `voiceStateWith()`（真能 forget 的有状态候选）与 `deleteFetch(behavior)`（按 id 回 ok / `gone`=400 ResourceNotExist / `gone404` / `boom500`）两个桩——原来的 `emptyVoiceState()` 恒回 `null`，根本删不了东西。
+
+**变异验证（3 条，都真跑，每次 `cp` 备份还原后 `cmp` 确认字节一致）**：①把 `forget` 挪回循环之前 + 空 `catch`（复原旧行为）→ 红 **3** 条；②`if (voiceAlreadyGone(error))` 改 `if (false)` → 恰好红「幂等」1 条；③审计条件改 `if (false)` → 恰好红「失败审计」1 条。
+
+**验收（真跑）**：后端 384 → **389** / 前端 **104** 全绿；`npm run lint` 0 问题、`npm run format:check` 通过、`npm run build` 成功（`dist/` 已 `git checkout`，新 hash 产物 `index-zPG9pceI.js` 移到 `~/.hermes/cache/scratch/`）；`npm run test:coverage` 98.65/87.73/93.80（下限 96/83/92）。`test/voice-candidate.test.js:155` 那条不用改：成功路径仍回 `deleted:true`，它的 fetcher 对删除请求恒回 `ok:true`，全量跑仍绿。CHANGELOG 写成 `[Unreleased] · 修复` 第 4 条。
+
+**没做的两件事**：①`alreadyGone` 只做了「成功记账」，没有把已消失的 id 从上游配额统计里对账——上游没有查询「我删掉了什么」的接口，真做要么建本地台账要么定期 scan，属新能力；②`apply_voice` 有同一个模式的相邻风险（它 `persistSettings` 之后直接 `forget`，若落盘成功而推送前端失败，候选仍会消失），但这属既有行为、不影响真资源，未在本次一并改（一次只做一条）。
+
+**并发**：开始时无 `.release.lock`，建了 `.work.lock`（2026-10-30T07:17:36+0800），收尾删除。未做任何发版动作（无 version 改动、无 pack/tag/push、未重装插件、未重启 dsh、未碰 `~/.dsh/AGENTS.md`）。
+
+**下次可做**：清单剩下的 `- [ ]` 又是那 5 条硬阻塞（第 34 条 `⛔ 阻塞待决策`、第 46 条夜间冒烟调度需人拍板、第 58 条 `[arch]` 要改时序语义、第 60 条「需先定口径归属」、第 61 条「单独立项」），所以下一班次走第 7 步（只读子代理从证据提 3 个候选）。可优先复用的现成候选 2 个：`error.safe.category` 被整条丢弃（`voice-design.js` 算了四类，主链路只剩 HTTP 码）、路由三方清单无集合级守卫（服务端 23 / `lib/client.js` 22 / `web/src/lib/core.js` 21，`/api/models/check` 与 `/api/health` 缺登记）。

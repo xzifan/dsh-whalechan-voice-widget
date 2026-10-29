@@ -92,6 +92,20 @@ export async function queryVoice(key, voiceId, host = DEFAULT_HOST, fetcher = gl
   return { status: out.status, voiceId, targetModel: out.target_model || out.targetModel || '' }
 }
 
+/**
+ * Is this delete failure just "that voice is already gone"?
+ * Measured against DashScope: deleting an unknown voice id answers HTTP 400 with
+ * code `BadRequest.ResourceNotExist` (not 404), so the status alone is not enough.
+ * Deleting an already-deleted id must count as success, otherwise a retry can
+ * never succeed and the (real, account-level) quota stays silently unreleased.
+ */
+const GONE_CODE = /not.?exist|not.?found|gone|already.?delet/i
+export function voiceAlreadyGone(error) {
+  const status = Number(error?.status)
+  if (status === 404 || status === 410) return true
+  return GONE_CODE.test(String(error?.safe?.code || ''))
+}
+
 /** Delete a custom voice to free the shared 1000-voice quota. */
 export async function deleteBailianVoice(key, voiceId, host = DEFAULT_HOST, fetcher = globalThis.fetch, signal) {
   await customization(key, host, { model: 'voice-enrollment', input: { action: 'delete_voice', voice_id: voiceId } }, fetcher, signal)

@@ -3,7 +3,7 @@
 // 闭包变量，传值快照会打挂 voice-presets-cache 与 voice-settings-persistence；
 // 本模块自身零可变态、不缓存任何 settings 读取。
 import { BREEZE_PRESET_VOICES, BREEZE_ZH_VOICES, normalizeBreezeProfile } from './breeze-voices.js'
-import { designVoice, deleteBailianVoice, VOICE_PRESETS, DEFAULT_VOICE_ID, MODEL_TTS } from './voice-design.js'
+import { designVoice, deleteBailianVoice, voiceAlreadyGone, VOICE_PRESETS, DEFAULT_VOICE_ID, MODEL_TTS } from './voice-design.js'
 import { spokenText } from './voice-candidate.js'
 import { DEFAULT_TOOLS } from './realtime-protocol.js'
 
@@ -120,21 +120,44 @@ export function createVoiceToolBridge({ getSettings, persistSettings, credential
       requireValue(voiceId.length > 0, '请提供要删除的音色 ID', 400)
       const candidate = voiceState.find(voiceId)
       requireValue(candidate, '未找到当前会话的候选音色。', 400)
-      voiceState.forget(candidate)
-      const existed = true
+      // A candidate owns up to two upstream voices (design + realtime clone). Both
+      // must be gone before we drop the candidate: a swallowed failure used to
+      // forget the candidate first, so the quota stayed taken and a retry was
+      // impossible. Collect per-id outcomes instead of one blanket try/catch.
+      const deleted = [], alreadyGone = [], failed = []
       for (const candidateId of [candidate.designVoiceId, candidate.realtimeVoiceId].filter(Boolean)) {
-        try { await deleteBailianVoice(key, candidateId, undefined, fetcher, context.signal) } catch {}
+        try {
+          await deleteBailianVoice(key, candidateId, undefined, fetcher, context.signal); deleted.push(candidateId)
+        } catch (error) {
+          if (context.signal?.aborted || Number(error?.status) === 499) throw error
+          if (voiceAlreadyGone(error)) alreadyGone.push(candidateId)
+          else failed.push({ voiceId: candidateId, status: Number.isInteger(error?.status) ? error.status : 502, code: String(error?.safe?.code || '') })
+        }
       }
-      return { deleted: existed, voiceId, note: existed ? '候选音色已删除并释放配额。' : '未找到该候选音色。' }
+      if (failed.length) {
+        const detail = failed.map(f => `${f.voiceId || '(空 id)'}${f.code ? ` ${f.code}` : ''}（HTTP ${f.status}）`).join('、')
+        throw Object.assign(new Error(`候选音色删除失败：${detail}。配额尚未释放，候选已保留，可以重试删除。`), {
+          name: 'VoiceNativeError', status: failed[0].status, upstream: true, failed: failed.map(f => f.voiceId),
+        })
+      }
+      voiceState.forget(candidate)
+      const ids = [...deleted, ...alreadyGone]
+      return {
+        deleted: true, voiceId, deletedIds: ids, alreadyGone,
+        note: `候选音色已删除并释放配额${alreadyGone.length ? '（其中 ' + alreadyGone.join('、') + ' 此前已不存在）' : ''}。`,
+      }
     }
     throw Object.assign(new Error('未知的音色工具'), { name: 'VoiceNativeError', status: 400 })
   }
 
   async function dispatchRealtimeTool(name, args, rt, allowedTools, workspace, context, voiceState) {
     if (voiceToolNames.has(name)) {
-      try { return await runVoiceTool(name, args, rt, context, voiceState) }
-      catch (error) {
-        if (name === 'design_voice' && s().tts_voice_provider !== 'breeze') await audit.append({ ...context, kind: 'error', provider: 'bailian', model: 'voice-enrollment', status: 'failed', text: `Voice design failed (HTTP ${Number.isInteger(error.status) ? error.status : 502})`, usage: null })
+      try { return await runVoiceTool(name, args, rt, context, voiceState) } catch (error) {
+        const status = Number.isInteger(error.status) ? error.status : 502
+        if (name === 'design_voice' && s().tts_voice_provider !== 'breeze') await audit.append({ ...context, kind: 'error', provider: 'bailian', model: 'voice-enrollment', status: 'failed', text: `Voice design failed (HTTP ${status})`, usage: null })
+        // Only upstream delete failures are audited: a local 400 (no such candidate)
+        // is already visible as a failed tool call and is not a quota problem.
+        if (name === 'delete_voice' && error.upstream) await audit.append({ ...context, kind: 'error', provider: 'bailian', model: 'voice-enrollment', status: 'failed', text: `Voice delete failed (HTTP ${status})`, usage: null })
         throw error
       }
     }

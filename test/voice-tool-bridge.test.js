@@ -96,3 +96,95 @@ test('dispatchRealtimeTool：语音工具直通，未启用的原生工具 400�
   assert.deepEqual(await h.bridge.dispatchRealtimeTool('wait', { ms: 1 }, rt, allowed, '/w', { sessionId: 's-1' }, emptyVoiceState()), { ok: true })
   assert.deepEqual(calls, [{ name: 'wait', args: { ms: 1 }, options: { workspace: '/w', sessionKey: 's-1', allow: ['wait'] } }])
 })
+
+// --- delete_voice：删除失败必须如实返回，且不能提前丢掉候选 -------------------
+// 旧实现先 forget 再逐个 try/catch 空吞，失败后候选消失（无法重试）而模型仍收到
+// {deleted:true} +「已释放配额」——百炼音色配额是账号级真资源。
+const deleteCandidate = { designVoiceId: 'design-9', realtimeVoiceId: 'native-9', name: '候选' }
+function voiceStateWith(candidate = deleteCandidate) {
+  let current = { ...candidate }
+  return {
+    get: () => null,
+    list: () => (current ? [current] : []),
+    find: voiceId => (current && [current.designVoiceId, current.realtimeVoiceId].includes(voiceId) ? current : null),
+    forget: target => { if (current && target && target.designVoiceId === current.designVoiceId) current = null },
+    set: () => {},
+    confirmed: () => null,
+  }
+}
+// 按 voice_id 决定删除结果：ok / gone（上游 400 ResourceNotExist，实测形状）/ gone404 / boom500
+function deleteFetch(behavior = {}) {
+  return async (url, options) => {
+    const id = JSON.parse(options.body).input.voice_id
+    const mode = behavior[id] || 'ok'
+    if (mode === 'ok') return { ok: true, json: async () => ({ code: 'Success', output: {} }) }
+    if (mode === 'gone') return { ok: false, status: 400, json: async () => ({ code: 'BadRequest.ResourceNotExist', message: 'The Required resource not exist' }) }
+    if (mode === 'gone404') return { ok: false, status: 404, json: async () => ({}) }
+    return { ok: false, status: 500, json: async () => ({ code: 'InternalError', message: 'boom' }) }
+  }
+}
+
+test('delete_voice 两个 id 都成功才 forget，结果逐 id 收集', async () => {
+  const h = fixture({ fetch: deleteFetch() })
+  const state = voiceStateWith()
+  const result = await h.bridge.runVoiceTool('delete_voice', { voice_id: 'native-9' }, { use_tts_voice: true }, {}, state)
+  assert.equal(result.deleted, true)
+  assert.deepEqual(result.deletedIds, ['design-9', 'native-9'])
+  assert.deepEqual(result.alreadyGone, [])
+  assert.equal(state.find('native-9'), null, '两个 id 都删掉后才 forget')
+})
+
+test('delete_voice 失败如实报错、保留候选可重试、只写一条上游审计', async () => {
+  const behavior = { 'native-9': 'boom500' }
+  const h = fixture({ fetch: deleteFetch(behavior) })
+  const state = voiceStateWith()
+  const context = { turnId: 'turn-1', sessionId: 's-1' }
+  await assert.rejects(
+    h.bridge.dispatchRealtimeTool('delete_voice', { voice_id: 'native-9' }, { use_tts_voice: true }, new Set(['delete_voice']), '/w', context, state),
+    error => error.status === 500 && /native-9/.test(error.message) && /HTTP 500/.test(error.message) && /配额尚未释放/.test(error.message),
+  )
+  assert.equal(state.find('native-9')?.designVoiceId, 'design-9', '失败后候选必须保留')
+  assert.deepEqual(state.list().map(c => c.designVoiceId), ['design-9'])
+  assert.equal(h.audit.length, 1)
+  assert.equal(h.audit[0].kind, 'error')
+  assert.match(h.audit[0].text, /^Voice delete failed \(HTTP 500\)$/)
+  assert.equal(h.audit[0].sessionId, 's-1')
+
+  // 修好上游后重试：候选还在，所以重试能真的删掉并释放配额。
+  behavior['native-9'] = 'ok'
+  const retried = await h.bridge.dispatchRealtimeTool('delete_voice', { voice_id: 'native-9' }, { use_tts_voice: true }, new Set(['delete_voice']), '/w', context, state)
+  assert.equal(retried.deleted, true)
+  assert.equal(state.find('native-9'), null)
+  assert.equal(h.audit.length, 1, '第二次成功不再追加失败审计')
+})
+
+test('delete_voice 部分失败会点名失败的那一半，并保留候选', async () => {
+  const h = fixture({ fetch: deleteFetch({ 'native-9': 'boom500' }) })
+  const state = voiceStateWith()
+  await assert.rejects(
+    h.bridge.runVoiceTool('delete_voice', { voice_id: 'design-9' }, { use_tts_voice: true }, {}, state),
+    error => /native-9/.test(error.message) && !error.message.includes('design-9') && error.failed.length === 1 && error.failed[0] === 'native-9',
+  )
+  assert.equal(state.find('design-9')?.designVoiceId, 'design-9')
+})
+
+test('delete_voice 把上游「已不存在」按幂等成功处理（400 ResourceNotExist / 404）', async () => {
+  for (const mode of ['gone', 'gone404']) {
+    const h = fixture({ fetch: deleteFetch({ 'design-9': mode, 'native-9': mode }) })
+    const state = voiceStateWith()
+    const result = await h.bridge.dispatchRealtimeTool('delete_voice', { voice_id: 'native-9' }, { use_tts_voice: true }, new Set(['delete_voice']), '/w', { sessionId: 's-1' }, state)
+    assert.equal(result.deleted, true, mode)
+    assert.deepEqual(result.alreadyGone, ['design-9', 'native-9'], mode)
+    assert.equal(state.find('native-9'), null, `${mode}: 已不存在也算删干净，不能永远卡在重试`)
+    assert.equal(h.audit.length, 0, `${mode}: 幂等成功不是失败`)
+  }
+})
+
+test('delete_voice 的本地 400（无候选）不写审计', async () => {
+  const h = fixture({ fetch: deleteFetch() })
+  await assert.rejects(
+    h.bridge.dispatchRealtimeTool('delete_voice', { voice_id: 'ghost' }, { use_tts_voice: true }, new Set(['delete_voice']), '/w', { sessionId: 's-1' }, voiceStateWith()),
+    error => error.status === 400,
+  )
+  assert.equal(h.audit.length, 0, '「没找到候选」不是上游失败，不该记成配额问题')
+})
