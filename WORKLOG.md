@@ -459,3 +459,25 @@
 **变异验证**：把根 lockfile 的 engines 临时改回 `"node": ">=18"` → 只跑这个测试文件得 1 pass / 1 fail，失败信息正是「根包 lockfile 的 packages[""].engines.node 与 package.json 不一致（改 Node 下限时必须同步 lockfile）」；还原后 2/2 绿，`git diff package-lock.json` 为空。
 
 **下次可做**：BACKLOG 下一条是「夜间冒烟接入调度」，需人拍板（Hermes cron 还是独立 workflow），本作业不自行建定时任务；再之后「夜间冒烟首次真跑留基线」需要真打百炼 API，也留给人工。可自动做的是「复查 `browser-smoke.py` 里拿首屏可见文本当副作用信号的同类竞态」。
+
+## 2026-10-29 · 夜间冒烟首次真跑并留基线（J1 迭代班次）
+
+**条目**：BACKLOG P1「夜间冒烟首次真跑并留基线：本机 `~/.dsh/secrets/bailian.env` 有凭据，跑一次 `npm run smoke:nightly -- --force`，把 TTS 毫秒/字节与 Realtime 首帧耗时写进 WORKLOG 当基线」。上一轮把它判为「需要人工」而搁置，本轮把它当成普通「真跑 + 留证据」条目做掉——它不改代码、不碰版本，符合 J1 边界。
+
+**怎么跑的**：凭据走 `src/voice-design.js` 的 `readDashKey()` 默认路径（`~/.dsh/secrets/bailian.env` 里的 `DASHSCOPE_API_KEY`），没有导出环境变量、没有改任何文件。连跑 3 次 `--force`（每次都是一次真实的百炼 TTS 合成 + 一次真实 Realtime 握手），Node `v26.8.1`。
+
+**实测（2026-10-29 13:17–13:18 CST，三次全 `ok:true`、`failing:[]`）**
+
+| 次序 | TTS 耗时 | TTS 字节 | TTS 模型                  | Realtime 首帧 | 首帧事件          |
+| ---- | -------- | -------- | ------------------------- | ------------- | ----------------- |
+| 1    | 1955 ms  | 149804   | `qwen-audio-3.1-tts-plus` | 146 ms        | `session.created` |
+| 2    | 1308 ms  | 149804   | `qwen-audio-3.1-tts-plus` | 129 ms        | `session.created` |
+| 3    | 1981 ms  | 149804   | `qwen-audio-3.1-tts-plus` | 147 ms        | `session.created` |
+
+**基线（写在这里，供以后 `ok:false` 时对照「变慢」还是「变坏」）**：TTS `1308–1981 ms`（中位 1955）；字节数三次完全相同 `149804`（同一句、同 `wav/24000`，字节恒定说明合成没有静默截断）；Realtime 握手 `129–147 ms`（中位 146），首帧事件恒为 `session.created`。**TTS 有 ~670 ms 的跑动抖动、Realtime 只有 18 ms**，所以 TTS 侧的告警阈值要用「中位数的 2 倍」量级，不能拿单点 ±100 ms 判坏。
+
+**旁证（顺带核实的运行事实）**：`probeRealtime` 没有落到 `skipped:'no-websocket'`，说明 `resolveWs()` 从 DSH Desktop 自带 bundle 里解析到了 `ws`——这正是「不上 GitHub Actions（runner 上没有 `ws`）」那条判断的反面证据；`session.created` 是真收到服务端帧，不是只 open。
+
+**报告文件**：`artifacts/nightly-smoke/2026-10-29.json`（`/artifacts/` 已被 `.gitignore` 覆盖，不进提交）。**保留**该文件而不像上一轮那样删掉：它就是今天这次真跑的原始证据，且限流按上海时区日期分文件，留档不影响次日。
+
+**下次可做**：BACKLOG 里「夜间冒烟接入调度」仍需人拍板（Hermes cron 每日 03:00 / 独立 workflow 二选一，且 `skipped:'no-credential'` 必须单独报一句而不能算通过），本作业按规则不自行建定时任务；再下一条「复查 `browser-smoke.py` 里拿首屏可见文本当副作用信号的竞态」可自动做。
