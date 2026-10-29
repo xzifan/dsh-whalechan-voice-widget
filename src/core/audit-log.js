@@ -3,6 +3,7 @@ import { createReadStream } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { orderConversationRows } from './conversation-order.js'
+import { createAuditArchive } from './audit-archive.js'
 
 const KINDS = new Set(['transcription', 'response', 'synthesis', 'usage', 'tool', 'error'])
 const OUTCOMES = new Set(['ok', 'error', 'cancelled'])
@@ -131,9 +132,10 @@ function responseRecords(records) {
  * `columnFilters` intersects field-specific substring matches (case insensitive),
  * except status which matches exactly; empty column filters are inactive.
  * `since`/`until` bound `at` in epoch milliseconds (both inclusive); `failed` keeps
- * error records. Retention defaults to 2000 records / 10 MiB.
+ * error records. Retention defaults to 2000 records / 10 MiB; rows evicted by that cap
+ * are appended to a per-ISO-week archive when `archiveDir` is given.
  */
-export function createAuditLog({ path, maxRecords = 2000, maxBytes = 10 * 1024 * 1024 } = {}) {
+export function createAuditLog({ path, maxRecords = 2000, maxBytes = 10 * 1024 * 1024, archiveDir = null, archiveWeeks = 8 } = {}) {
   if (!path) throw new TypeError('Audit path is required')
   maxRecords = Math.max(1, Math.floor(maxRecords))
   maxBytes = Math.max(1024, Math.floor(maxBytes))
@@ -147,11 +149,20 @@ export function createAuditLog({ path, maxRecords = 2000, maxBytes = 10 * 1024 *
     record.usage == null ? '' : JSON.stringify(record.usage),
   ].filter(value => typeof value === 'string' && value).join('\n').toLowerCase()
   const records = []
+  // Only a *live* eviction is archived. At load time an evicted row may already sit in a
+  // week file written by the run that compacted it, and nothing on disk tells the two
+  // cases apart — so load-time bounding keeps the old behaviour (drop, no archive).
+  const archive = archiveDir ? createAuditArchive({ dir: archiveDir, keepWeeks: archiveWeeks }) : null
+  const pendingArchive = []
   let bytes = 0, sequence = 0, storageError, normalized
   const visibleRecords = () => normalized ??= responseRecords(records)
   const lineSize = record => Buffer.byteLength(JSON.stringify(record)) + 1
-  function bound() {
-    while (records.length > maxRecords || bytes > maxBytes) bytes -= lineSize(records.shift())
+  function bound(collect = false) {
+    while (records.length > maxRecords || bytes > maxBytes) {
+      const record = records.shift()
+      bytes -= lineSize(record)
+      if (collect && archive) pendingArchive.push(record)
+    }
   }
   function failed() { storageError = 'Audit storage is unavailable; records may only be retained in memory.' }
   async function compact() {
@@ -194,7 +205,15 @@ export function createAuditLog({ path, maxRecords = 2000, maxBytes = 10 * 1024 *
       record.seq = ++sequence
       records.push(record); bytes += lineSize(record)
       const overflow = records.length > maxRecords || bytes > maxBytes
-      bound()
+      bound(true)
+      const evicted = pendingArchive.splice(0)
+      // Archive first, compact second: a crash in between leaves those rows in the main
+      // file (dropped on load, never re-archived) instead of losing them outright.
+      // A failing archive must NOT set storageError — the live log is still writable, and
+      // that flag forces a full-file rewrite on every later append.
+      if (evicted.length) {
+        try { if (!(await archive.write(evicted))) pendingArchive.length = 0 } catch { pendingArchive.push(...evicted) }
+      }
       try {
         if (overflow || storageError) await compact()
         else { await mkdir(dirname(path), { recursive: true, mode: 0o700 }); await appendFile(path, JSON.stringify(record) + '\n', { mode: 0o600 }) }

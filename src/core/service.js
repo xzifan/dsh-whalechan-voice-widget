@@ -40,7 +40,7 @@ export function createService(config = {}, dependencies = {}) {
   const fetcher = dependencies.fetch || globalThis.fetch
   const stateDir = config.stateDir ? config.stateDir.replace(/^~(?=\/)/, homedir()) : join(homedir(), '.dsh', 'storages', 'voice-workbench')
   const settingsPath = join(stateDir, 'settings.json')
-  const audit = createAuditLog({ path: join(stateDir, 'voice-audit.jsonl') })
+  const audit = createAuditLog({ path: join(stateDir, 'voice-audit.jsonl'), archiveDir: join(stateDir, 'audit-archive') })
   const startedAt = Date.now()
   let settings = structuredClone(defaults), disposed = false
   const realtimeSessions = new Map() // sessionId -> {session, events, cursor, closed, key}

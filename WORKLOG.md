@@ -682,3 +682,32 @@
 2. 打断后的**真实停播时延**测不到：服务端 `invalidate()` 是同步的，实际停播由前端 180 ms 轮询 + `realtime/playback` 回传决定，要测必须新增记录类型（动 `KINDS`/`counts`/筛选），属行为变化。
 
 **下次可做**：`[arch]` 的 `runTool` + `onMessage` 状态机仍要更严的时序断言才敢动；`夜间冒烟接入调度` 与 `husky + lint-staged` 仍等外部拍板。
+
+## 2026-10-29 · P2「审计容量策略：2000 条 / 10 MiB 之外的按周归档」（J1 迭代班次，用了只读规划子代理）
+
+**为什么是它**：清单上排在它前面的六条都动不了——`⛔ 阻塞待决策`（husky + lint-staged 等 Prettier 大目录是否豁免 200 行）、`夜间冒烟接入调度` 需人拍板、火山引擎 Realtime 要产品拍板、`[arch]` 状态机要更严的时序断言、`[plan]` 首帧锚点要定口径归属、停播时延属行为变化且要单独立项。审计容量是唯一既不涉及产品口径、又能当场用文件断言验证的一条。
+
+**做了什么（5 文件 / churn 245 行，另 35 行文档）**
+
+- 新增 `src/core/audit-archive.js`（55 行）：`isoWeekKey(at)`（UTC ISO-8601，周一为周首、跨年归周四所在年）+ `createAuditArchive({dir, keepWeeks = 8, now})`。按记录 `at` 的周键写周文件（如 `2026-W44.jsonl`），目录 0700 / 文件 0600，写完按 `cutoff = now - (keepWeeks-1) 周` 清理旧周；只认周文件名格式（`notes.txt`、`*.jsonl.bak` 不碰），且**不删本次刚写的周**（回填或时钟回拨的记录不会被创建它的那次调用删掉）。
+- `src/core/audit-log.js`：`createAuditLog` 加 `archiveDir / archiveWeeks`；`bound(collect)` 把**实时挤出**的记录旁听一份；append 里**先归档、后 compact**（崩在中间只会让记录留在主文件里被下次加载丢弃，不会静默消失）。
+- `src/core/service.js`：接线 `archiveDir: join(stateDir, 'audit-archive')`（`stateDir` 默认 `~/.dsh/storages/voice-workbench`）。
+- `test/audit-archive.test.js`：10 条。
+- `README.md`：保留上限那句补上归档说明（保留 8 周、只写不读）。
+
+**三个刻意的取舍**
+
+1. **只写不读、不做导出**：「审计日志是否允许导出到文件」还在「需要产品决策」小节，所以本轮不新增任何读取/导出的 API、按钮或 CLI，`src/core/index.js` 的桶导出也不扩大。
+2. **加载期削减不归档**：磁盘上分不清「这批记录已经归档过」和「从来没归档过」，加载期补写就是永久重复；代价是 `maxRecords` 调小或读旧文件时，那些行仍和今天一样直接丢（已在模块注释里写明）。
+3. **归档失败不置 `storageError`**：主日志其实可写，谎报「存储不可用」会让前端报错，而且该标志会让后续每次 append 都整文件重写（写放大）。失败的批次留在内存里（最多一批），下次 append 重试。
+
+**验证（真跑）**
+
+- 后端 **374**（改前 364）/ 前端 **102** 全绿；`lint` 0 问题；`build` 成功且 `dist/` 无改动。
+- 周键独立对拍：macOS `date -j -f "%Y-%m-%d" <日期> "+%G-W%V"` 取 9 个日期（含 `2025-12-29 → 2026-W01`、`2027-01-01 → 2026-W53`、`2021-01-01 → 2020-W53`）与实现完全一致，2026 确为 53 周。
+- 变异 5 条（每条都真跑、都还原）：append 里 `bound(true)` → `bound()` 红 2；加载期也 collect 红 1（正是本轮补的那条断言）；归档时丢掉 `seq` 红 5；`cutoff` 用 `keepWeeks` 而不是 `keepWeeks-1` 红 1；清理去掉「刚写的周」守卫红 1。
+- **一条做不到的变异**：在归档失败处加 `failed()` 观测不到——同一次 append 里成功的 compact 会立刻把 `storageError` 清掉。所以这条只能靠「客户端不报错 + 主日志仍按上限收敛 + 目录修好后补写积压」来守，已在断言里写明。
+- 写测试时被自己的断言抓到两处：①字节上限那条用例最初用 `'x'.repeat(300)` 造大记录，被 `sanitizeAuditValue` 的「128+ 连续字符」规则整段换成 `[redacted-data]`，记录体积与文本长度脱钩；②「开归档不改变对外行为」第一版只给归档侧设了 `maxRecords: 3`，等于拿两个不同保留窗口对比。
+- `npm run format:check` 现在是**红的**，但与本轮无关：`WORKLOG.md`、`docs/sdk-extraction.md` 在工作区里本轮未被改动（`git status` 只有本轮 4 个文件），红是 `f397b2e` 留下的。已作为新 `- [ ]` 条目排进 BACKLOG，并写明 `WORKLOG.md` 不能直接 `npm run format` 的原因。
+
+**下次可做**：BACKLOG 新增的「Prettier 门禁回红」（先把 `tts-*` / `voice-*` 包进反引号再格式化，docs 侧只是表格对齐）。
