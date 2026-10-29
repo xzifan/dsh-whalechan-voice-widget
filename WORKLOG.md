@@ -526,3 +526,9 @@
 **过程中被实测推翻的一处假设**：原打算断言「原生工具名为空串会被过滤」，实测 `toolDefinitions` 只校验 `typeof tool.name === 'string'`，空串**会**透传成一条无名函数声明。这是既有行为、不属本条目（改它就是改对外行为），故从测试里撤掉该 case，未动代码。
 
 **下次可做**：步骤 2「抽 `src/voice-tool-bridge.js`」仍是 BACKLOG 里的独立 `- [ ]`（`service.js` 现 624 行）；步骤 2 的两个硬约束已由规划子代理复核——`settings` 必须传 live getter（13 处读取，传快照会打挂 voice-presets-cache 与 voice-settings-persistence）、`mutate` 不可重入（`commitSettings` 三处调用，封装自带队列的 save 会死锁成挂起而非失败）。
+
+## 2026-10-29 · patch 发布 0.6.5（J2 发布班次）
+
+**结果**：成功。0.6.4 → **0.6.5**，后端 327 / 前端 101 全绿，已部署（`/api/voice-workbench/health` → `version=0.6.5 ok=true`），已推送 main + `v0.6.5`（远端 `git ls-remote` 校验），tarball `artifacts/releases/dsh-voice-workbench-0.6.5.tgz`（438,656 B）。本版为维护性发布（Realtime 协议层拆分、浏览器冒烟统一 harness、夜间探测脚本），无用户可感知变化。
+
+**过程里的一个真问题**：第一次 `./scripts/release.sh --slot patch --deploy` 在「verify installed build」退出 **5** —— `health API returned  after 60s`（`API_CODE` 为空，说明 60 次循环里 login 一次都没拿到 303，而不是拿到了非 200 的 health）。当时插件其实已装好，紧接着手工登录 `/health` 返回 `version=0.6.5`。即重启后 token 登录的就绪时间这次约 **70–90 s**，超出脚本的 60 s 窗口（脚本注释记的经验值是 40 s）。清理 `dist/` 后原样重跑即通过（exit 0）。**结论：60 s 窗口仍偏紧，应放宽到至少 120 s，或把「首页 401 → 登录 303」单独当作就绪信号并给出实测耗时日志**，否则每次重启都约有一半概率把一次成功部署回滚成 exit 5。
