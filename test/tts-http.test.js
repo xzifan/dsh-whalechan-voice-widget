@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {synthesizeHttpTts} from '../src/core/tts-http.js'
+import {failureAdvice,failureDetail,synthesisFailureText} from '../src/core/voice-design.js'
 const mp3=Buffer.from('ID3fake-audio-for-unit-tests')
 const base={name:'test',endpoint:'https://tts.example.test/v1/audio/speech',model:'test-model',voice:'alloy',speed:1.05,format:'mp3',instructions:'',auth_type:'bearer',extra:{}}
 function fixture(profile,reply=()=>new Response(mp3,{headers:{'content-type':'audio/mpeg'}})){
@@ -63,4 +64,38 @@ test('abort reaches fetch and oversized streamed responses are cancelled without
  let cancelled=false
  const large=fixture({protocol:'openai-speech'},()=>new Response(new ReadableStream({start(c){c.enqueue(new Uint8Array(24*1024*1024));c.enqueue(new Uint8Array(1))},cancel(){cancelled=true}}),{headers:{'content-type':'audio/mpeg'}}))
  await assert.rejects(large.run(),{name:'VoiceNativeError',status:502});assert.equal(cancelled,true)
+})
+
+// 非百炼提供方的 4xx 以前一律记成 `HTTP 502, upstream`：UI 把「Key 失效」「配额耗尽」
+// 这两类重试确定无效的失败显示成「请重试」。分类与真实码进 safe，对外状态码不变。
+test('非百炼 4xx 保留真实状态码与失败分类，上游原文不回显',async()=>{
+ const cases=[
+  [401,{code:'InvalidApiKey',message:'Invalid API-key provided'},'authorization','InvalidApiKey',true],
+  [429,{code:'Throttling.AllocationQuota',message:'insufficient quota'},'quota-or-balance','Throttling.AllocationQuota',true],
+  [403,{},'authorization','unknown',true],
+  [400,{code:'ModelNotFound',message:'model not exist'},'model-unavailable','ModelNotFound',true],
+  [404,{code:'NotFound',message:'no such model'},'model-unavailable','NotFound',true],
+  [400,{code:'BadRequest',message:'voice id is invalid'},'upstream','BadRequest',false],
+  [500,{code:'InternalError',message:'upstream secret boom'},'upstream','InternalError',false],
+ ]
+ for(const [real,body,category,code,actionable] of cases){
+  const {run}=fixture({protocol:'openai-speech'},()=>Response.json(body,{status:real}))
+  await assert.rejects(run(),error=>{
+   assert.equal(error.name,'VoiceNativeError')
+   assert.equal(error.status,502,'对外状态码仍是 502（402 例外）')
+   assert.equal(error.safe.status,real,'safe.status 必须是上游真实码')
+   assert.equal(error.safe.category,category)
+   assert.equal(error.safe.code,code)
+   assert.equal(error.message,`语音服务返回 HTTP ${real}`,'文案只报状态码，不回显上游原文')
+   assert.equal(failureDetail(error),`HTTP ${real}, ${category}${code==='unknown'?'':`, ${code}`}`)
+   assert.equal(synthesisFailureText(error),`Speech synthesis failed (HTTP ${real}, ${category}${code==='unknown'?'':`, ${code}`})`)
+   assert.equal(Boolean(failureAdvice(error)),actionable,'只有能靠改配置修好的失败才给「重试无效」建议')
+   return true
+  })
+ }
+ // 非 JSON 错误体不影响 401/402/429 的分类。
+ const plain=fixture({protocol:'openai-speech'},()=>new Response('quota exceeded',{status:429}))
+ await assert.rejects(plain.run(),{name:'VoiceNativeError',status:502})
+ const error=await plain.run().then(()=>null,e=>e)
+ assert.equal(error.safe.category,'quota-or-balance');assert.equal(error.safe.status,429);assert.equal(error.safe.code,'unknown')
 })

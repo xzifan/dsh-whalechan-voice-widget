@@ -55,7 +55,10 @@ export function failureAdvice(error) {
 }
 /** One-line failure detail for audit text, e.g. `HTTP 400, quota-or-balance, InvalidApiKey`. */
 export function failureDetail(error) {
-  const status = Number.isInteger(error?.status) ? error.status : 502
+  // `safe.status` 是上游真实状态码；`error.status` 是对外映射后的码（非百炼 4xx 一律 502）。
+  // 审计要报上游真实码，否则 401/429 会被记成 `HTTP 502`，与模型侧看到的 `HTTP 401` 矛盾。
+  const reported = Number.isInteger(error?.safe?.status) ? error.safe.status : error?.status
+  const status = Number.isInteger(reported) ? reported : 502
   const code = knownCode(error?.safe?.code)
   return [`HTTP ${status}`, String(error?.safe?.category || 'upstream'), ...(code ? [code] : [])].join(', ')
 }

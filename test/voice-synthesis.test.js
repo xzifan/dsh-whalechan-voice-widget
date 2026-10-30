@@ -115,9 +115,28 @@ test('合成失败审计按分类写明原因，且不回显上游原文', async
     // 上游 message 只用于分类，绝不进审计文本（可能带账号与请求细节）。
     assert.doesNotMatch(h.audit[1].text, new RegExp(upstream))
   }
-  // 非百炼提供方走 tts-http.js 的 failure()，错误上不带 safe → 退化成 `HTTP n, upstream`。
-  // 这是可接受的降级：仍比只有一个状态码多一层「上游失败」，用例锁住别退回到无分类。
+  // 连 safe 都没有的错误（例如第三方代码抛的裸 Error）退化成 `HTTP n, upstream`：
+  // 仍比只有一个状态码多一层「上游失败」。非百炼提供方现在由 tts-http.js 的 failure()
+  // 带上 safe，见下一条用例。
   assert.equal(synthesisFailureText(Object.assign(new Error('上游挂了'), { status: 502 })), 'Speech synthesis failed (HTTP 502, upstream)')
+})
+
+// 非百炼提供方（这里走 Breeze 托管凭据）的失败以前 safe 为空：审计只能写
+// `HTTP 502, upstream`，与模型侧同一轮透传的 `语音服务返回 HTTP 401` 互相矛盾，
+// UI 也把 Key 失效当成可重试。现在真实码与分类都进 safe。
+test('非百炼提供方 401 的审计文本写明真实码与分类，不再退化成 502/upstream', async () => {
+  const h = fixture({ settings: { tts_voice_provider: 'breeze', tts_profiles: { breeze: { voice: BREEZE_PRESET_VOICES.zh } } }, reply: async () => Response.json({ code: 'InvalidApiKey', message: 'Invalid API-key provided' }, { status: 401 }) })
+  const error = await h.synth.synthVoiceLayer('文本', '', {}, { use_tts_voice: true }, emptyVoiceState()).then(() => null, e => e)
+  assert.ok(error, '合成必须失败')
+  assert.equal(error.status, 502, '对外状态码不变')
+  assert.equal(error.safe.status, 401)
+  assert.equal(error.safe.category, 'authorization')
+  assert.deepEqual(h.managed, ['breeze'])
+  assert.equal(h.audit.length, 2)
+  assert.equal(h.audit[1].kind, 'error')
+  assert.equal(h.audit[1].text, 'Speech synthesis failed (HTTP 401, authorization, InvalidApiKey)')
+  assert.equal(h.audit[1].text, synthesisFailureText(error))
+  assert.doesNotMatch(h.audit[1].text, /Invalid API-key provided/)
 })
 
 test('Breeze 走托管凭据并按文本归一语言，不用中文预设覆盖日语', async () => {

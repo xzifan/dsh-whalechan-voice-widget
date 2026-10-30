@@ -1180,3 +1180,25 @@
 **并发与边界**：`.work.lock` 本轮创建、提交后删除；无 version 改动、无 `npm pack`、无 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未碰 `~/.dsh/AGENTS.md`。
 
 **下次可做**：清单被追加后已恢复可做——按顺序取最上面一个非阻塞条目，即本轮新增的「非百炼提供方失败分类」（≈70 行 / 3-4 文件）。次选为上面两个未入选候选，二者都还不在清单里，若要动需再走一次第 7 步取证。
+
+## 2026-10-30 19:40 · 非百炼提供方的合成失败也带真实码与分类（`safe` 接线 + `failureDetail` 读 `safe.status`）
+
+**条目**：`BACKLOG.md` P1 底部「非百炼提供方（`openai-speech` / `mimo-chat` / `breeze-tts` / `custom-http`）的合成失败分类恒为 `upstream`、真实状态码被抹成 502」。上一轮第 7 步取证入清单的那一条，本轮按顺序取用。
+
+**改了什么**（源码 54 行 / 测试 60 行 / CHANGELOG 1 行，共 115 行 churn，未超 200 上限）：
+
+- `src/core/tts-http.js`：`failure(message,status,detail)` 现在挂 `safe:{status,code,category}`。**`error.status` 保持旧口径**（402 仍是 402，其余 4xx/5xx 一律 502），`safe.status` 才是上游真实码——所以对外 HTTP 状态码与响应体形状一个没变。
+- 新增 `categoryFor(status,text)`：401/403 → `authorization`，402/429 → `quota-or-balance`，400/404 且错误体提到 model（`modelSemantics`）→ `model-unavailable`，其余 `upstream`；`code` 走 `safeCode` 洗成 `[A-Za-z0-9_.-]{0,80}`，取不到就是 `'unknown'`（`knownCode` 会把它当「没有 code」，不编造）。
+- 新增 `errorPayload(response)`：有界读 4 KiB 错误体（读完 `cancel()`，读不了就用 `response.text()`），只用来取 `code` 与判断 model 语义；**错误体与上游 message 一律不回显**，message 仍是 `语音服务返回 HTTP ${real}`。非 ok 分支从「`body.cancel()` 后直接抛」改成「先读错误体再抛」。
+- `src/core/voice-design.js`：只改 `failureDetail()` 一行——优先读 `safe.status`，缺省回落 `error.status`。这是唯一能「审计报真实码」又「不改对外状态码」的接缝；`FAILURE_LABELS` / `FAILURE_ADVICE` / `failureAdvice()` / `synthesisFailureText()` 一字未动。因为 `FAILURE_ADVICE` 没有 `upstream` 项，`failureAdvice()` 对上游类仍返回 `''`，`voice-presets.js` 的「可重试」回退文案自动只落在上游类——条目要点④不写代码就成立。
+- 测试：`test/tts-http.test.js` 新增 1 条（7 组状态/错误体：401、429、403 空体、400 model、404 model、400 非 model 语义、500，外加非 JSON 的 429），逐组断言 `error.status===502`、`safe.status===真实码`、分类、`failureDetail`、`synthesisFailureText`、`failureAdvice` 有无建议；`test/voice-synthesis.test.js` 新增 1 条（Breeze 托管凭据 + 401，走完整合成层，审计文本 `Speech synthesis failed (HTTP 401, authorization, InvalidApiKey)`，对外 `error.status===502`，上游原文不出现）；`test/test-voice-design.test.js` 的 `failureDetail` 用例补 1 条「`safe.status` 优先于 `error.status`」。
+
+**变异验证（3 条，各恰好红）**：`categoryFor` 恒返回 `upstream` → 红 2（两条新用例）；`failureDetail` 退回只读 `error.status` → 红 3（含 `failureDetail` 用例）；`failure()` 去掉 `safe` → 红 2。三次改完都从原文件还原，还原后 399/399 全绿。
+
+**验收**：`npm test` **397 → 399 / 399 pass**、`npm run test:web` **105/105**（不变）、`npm run lint` 0 问题、`npm run format:check` 全仓通过、`npm run build` 成功且 `dist/` 零改动。
+
+**用的规划子代理**：没有。条目已精确到文件行号与改法，改动集中在单一模块 + 复用现成分类器，无接口/数据结构变化；按任务书「3 个以上文件才派规划」的字面口径虽然触到 3 个测试文件，但它们都是同一改动的回归网，不存在需要盘点的未知面。
+
+**边界**：只做了这 1 条；`.work.lock` 本轮创建、提交前删除；无 version 改动、无 `npm pack`、无 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未碰 `~/.dsh/AGENTS.md`。
+
+**下次可做**：`FAILURE_ADVICE` 的文案写死「百炼」（「凭据无效或无权限，请检查百炼 API Key」），现在非百炼音色撞 401 会照搬这句、指错对象——要么按 provider 分文案（qwen/百炼 vs Breeze/自定义），要么改成不点名的「检查所选语音服务的 API Key」。次选仍是上一轮记下的两条：`audio_too_large` 不锁存、预设状态写盘失败被报成「试听合成失败」且仍宣称「已保存」。

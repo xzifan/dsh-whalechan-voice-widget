@@ -1,8 +1,50 @@
 import { numericUsage } from './audit-log.js'
 
 const LIMIT=24*1024*1024
+const ERROR_BODY_LIMIT=4096
 const forbidden=new Set(['__proto__','prototype','constructor'])
-function failure(message,status=502){return Object.assign(new Error(message),{name:'VoiceNativeError',status})}
+const safeCode=value=>String(value||'').replace(/[^A-Za-z0-9_.-]/g,'').slice(0,80)
+// 非百炼提供方各自的错误体形状不同，只有状态码和一小段错误体被用来判断失败类别；
+// 错误体本身绝不回显（可能带账号与请求细节）。
+const modelSemantics=text=>/model/i.test(text)&&/(not.?(?:exist|found)|invalid|unsupported|unknown|deprecat|retire|no.?such|unavailable)/i.test(text)
+function categoryFor(status,text=''){
+  if(status===401||status===403)return 'authorization'
+  if(status===402||status===429)return 'quota-or-balance'
+  if((status===400||status===404)&&modelSemantics(text))return 'model-unavailable'
+  return 'upstream'
+}
+// `safe` 是审计与建议的唯一来源：`status` 保留上游真实码（对外状态码仍按旧口径映射），
+// 分类供 failureAdvice 用，否则 401/429 会被一律显示成「请重试」。
+function failure(message,status=502,detail){
+  const d=detail||{}
+  const code=safeCode(d.code)
+  return Object.assign(new Error(message),{name:'VoiceNativeError',status,safe:{status:Number.isInteger(d.status)?d.status:status,code:code||'unknown',category:d.category||'upstream'}})
+}
+/** Bounded read of an error body so the status can be classified; never surfaced. */
+async function errorPayload(response){
+  const payload={text:'',code:'',message:''}
+  try{
+    const reader=response?.body?.getReader?.()
+    if(reader){
+      let length=0
+      try{
+        while(length<ERROR_BODY_LIMIT){
+          const {done,value}=await reader.read()
+          if(done)break
+          length+=value.length
+          payload.text+=Buffer.from(value).toString('utf8')
+        }
+      }finally{try{await reader.cancel()}catch{/* 清不掉上游响应不能盖住真正的失败。 */}}
+    }else if(typeof response?.text==='function')payload.text=await response.text()
+  }catch{return payload}
+  payload.text=payload.text.slice(0,ERROR_BODY_LIMIT)
+  try{
+    const json=JSON.parse(payload.text)
+    payload.code=String(json?.code||json?.error?.code||'')
+    payload.message=String(json?.message||json?.error?.message||'')
+  }catch{/* 非 JSON 错误体仍然可用：401/402/429 只靠状态码就能分类。 */}
+  return payload
+}
 function requireValue(ok,message,status=400){if(!ok)throw failure(message,status)}
 const plain=value=>value!==null&&typeof value==='object'&&!Array.isArray(value)
 function cancelled(signal){if(signal?.aborted)throw failure('语音请求已取消',499)}
@@ -151,8 +193,9 @@ export async function synthesizeHttpTts({profile,text,key,signal,fetcher=globalT
   try{response=await fetcher(url,{method:'POST',headers,body:JSON.stringify(body),redirect:'error',signal})}catch{cancelled(signal);throw failure('语音服务连接失败，请检查当前服务配置')}
   cancelled(signal)
   if(!response?.ok){
-    try{await response?.body?.cancel?.()}catch{/* Do not expose an upstream cleanup failure. */}
-    throw failure(`语音服务返回 HTTP ${Number.isInteger(response?.status)?response.status:502}`,response?.status===402?402:502)
+    const status=Number.isInteger(response?.status)?response.status:502
+    const upstream=await errorPayload(response)
+    throw failure(`语音服务返回 HTTP ${status}`,status===402?402:502,{status,code:upstream.code,category:categoryFor(status,`${upstream.code} ${upstream.message}`)})
   }
   const data=await readBounded(response,signal),contentType=response.headers?.get?.('content-type')||''
   const type=profile.protocol==='mimo-chat'?'json-base64':profile.protocol==='custom-http'?(profile.response_type||'binary'):'binary'

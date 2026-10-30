@@ -106,6 +106,8 @@ test('failureDetail 给审计用的单行摘要：状态码 + 分类 + code，�
   const noCode = Object.assign(new Error('x'), { name: 'VoiceNativeError', status: 499 })
   assert.equal(failureDetail(noCode), 'HTTP 499, upstream')
   assert.equal(failureDetail(Object.assign(new Error('x'), { safe: { code: 'unknown' } })), 'HTTP 502, upstream')
+  // 上游真实码住在 safe.status（非百炼提供方的 error.status 仍是对外 502），审计报真实码。
+  assert.equal(failureDetail(Object.assign(new Error('x'), { status: 502, safe: { status: 401, code: 'InvalidApiKey', category: 'authorization' } })), 'HTTP 401, authorization, InvalidApiKey')
 })
 
 test('designVoice redacts no key and rejects bad status', async () => {
