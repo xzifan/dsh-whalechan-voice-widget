@@ -17,7 +17,7 @@ const timeRanges = {all: '全部时间', hour: '最近1小时', day: '最近24�
 const emptyPage = {records: [], total: 0, hasMore: false, nextBefore: null, storageError: null}
 
 function RecordBadges({record}) {
-  const failed = record.kind === 'error' || ['error', 'failed'].includes(record.status)
+  const failed = record.kind === 'error' || ['error', 'failed'].includes(record.status) || record.outcome === 'error'
   return <>
     <Badge variant={record.kind === 'error' ? 'destructive' : 'secondary'} className="shrink-0">{kinds[record.kind] || record.kind || '记录'}</Badge>
     <Badge variant={failed ? 'destructive' : 'outline'} className="max-w-full break-all">{statuses[record.status] || record.status || '状态未返回'}</Badge>

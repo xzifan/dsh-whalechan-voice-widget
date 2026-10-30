@@ -216,6 +216,30 @@ test('tool records keep an explicit outcome, a one-line summary and the exit cod
   assert.equal(reloadOk.resultSummary, 'key [redacted] kept')
 })
 
+test('failure filter and statistics share one predicate, including completed calls that errored', async t => {
+  const { store } = await fixture(t)
+  const base = Date.now()
+  await store.append({ kind: 'tool', sessionId: 's', status: 'completed', outcome: 'error', exitCode: 2, text: 'bash' })
+  await store.append({ kind: 'tool', sessionId: 's', status: 'completed', outcome: 'ok', exitCode: 400, text: 'bash' })
+  await store.append({ kind: 'tool', sessionId: 's', status: 'cancelled', outcome: 'cancelled', text: 'bash' })
+  await store.append({ kind: 'error', sessionId: 's', status: 'error', text: 'boom' })
+  await store.append({ kind: 'tool', sessionId: 's', status: 'failed', text: 'thrown tool' })
+  await store.append({ kind: 'tool', sessionId: 's', status: 'completed', text: 'ledger' })
+  const failedPage = await store.query({ failed: true })
+  // 勾「只看失败」是为了找红点行：`completed` + `outcome:'error'` 正是命令真失败的那类。
+  assert.equal(failedPage.total, 3)
+  assert.deepEqual(failedPage.records.map(r => r.text).sort(), ['bash', 'boom', 'thrown tool'].sort())
+  const failing = failedPage.records.filter(r => r.status === 'completed')
+  assert.equal(failing.length, 1, '只有 outcome:error 的那条 completed 算失败')
+  assert.equal(failing[0].outcome, 'error'); assert.equal(failing[0].exitCode, 2)
+  assert.equal((await store.query({ failed: true, columnFilters: { status: 'cancelled' } })).total, 0, '手动取消不算失败')
+  assert.equal((await store.query({ failed: true, search: 'ok' })).total, 0)
+  const statistics = await store.statistics()
+  // 两处口径必须由同一个谓词产出，否则统计页的「失败记录」会比表里的红点少。
+  assert.equal(statistics.failed, failedPage.total)
+  assert.equal((await store.statistics({ since: base + 60_000 })).failed, 0)
+})
+
 test('timing fields survive the whitelist and a restart, invalid values are dropped, and they stay out of full-text search', async t => {
   const {store, path} = await fixture(t)
   await store.append({kind: 'response', status: 'completed', firstTextMs: 120.4, firstAudioMs: 0, playedMs: 900, durationMs: 40, interrupted: true})

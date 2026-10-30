@@ -1222,3 +1222,18 @@
 **边界**：本轮零源码改动——没有碰 version / `npm pack` / tag / push / `dsh plugin add` / `dsh web` 重启 / `~/.dsh/AGENTS.md`。`.work.lock` 本轮创建、提交后删除。
 
 **下次可做**：按顺序取最上面一个非阻塞条目，即本轮新增的「审计只看失败漏掉 `completed` + `outcome:error`」（≈38 行 / 4 文件）。次选为上面两个未入选候选（实时会话未就绪静默丢弃录音、凭据失败文案被吞），二者都还不在清单里，要动需再走一次第 7 步取证。
+
+## 2026-10-30 21:19 · 审计「只看失败」与统计的失败数补上 `completed` + `outcome:error`
+
+**做了什么**（1 条清单项，未用规划子代理——条目已精确到行号）
+
+- `src/core/audit-log.js`：`failedStatuses` 旁新增 `failedRecord(record) = kind==='error' || failedStatuses.has(status) || outcome==='error'`，查询筛选与 `statistics().failed` 都改用这一个谓词；JSDoc 的 `failed` 语义同步改口。`cancelled` 仍不算失败，单独的 `completed` 仍不推导成功。
+- `web/src/audit-view.jsx`：`RecordBadges` 的失败判定补 `|| record.outcome === 'error'`，与行内红点（`:199`）一致。
+- `test/audit-log.test.js`：新增 1 条 6 记录 fixture 用例，断言 `query({failed:true}).total === 3`、含 `exitCode:2` 的 completed、不含 `outcome:ok` 与 `cancelled`，并断言 `statistics().failed === query({failed:true}).total`（防两处口径再次分叉的绊线）。
+- `CHANGELOG.md` `[Unreleased]` 补 1 条；不改 version、不 pack、不 tag、不 push、不碰 dsh。
+
+**验证**：后端 **399 → 400**、前端 **105** 全绿；`lint` 0、`format:check` 通过、`build` 成功（`dist/` 已 `git checkout`，新 hash 产物移出仓库）；`test/browser-pages.py` 三段实跑 `{"statistics": true, "history": true, "audit": true, "pageErrors": []}`。变异 2 条（查询/统计各退回旧谓词）各恰好红 1 条，均从原文件还原。
+
+**欠**：前端徽章没有新增浏览器断言——`browser-pages.py` 的审计 mock 没有 `outcome:error` 记录，插一条会改动分页与筛选计数。
+
+**下次可做**：本轮之后清单里剩下的 `- [ ]` 全部是阻塞项（`⛔ 阻塞待决策`、`需人拍板`、`[arch]`、`需先定口径归属`、`单独立项`），下一班按第 7 步重新取证。已有两个候选（未在清单里）：① 实时会话在 socket 未 OPEN 时把录音与 `commit`/`response` 静默丢弃、接口仍回 `{ok:true}`（要改对外 409 + 前端开麦时序，属行为变化）；② 凭据保存失败把宿主给的具体指令吞成「请重新输入后重试」（≈6 行，触发面窄）。

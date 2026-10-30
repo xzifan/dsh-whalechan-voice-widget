@@ -132,7 +132,8 @@ function responseRecords(records) {
  * `columnFilters` intersects field-specific substring matches (case insensitive),
  * except status which matches exactly; empty column filters are inactive.
  * `since`/`until` bound `at` in epoch milliseconds (both inclusive); `failed` keeps
- * error records. Retention defaults to 2000 records / 10 MiB; rows evicted by that cap
+ * failure records — error kind, failed status, or a completed call whose outcome is
+ * `error` (a manual cancel is not a failure). Retention defaults to 2000 records / 10 MiB; rows evicted by that cap
  * are appended to a per-ISO-week archive when `archiveDir` is given.
  */
 export function createAuditLog({ path, maxRecords = 2000, maxBytes = 10 * 1024 * 1024, archiveDir = null, archiveWeeks = 8 } = {}) {
@@ -142,6 +143,10 @@ export function createAuditLog({ path, maxRecords = 2000, maxBytes = 10 * 1024 *
   const secrets = new Set()
   const haystacks = new WeakMap()
   const failedStatuses = new Set(['failed', 'error'])
+  // 「失败」只有一种口径，查询筛选与统计共用：错误记录、失败状态，或调用完成但结果报错
+  // （`completed` + `outcome:'error'` 即命令真失败）。`cancelled` 不算失败（手动取消），
+  // 单独的 `completed` 也不推导成功——两条路径分叉时，勾「只看失败」的用户会看不到红点行。
+  const failedRecord = record => record.kind === 'error' || failedStatuses.has(record.status) || record.outcome === 'error'
   const searchableText = record => [
     record.text, record.id, record.sessionId, record.messageId, record.turnId, record.responseId, record.callId, record.role, record.provider, record.model, record.status, record.requestId,
     record.outcome, record.resultSummary, record.exitCode === undefined ? '' : String(record.exitCode),
@@ -240,7 +245,7 @@ export function createAuditLog({ path, maxRecords = 2000, maxBytes = 10 * 1024 *
       if (columns.some(([key, value]) => key === 'status'
         ? record[key] !== value
         : typeof record[key] !== 'string' || !record[key].toLowerCase().includes(value))) continue
-      if (failed && record.kind !== 'error' && !failedStatuses.has(record.status)) continue
+      if (failed && !failedRecord(record)) continue
       if (needle) {
         let haystack = haystacks.get(record)
         if (haystack === undefined) { haystack = searchableText(record); haystacks.set(record, haystack) }
@@ -275,7 +280,7 @@ export function createAuditLog({ path, maxRecords = 2000, maxBytes = 10 * 1024 *
       if (record.sessionId) sessions.add(record.sessionId)
       result.firstAt = result.firstAt === null ? record.at : Math.min(result.firstAt, record.at)
       result.lastAt = result.lastAt === null ? record.at : Math.max(result.lastAt, record.at)
-      if (record.kind === 'error' || failedStatuses.has(record.status)) result.failed++
+      if (failedRecord(record)) result.failed++
       if (record.kind === 'transcription') result.transcriptionCharacters += Array.from((record.text || '').replace(/\s/gu, '')).length
       const duration = record.audioDurationSeconds
       if (record.kind === 'synthesis' || (record.kind === 'response' && record.audioOutput !== false && (record.audioOutput === true || duration !== undefined))) {
