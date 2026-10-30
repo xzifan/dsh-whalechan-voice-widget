@@ -33,7 +33,7 @@ test('candidate is durable before synthesis; failure retries only audio across r
  const f = await fixture(t, { synth: async (_args, path) => { const state = JSON.parse(await readFile(path, 'utf8')); assert.ok(state.presets[0].candidate);assert.equal(state.designs.length, 1) } })
  f.fail(true)
  const result = await f.post('generate')
- assert.ok(result.candidate);assert.ok(result.greetingError);assert.equal(result.greeting, undefined)
+ assert.ok(result.candidate);assert.match(result.greetingError,/请重试试听/);assert.equal(result.greeting, undefined)
  assert.equal(result.voicePresets[0].applied, false)
  await f.restart();f.fail(false)
  const retry = await f.post('generate')

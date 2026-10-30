@@ -20,9 +20,11 @@ async function fixture(t, options = {}) {
       if (url.endsWith('/customization')) {
         options.started?.resolve()
         if (options.gate) await options.gate.promise
+        if (options.designFailure) return Response.json(options.designFailure.body, { status: options.designFailure.status })
         return Response.json({ output: { voice_id: 'designed-' + calls.filter(c => c.model === 'voice-enrollment').length, preview_audio: { data: 'cHJldmlldw==' } } })
       }
       if (failGreeting) throw Error('secret-must-not-leak')
+      if (options.greetingFailure) return Response.json(options.greetingFailure.body, { status: options.greetingFailure.status })
       return Response.json({ output: { audio: { url: 'https://audio.test/greeting' } }, usage: options.usage, request_id: 'greeting-request' })
     },
   }
@@ -76,11 +78,11 @@ test('saved prompts generate TTS candidates, survive restart, and explicit apply
 test('greeting failure keeps apply successful, safe, durable and retryable', async t => {
   const f = await fixture(t)
   f.fail(true); const generated = await f.post('generate')
-  assert.ok(generated.candidate); assert.ok(generated.greetingError)
+  assert.ok(generated.candidate); assert.equal(generated.greetingError, '候选音色已保存，但试听合成失败，请重试试听')
   const result = await f.post('apply')
   assert.equal(result.applied, true)
   assert.equal(result.greeting, undefined)
-  assert.equal(typeof result.greetingError, 'string')
+  assert.equal(result.greetingError, '候选音色已保存，但试听合成失败，请重试试听')
   assert.doesNotMatch(JSON.stringify(result), /secret-must-not-leak/)
   await f.restart()
   assert.equal((await f.config()).voicePresets[0].applied, true)
@@ -203,4 +205,47 @@ test('queued settings save and apply preserve unrelated configuration', async t 
   const aborted = new AbortController(); aborted.abort()
   await assert.rejects(f.post('save', { presetId: 'preset-bright', prompt: '应该不会保存的音色描述' }, aborted.signal))
   assert.equal((await f.config()).voicePresets[0].prompt, VOICE_PRESETS[0].description)
+})
+
+// Retrying is a deterministic loop for these three classes: only a different
+// model, a topped-up balance or a valid key can fix them.
+const CLASSIFIED = [
+  [{ status: 429, body: { code: 'Throttling.AllocationQuota', message: 'insufficient quota' } }, /配额或余额不足/, 'Throttling.AllocationQuota', 'insufficient quota'],
+  [{ status: 401, body: { code: 'InvalidApiKey', message: 'Invalid API-key provided' } }, /凭据无效或无权限/, 'InvalidApiKey', 'Invalid API-key provided'],
+  [{ status: 400, body: { code: 'ModelNotFound', message: 'model not exist' } }, /音色模型不可用/, 'ModelNotFound', 'model not exist'],
+]
+
+test('classified greeting failures name the fix instead of asking to retry', async t => {
+  for (const [greetingFailure, phrase, code, upstream] of CLASSIFIED) {
+    const f = await fixture(t, { greetingFailure })
+    const generated = await f.post('generate')
+    assert.ok(generated.candidate, '候选音色仍要先落盘')
+    assert.match(generated.greetingError, phrase)
+    assert.match(generated.greetingError, new RegExp(code))
+    assert.match(generated.greetingError, /重试无效/)
+    assert.doesNotMatch(generated.greetingError, /请重试/)
+    assert.doesNotMatch(generated.greetingError, new RegExp(upstream), '上游原文不得回显')
+    const applied = await f.post('apply')
+    assert.equal(applied.applied, true)
+    assert.match(applied.greetingError, phrase)
+    assert.doesNotMatch(applied.greetingError, /请重试/)
+    assert.doesNotMatch(applied.greetingError, new RegExp(upstream))
+  }
+})
+
+test('unclassified, upstream and classified generation failures keep their contract', async t => {
+  const upstream = await fixture(t, { greetingFailure: { status: 500, body: { code: 'InternalError', message: 'upstream secret boom' } } })
+  const generated = await upstream.post('generate')
+  assert.equal(generated.greetingError, '候选音色已保存，但试听合成失败，请重试试听', '未分类失败仍可重试')
+  assert.doesNotMatch(generated.greetingError, /upstream secret boom/)
+  const failing = await fixture(t, { designFailure: { status: 429, body: { code: 'Throttling.AllocationQuota', message: 'insufficient quota' } } })
+  const error = await failing.post('generate').then(() => null, e => e)
+  assert.equal(error.status, 502, '状态码不变')
+  assert.match(error.message, /^音色生成失败：配额或余额不足/)
+  assert.match(error.message, /Throttling\.AllocationQuota/)
+  assert.doesNotMatch(error.message, /请重试|insufficient quota/)
+  const unknown = await fixture(t, { designFailure: { status: 500, body: { code: 'InternalError', message: 'upstream secret boom' } } })
+  const unknownError = await unknown.post('generate').then(() => null, e => e)
+  assert.equal(unknownError.status, 502)
+  assert.equal(unknownError.message, '音色生成失败，请检查百炼配置后重试')
 })

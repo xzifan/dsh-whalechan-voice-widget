@@ -1,7 +1,7 @@
 import { readFile, mkdir, writeFile, rename } from 'node:fs/promises'
 import { join } from 'node:path'
 import { randomUUID, createHash } from 'node:crypto'
-import { VOICE_PRESETS, MODEL_TTS } from './voice-design.js'
+import { VOICE_PRESETS, MODEL_TTS, failureAdvice } from './voice-design.js'
 
 export const PRESET_GREETING_TEXT = `哈喽，哈喽！这个声音怎么样？听着还舒服吗？
 やっほー！こんな声はどうかな？気に入ってくれるとうれしいな。
@@ -90,7 +90,11 @@ export function createVoicePresets({ stateDir, mutate, getSettings, persistSetti
       })
       signal?.throwIfAborted()
       return { greeting: structuredClone(cached) }
-    } catch { return { greetingError: signal?.aborted ? '试听已取消，可重新播放试听' : '候选音色已保存，但试听合成失败，请重试试听' } }
+    } catch (e) {
+      if (signal?.aborted) return { greetingError: '试听已取消，可重新播放试听' }
+      const advice = failureAdvice(e)
+      return { greetingError: advice ? `候选音色已保存，但试听合成失败：${advice}` : '候选音色已保存，但试听合成失败，请重试试听' }
+    }
   }
   async function handle(action, body, signal) {
     await ready
@@ -144,7 +148,9 @@ export function createVoicePresets({ stateDir, mutate, getSettings, persistSetti
           return { provider, voicePresets: snapshot(), candidate: structuredClone(candidate), ...audio }
         } catch (e) {
           if (e.status === 409) throw e
-          throw error(provider === 'qwen' ? '音色生成失败，请检查百炼配置后重试' : '音色生成失败，请检查 Breeze 地址、模型和 DSH 凭据后重试', 502)
+          const advice = failureAdvice(e)
+          const base = provider === 'qwen' ? '音色生成失败，请检查百炼配置后重试' : '音色生成失败，请检查 Breeze 地址、模型和 DSH 凭据后重试'
+          throw error(advice ? `音色生成失败：${advice}` : base, 502)
         } finally { if (flights.get(p.id) === flight) flights.delete(p.id) }
       })()
       return flight.promise

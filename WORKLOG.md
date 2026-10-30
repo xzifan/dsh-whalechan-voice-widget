@@ -1003,3 +1003,27 @@
 **并发**：收尾删 `.work.lock`。未做任何发版动作（无 version 改动、无 `npm pack`、无 tag/push、未装插件、未重启 dsh、未碰 `~/.dsh/AGENTS.md`），也未创建或修改任何 cron 作业。
 
 **下次可做**：直接取新入的「预设页把已分类的失败吞成『请重试』」（证据已到文件行号、单模块改动，不需要规划子代理，但要注意 `generate` 那条同时被 `web/src/hooks/use-voice-presets.js` 的 `message()` 消费，改文案前先确认前端没有二次拼接）；其后可排候选 ③（合成审计错误码，最小）、候选 ②（非百炼提供方错误分类，需谨慎读 body）。
+
+## 2026-10-30 11:20 · 预设页不再把「重试无效」的失败显示成「请重试」
+
+**取活**：`BACKLOG.md` 里排在首位未完成的第 34 条是 `⛔ 阻塞待决策`（前置为文末「Prettier 大目录迁移是否豁免 200 行」），其后第 46 条（夜间冒烟调度「需人拍板」）、58 条（`[arch]`，会改 `continueResponse`/`deliverDone` 时序）、60 条（「需先定口径归属」）、61 条（「单独立项」）四条全部人堵，按作业规则一律不碰；第一条可做的是上一班追加的「预设页把已分类的失败吞成『请重试』」。本轮只做这 1 条。开工前无 `.release.lock`，建 `.work.lock`（`2026-10-30T11:17:39+0800`），收尾删除。
+
+**未用规划子代理** —— 条目已精确到文件行号、单模块改动、无接口与数据结构变化。
+
+**源码（`src/core/voice-design.js` +16 / `src/core/voice-presets.js` +12−3）**：
+
+- 新增 `FAILURE_ADVICE`（三类 → 可执行动作）+ 导出 `failureAdvice(error)`：`配额或余额不足，请检查百炼账户额度与余额（重试无效，Throttling.AllocationQuota）`。**没有直接复用 `failureLabel`**：它只给分类短语，不含动作、也不含「重试无效」，拼上去仍然是同构的无效提示。`FAILURE_LABELS` / `failureLabel` / `problem()` 一字未动，所以音色工具链的 message 与审计 text 完全不变；`knownCode` 照旧把 `'unknown'` 当成「没有 code」，不编造。
+- greeting 的裸 `catch` 改成收 `e`：`signal?.aborted` 分支文案一字未动；有分类 → `候选音色已保存，但试听合成失败：<advice>`；`upstream` / 无分类（含 120 s 超时、`missing audio`、落盘失败）→ 仍是原文「请重试试听」，因为这一类重试真的可能成功。
+- `generate` 的 catch：`409` 原样 rethrow；有分类 → `音色生成失败：<advice>`，状态码仍是 `502`；无分类 → 回落 qwen / breeze 各自那条旧 base 文案。
+- 只回显 `problem()` 自己拼的短语与 `safe.code`，上游 message 仍只在 `problem()` 内部用于分类、绝不进响应体（新用例显式断言上游原文不出现）。
+- 前端零改动：`web/src/hooks/use-voice-presets.js:73` 的「音色已生成，试听暂不可用。」前缀照旧拼得上；没有新增响应字段（条目要点④）。
+
+**测试（+51 行）**：fixture 加 `designFailure` / `greetingFailure` 两个 mock 开关；原 truthy 断言收紧成整串相等（锁住「未分类 → 仍请重试」）；新增 2 条用例——①三分类 × generate/apply，断言含分类短语与 `safe.code`、含「重试无效」、不含「请重试」、不含上游原文；②`upstream` 与无 `safe` 的意外错误仍回退可重试、`generate` 分类透传且仍 `502`、未分类仍是旧 base 文案。`test/voice-presets-cache.test.js:36` 的 truthy 改成 `/请重试试听/`。
+
+**变异验证**：`git stash` 掉两个源码文件（等于回退旧行为）→ 恰红新增的 2 条（`classified greeting failures…` / `unclassified, upstream and classified generation failures…`），`git stash pop` 后 11/11 绿。
+
+**验收**：后端 391 → **393** / 前端 **104** 全绿，`npm run build` 成功（`dist/` 已 `git checkout`、新 hash 产物移出仓库），`lint` 0 问题、`format:check` 通过。churn 共 82 行。
+
+**没做 / 下次可做**：①`web/src/voice-presets-editor.jsx:46` 的「重试试听」按钮在分类失败时仍会渲染（文案已写明重试无效，而要按分类隐藏按钮需新增响应字段，条目要点④明令不许），建议下轮单列一条：在后端已能分类的前提下加一个 `retryable` 标志并让按钮跟着走；②候选 ③（`src/core/service.js` 与 `src/core/voice-synthesis.js` 两份 `Speech synthesis failed (HTTP n)` 审计文案副本已漂移）；③候选 ②（`src/core/tts-http.js` 非百炼提供方失败只回 `语音服务返回 HTTP n`，要读上游 body，需限 4 KB / 只认 JSON / 只取 `code`）。
+
+**并发与边界**：收尾删 `.work.lock`。未做任何发版动作（无 version 改动、无 `npm pack`、无 tag/push、未装插件、未重启 dsh、未碰 `~/.dsh/AGENTS.md`），也未创建或修改任何 cron 作业。

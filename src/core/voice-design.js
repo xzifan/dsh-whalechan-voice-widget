@@ -37,6 +37,22 @@ const knownCode = value => {
   const code = safeCode(value)
   return code === 'unknown' ? '' : code
 }
+// The preset page used to answer every classified failure with "请重试", which
+// is a deterministic loop for the three classes that only a configuration change
+// can fix. These phrases are the only thing the UI echoes: the upstream message
+// stays inside `problem()` (it can carry account ids and request details).
+const FAILURE_ADVICE = {
+  'model-unavailable': '音色模型不可用（可能已下架或更名），需要改用可用的音色模型',
+  'quota-or-balance': '配额或余额不足，请检查百炼账户额度与余额',
+  authorization: '凭据无效或无权限，请检查百炼 API Key',
+}
+/** Actionable phrase for a classified failure; `''` when retrying is fine. */
+export function failureAdvice(error) {
+  const advice = FAILURE_ADVICE[String(error?.safe?.category || '')]
+  if (!advice) return ''
+  const code = knownCode(error?.safe?.code)
+  return `${advice}（重试无效${code ? `，${code}` : ''}）`
+}
 /** One-line failure detail for audit text, e.g. `HTTP 400, quota-or-balance, InvalidApiKey`. */
 export function failureDetail(error) {
   const status = Number.isInteger(error?.status) ? error.status : 502
