@@ -1369,3 +1369,22 @@
 **边界**：没有碰 version / `npm pack` / `git tag` / `git push` / `dsh plugin add` / `dsh web` 重启 / `~/.dsh/AGENTS.md`。`.work.lock` 本轮创建、提交前删除。
 
 **下次可做**：实现本轮新入清单这条（≈100 行 / 2 文件，变异点明确：`:416` 去掉原因即红）；次选 ②预设写盘失败假原因（≈100 行 / 2 文件，`chmod 0500` 可确定性构造，但必须连 `greeting()` 的 catch 一起收窄）；③`audio_too_large` 每帧刷 error（≈55 行，改动最小）。
+
+## 2026-10-31 05:35 · 被 response 提前结束的工具不再只剩工具名（兜底带原因 + 音色工具补错误行）
+
+**做了什么**（1 条清单项，未用规划子代理——条目已精确到行号、改动集中在 `response.done` 一处兜底循环、不动事件字段与时序）
+
+- 取活：`BACKLOG.md` 最上面 4 个 `- [ ]` 仍是阻塞项（`:34` `⛔ 阻塞待决策`、`:46` `需人拍板`、`:58` `[arch]`、`:60` 需先定口径、`:61` 单独立项），按 J1 规则跳过；本轮做掉上一班 04:23 入清单的那条（`apply_voice` 2 条失败行全库零伴生行）。
+- `src/core/realtime-service.js`（+16/−1）：顶部新增 `VOICE_SIDE_EFFECT_TOOLS = new Set(['design_voice','delete_voice','apply_voice'])`——`queueTool` 的六项清单里只有这三个动百炼账号级资源，`set_tts_provider`/`set_tts_profile` 只改本地设置、`synth_tts` 已有自己的失败审计。`response.done` 的兜底从一行扩成块：`ended` 仍按 `status === 'cancelled'` 分流（不新增状态值）、`reason = 所在响应在工具完成前结束（<status>）` 作为 `detail` 传给 `finishTool`（审计 `text` 从裸工具名变成 `<工具名>: <reason>`）、`outcome` 显式传入（failed→`error`、cancelled→`cancelled`）；`ended === 'failed'` 且命中那三个音色工具时补一条同 `callId` 的 `audit('error', …)`，与 `voice-tool-bridge.js` 的 `Voice design/delete failed (...)` 同构。
+- 循环前加 `if (!call || call.finished) continue`：`invalidate()` 已把在跑的调用记成 cancelled（用户打断走这条）但不清 `response.pending`，没有这个守卫会给已完成调用补假的 error 行，也会把「取消不算失败」的口径打破。
+- `tool-end` 事件字段、`response.done` 收尾时序、模型侧收到的 `function_call_output` 一律未动。
+- 测试：`test/test-realtime.test.js` 新增 2 条（`executeTool` 返回永不 resolve 的 Promise，模拟工具还在跑时响应结束）：①`status:'failed'` → `read` 的 tool 行 `status/outcome/text` 整串断言 + `tool-end` 同字段 + `design_voice` 恰 1 条同 `callId` 的 `kind:error`；②`status:'cancelled'` → `status`/`outcome` 均 `cancelled`、`kind:error` 计数 0。
+- `CHANGELOG.md` `[Unreleased]` 补 1 条；不改 version、不 pack、不 tag、不 push、不碰 dsh。
+
+**踩到的坑**：两条用例第一版照抄既有用例的 `settings: { ...realtimeDefaults(), tools: [] }`，`design_voice` 直接走「该工具未在本次会话中启用或已不可用。」提前收尾，兜底压根不触发（`realtime-protocol.js:48` 的 `internal` 是 `Array.isArray(tools) ? tools : DEFAULT_TOOLS`，传空数组等于把内置音色工具全关掉）。改成不传 `tools` 后才真正压到兜底路径——写实时服务用例时「`tools: []`」只能用来表示「一个内置工具都不要」。
+
+**验证**：后端 **405 → 407**、前端 **109** 全绿；`lint` 0、`format:check` 通过、`build` 成功（`dist/` 已 `git checkout`，新 hash 产物 `index-DGRqF9HE.js` 移出仓库）。**变异 3 条**：①`finishTool` 的 `detail` 退回 `undefined` → 两条新用例全红；②去掉 `kind:error` 伴生行 → 恰红第 1 条；③`ended` 恒 `failed` → 恰红第 2 条。三条都从备份还原后重跑全量。churn **77 行**（+76/−1）。未跑浏览器 e2e：改动在服务端审计写入，五个 `browser*.py` 的 mock 不走这条兜底。
+
+**欠**：`tool-end` 事件仍不带 `error`/`errorSummary`，实时时间线里这行显示「失败」但没有说明文字（失败卡片文案在 `web/src/lib/realtime.js:159`，属另一处渲染改造）；「被打断的调用要不要给模型补发 `function_call_output`」按条目边界另立条目，本轮不碰。
+
+**下次可做**：清单里 `- [ ]` 只剩 5 个阻塞项（`:34`/`:46`/`:58`/`:60`/`:61`），下一班按第 7 步重新取证；之前留下的候选仍在：①预设状态写盘失败被报成「试听合成失败」且上游付费音色已建好（≈100 行 / 2 文件）；②`audio_too_large` 每帧重复上报 error 并挤爆 256 条事件环（≈55 行）；③`test/audit-log.test.js:258` 的 `search:'900'` 与 `randomUUID` 相撞（约 0.73% 假红，10-15 行）。另有一条本轮顺带发现的边界：`tool-end` 缺失败说明（见「欠」），可作为「UI 侧补齐被打断原因」单独立项。

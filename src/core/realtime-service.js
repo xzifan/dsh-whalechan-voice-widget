@@ -24,6 +24,9 @@ import {
 // 只有音频帧按累计 base64 长度封顶（约 2 s：24 kHz PCM16 的 20 ms 帧 ≈ 1.3 KB base64 / 64 帧）；commit 与
 // response.create 体积极小，丢它们等于让「整句不上行」变成静默失败，所以不参与淘汰。
 const AUDIO_BACKLOG_LIMIT = 86 * 1024
+// 会真正改动账号级资源（百炼配额/已保存音色）的三个音色工具：被 response 结束打断时，
+// 除了工具行还要留一条 kind:error 伴生行，否则失败原因彻底丢失。
+const VOICE_SIDE_EFFECT_TOOLS = new Set(['design_voice', 'delete_voice', 'apply_voice'])
 
 /**
  * Manage one Qwen Audio Realtime WebSocket session.
@@ -413,7 +416,19 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
         if (status !== 'completed') {
           if (!cancelled) fillers.cancel()
           response.cancelled = true
-          for (const callId of response.pending) finishTool(calls.get(callId), status === 'cancelled' ? 'cancelled' : 'failed')
+          // 兜底必须带原因：少了 detail，审计里就只剩工具名（本机实测 5 条
+          // `design_voice`/`apply_voice` 失败行无法排障）。status 仍只按
+          // `status === 'cancelled'` 分流，outcome 显式给出，不新增状态值。
+          const ended = status === 'cancelled' ? 'cancelled' : 'failed'
+          const reason = `所在响应在工具完成前结束（${status}）`
+          for (const callId of response.pending) {
+            const call = calls.get(callId)
+            if (!call || call.finished) continue
+            finishTool(call, ended, reason, ended === 'cancelled' ? 'cancelled' : 'error')
+            // 音色工具动的是账号级真资源（配额/已保存音色），失败必须留一条可追的错误行，
+            // 与 voice-tool-bridge 里 delete_voice/design_voice 的分支同构。取消不算失败。
+            if (ended === 'failed' && VOICE_SIDE_EFFECT_TOOLS.has(call.name)) audit('error', call.context, 'failed', { text: `音色工具 ${call.name} 未完成：${reason}` })
+          }
           response.pending.clear()
         }
         const ctx = assistantContext(response)

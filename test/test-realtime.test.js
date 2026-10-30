@@ -450,6 +450,64 @@ test('a successful tool call records an ok outcome with the first line of its ou
   session.dispose()
 })
 
+test('a tool still running when its response ends keeps a reason in the audit', async () => {
+  const FakeSocket = makeFakeSocket(), emitted = []
+  const session = createRealtimeSession({
+    // 不带 tools 数组：让内置音色工具（design_voice）也在允许清单里。
+    settings: { ...realtimeDefaults(), use_tts_voice: false }, nativeTools: [readSchema], key: 'k',
+    // 永不返回：工具还在跑，响应就结束了（上游 failed/incomplete 的典型形态）。
+    executeTool: () => new Promise(() => {}),
+    emit: e => emitted.push(e), WebSocketCtor: FakeSocket,
+  })
+  session.connect()
+  const socket = FakeSocket.instances[0]
+  const invoke = (name, callId) => socket.emitRaw('response.output_item.done', { item: { type: 'function_call', name, call_id: callId, arguments: '{}' } })
+  invoke('read', 'call_read')
+  invoke('design_voice', 'call_design')
+  await new Promise(resolve => setTimeout(resolve, 10))
+  socket.emitRaw('response.done', { response: { status: 'failed' } })
+  await new Promise(resolve => setTimeout(resolve, 10))
+  const records = emitted.filter(e => e.type === 'audit').map(e => e.record)
+  const read = records.find(r => r.callId === 'call_read' && r.kind === 'tool')
+  assert.equal(read.status, 'failed')
+  assert.equal(read.outcome, 'error')
+  // 失败行必须带原因：`design_voice` 这种只剩工具名的行无从排障。
+  assert.equal(read.text, 'read: 所在响应在工具完成前结束（failed）')
+  const end = emitted.find(e => e.type === 'tool-end' && e.callId === 'call_read')
+  assert.equal(end.status, 'failed')
+  assert.equal(end.outcome, 'error')
+  // 音色工具动的是账号级真资源，必须有同 callId 的可追错误行。
+  const errors = records.filter(r => r.kind === 'error')
+  assert.equal(errors.length, 1)
+  assert.equal(errors[0].callId, 'call_design')
+  assert.equal(errors[0].status, 'failed')
+  assert.equal(errors[0].text, '音色工具 design_voice 未完成：所在响应在工具完成前结束（failed）')
+  session.dispose()
+})
+
+test('a tool ended by a cancelled response stays cancelled, not failed', async () => {
+  const FakeSocket = makeFakeSocket(), emitted = []
+  const session = createRealtimeSession({
+    settings: { ...realtimeDefaults(), use_tts_voice: false }, nativeTools: [readSchema], key: 'k',
+    executeTool: () => new Promise(() => {}),
+    emit: e => emitted.push(e), WebSocketCtor: FakeSocket,
+  })
+  session.connect()
+  const socket = FakeSocket.instances[0]
+  socket.emitRaw('response.output_item.done', { item: { type: 'function_call', name: 'design_voice', call_id: 'call_cancel', arguments: '{}' } })
+  await new Promise(resolve => setTimeout(resolve, 10))
+  socket.emitRaw('response.done', { response: { status: 'cancelled' } })
+  await new Promise(resolve => setTimeout(resolve, 10))
+  const records = emitted.filter(e => e.type === 'audit').map(e => e.record)
+  const tool = records.find(r => r.kind === 'tool' && r.callId === 'call_cancel')
+  assert.equal(tool.status, 'cancelled')
+  assert.equal(tool.outcome, 'cancelled')
+  assert.equal(tool.text, 'design_voice: 所在响应在工具完成前结束（cancelled）')
+  // 取消不算失败（与 failedRecord 的口径一致），不得补 kind:error 伴生行。
+  assert.equal(records.filter(r => r.kind === 'error').length, 0)
+  session.dispose()
+})
+
 test('上游断开 socket 后服务端自行收尾：事件仍可取、额度释放、写接口 404', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'whale-rt-close-'))
   const keyFile = join(dir, 'test.env')
