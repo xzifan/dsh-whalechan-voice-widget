@@ -1237,3 +1237,23 @@
 **欠**：前端徽章没有新增浏览器断言——`browser-pages.py` 的审计 mock 没有 `outcome:error` 记录，插一条会改动分页与筛选计数。
 
 **下次可做**：本轮之后清单里剩下的 `- [ ]` 全部是阻塞项（`⛔ 阻塞待决策`、`需人拍板`、`[arch]`、`需先定口径归属`、`单独立项`），下一班按第 7 步重新取证。已有两个候选（未在清单里）：① 实时会话在 socket 未 OPEN 时把录音与 `commit`/`response` 静默丢弃、接口仍回 `{ok:true}`（要改对外 409 + 前端开麦时序，属行为变化）；② 凭据保存失败把宿主给的具体指令吞成「请重新输入后重试」（≈6 行，触发面窄）。
+
+## 2026-10-30 22:28 · 第 7 步取证：工具「调用完成但命令失败」在实时/历史页仍显示「已完成」（入清单，本轮不实现）
+
+**本轮为何只取证**：清单剩下的 5 个 `- [ ]` 全部落在 J1 不得自行处理的范围，逐条点名跳过——`:34` `⛔ 阻塞待决策`（husky + lint-staged，前置是 Prettier 大目录豁免）、`:46` `需人拍板`（夜间冒烟接入调度，J1 不自行建定时任务）、`:58` `[arch]`（`runTool`/`onMessage` 状态机化）、`:60` `需先定口径归属`（首帧延迟锚点统一）、`:61` `单独立项`（打断后的真实停播时延）。按任务书第 7 步：只读子代理提 3 个候选，我选 1 个入清单，本轮零实现。
+
+**测试基线**：未跑（零源码改动，仅文档）。上一轮收尾记录为后端 400 / 前端 105 全绿；本轮只动 `BACKLOG.md` 与 `WORKLOG.md`。
+
+**三个候选**（子代理提出，行号与代码片段由我逐条实读复核，未采信自述）：
+
+- ✅ **入选**：工具「调用完成但命令失败」在实时对话与会话记录里仍显示「已完成」。`src/core/realtime-service.js:84` 的 `finishTool` 已经算出 `outcome`/`exitCode` 并在 `:88` 写进审计，但 `:87` 的 `emit({type:'tool-end', …ok: status === 'completed', status})` 一个都没带；`web/src/lib/realtime.js:141-143` 的 `updateTool` 只看 `status`/`ok`；`web/src/history-view.jsx:21` 的徽章只看 `status`；`src/core/audit-log.js:333` 的 `historyView` 白名单不含 `outcome`。实读复核：`grep -c outcome web/src/lib/realtime.js` 为 0；`test/test-realtime.test.js:303-306` 同一用例既断言 `end.status==='completed'` 又断言 `record.outcome==='error'`，把分裂状态锁住；`test/history.test.js:72` 的工具行只有 `status:'completed'`。频率我另用 grep 独立核过：`~/.dsh/storages/voice-workbench-preview/voice-audit.jsonl` 里 168 条 `kind:"tool"`、13 条 `"outcome":"error"`（≈7.7%）。
+- ❌ 未入选：提供方切到 MiMo/自定义后设置页谎称「当前使用旧版提供方」并整段藏掉配置项。证据实读成立——`web/src/lib/voice-layer.js:27-31` 的 `VOICE_PROVIDERS` 只有 qwen/openai/breeze，而 `src/core/voice-tool-bridge.js:45,58` 接受 `mimo`/`custom`、`src/core/tts-config.js:8` 也有 `mimo` 的内置档，于是 `web/src/voice-layer-view.jsx:79` 的 `supported` 为假、`:102` 下拉置空、`:103` 报「旧版提供方」、配置区整段不渲染，用户无处填 key/model。**未选**是因为修法要给 mimo/custom 渲染一套通用编辑器（约 35 行 UI），属前端交互设计选择，且只有经模型调 `set_tts_provider` 才会进入这个状态，触发面窄于入选条。
+- ❌ 未入选：被打断的实时合成不进审计（预设路径却写 `cancelled`）。证据成立——`src/core/voice-synthesis.js:79` 的 `if (context.signal?.aborted) throw error` 早于 `:80-81` 的两次 append，`test/voice-synthesis.test.js:76,81` 的「abort 不留痕」正锁住该行为。**未选**是因为打断在实时链路里每轮都可能发生，改成落 `cancelled` 会改变审计噪声与统计口径，属口径选择而非缺陷修复，应先定口径。
+
+**取舍**：入选条是 `toolOutcome` 工程的第二块收尾缺口（上一轮修的是审计页的筛选/统计，这一轮是实时时间线与会话记录页），改动最小（3 源码 ≈12 行 + 4 测试 ≈50 行）、只新增可选字段、无产品决策，且后果正是用户直接看到的「明明报错了却显示已完成」——与 `src/core/persona.js` 的 `TOOL_HONESTY_RULES` 同一口径。另外两条价值成立但一条要设计编辑器、一条要先定口径，已写进下方「下次可做」。
+
+**是否用规划子代理**：用了（只读取证型，非拆解型）。它未改任何文件、未跑测试；它给的行号我逐条 `sed -n` / `grep -n` 复核过，并自己重新统计了审计样本（它说 8%，实测 13/168 = 7.7%）。
+
+**边界**：本轮零源码改动——没有碰 version / `npm pack` / tag / push / `dsh plugin add` / `dsh web` 重启 / `~/.dsh/AGENTS.md`。`.work.lock` 本轮创建、提交后删除。
+
+**下次可做**：按顺序取最上面一个非阻塞条目，即本轮新增的「工具调用完成但命令失败仍显示已完成」（≈62 行 / 7 文件）。次选为上面两个未入选候选（MiMo/自定义提供方 UI、被打断合成不进审计），二者都还不在清单里，要动需再走一次第 7 步取证。
