@@ -59,6 +59,12 @@ export function failureDetail(error) {
   const code = knownCode(error?.safe?.code)
   return [`HTTP ${status}`, String(error?.safe?.category || 'upstream'), ...(code ? [code] : [])].join(', ')
 }
+// 合成失败的审计文本曾经在两处各抄一份字面量（预设试听的 service.js 与
+// realtime 合成层的 voice-synthesis.js），改一处就会悄悄漂移成两种格式。
+// 构造只留在这里，两侧都调它。
+export function synthesisFailureText(error) {
+  return `Speech synthesis failed (${failureDetail(error)})`
+}
 
 function problem(status, data) {
   const message = String(data?.message || data?.error?.message || '')

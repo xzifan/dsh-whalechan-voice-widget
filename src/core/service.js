@@ -10,7 +10,7 @@ import { configIssues } from './config-validation.js'
 import { createRealtimeSession, realtimeDefaults } from './realtime-service.js'
 import { audioDurationSeconds } from './audio-duration.js'
 import { createAuditLog, sanitizeAuditRecord, numericUsage } from './audit-log.js'
-import { designVoice, synthesizeTts } from './voice-design.js'
+import { designVoice, synthesizeTts, synthesisFailureText } from './voice-design.js'
 import { createVoiceToolBridge, breezeDisabled } from './voice-tool-bridge.js'
 import { createVoiceSynthesis } from './voice-synthesis.js'
 import { createVoiceInitialization } from './voice-initialization.js'
@@ -183,7 +183,7 @@ export function createService(config = {}, dependencies = {}) {
       } catch (error) {
         const cancelled = options.signal?.aborted || error.status === 499
         await audit.append({ ...record, status: cancelled ? 'cancelled' : 'failed', usage: null })
-        if (!cancelled) await audit.append({ ...metadata, kind: 'error', status: 'failed', text: `Speech synthesis failed (HTTP ${Number.isInteger(error.status) ? error.status : 502})`, usage: null })
+        if (!cancelled) await audit.append({ ...metadata, kind: 'error', status: 'failed', text: synthesisFailureText(error), usage: null })
         throw error
       }
     },

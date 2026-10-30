@@ -1043,3 +1043,26 @@
 **是否用规划子代理**：用了，但只用于「找候选」的**只读盘点**（禁止改文件与 git 写操作），没有用于实现规划——本轮不实现任何条目。
 
 **并发与边界**：`.work.lock` 已在收尾删除；无 version 改动、无 `npm pack`、无 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未碰 `~/.dsh/AGENTS.md`，也未创建或修改任何 cron 作业。
+
+## 2026-10-30 · 合成失败审计文本带上分类与 code（两个写入点共用一处构造）
+
+**为什么是它**：`CHANGELOG.md` 的 `[Unreleased]` 已宣称「音色设计/复刻、**预设试听合成**、删除音色失败时…审计文本同步带上分类与 code」，但合成侧没落地——`src/core/service.js:186`（预设试听的 `synthesize` 包装）与 `src/core/voice-synthesis.js:81`（`synthVoiceLayer`）各抄了一份 `Speech synthesis failed (HTTP n)`，同一个字面量两份、无分类无 code。上一轮修掉的是「3 条一模一样的 `Voice design failed (HTTP 400)`」，这一条是同形的另一半：审计里仍分不清配额、凭据还是模型下架。
+
+**做了什么**
+
+- `src/core/voice-design.js` 新增导出 `synthesisFailureText(error)` → `` `Speech synthesis failed (${failureDetail(error)})` ``，紧挨 `failureDetail` 放，注释写明「两个写入点各抄一份就是这条 bug 的成因」。`failureDetail` / `problem()` / `FAILURE_LABELS` 一字未动（音色工具链的 message 与审计 text 不变）。
+- 两个写入点改成 `text: synthesisFailureText(error)`；`grep 'Speech synthesis failed' src/` 现在只剩构造处一处字面量。
+- 非百炼提供方（`tts-http.js` 的 `failure()` 不带 `safe`）如实退化成 `HTTP n, upstream`，没有为了好看去编造分类；用例里写明这是可接受降级并锁住。
+
+**测试（+50 行）**
+
+- `test/voice-synthesis.test.js`：新增 1 条三分类用例（429 配额 / 401 凭据 / 400 模型下架），整串相等 + 必不含上游原文 + 非百炼降级形态；原「失败语义」用例从正则改成整串 `Speech synthesis failed (HTTP 500, upstream, NonJsonResponse)`（纯文本响应解析失败走 `NonJsonResponse`，注释写明来路）；源码守卫扩成两个文件「必须 `text: synthesisFailureText(error)`、不得再出现字面量」。
+- `test/voice-presets.test.js`：新增 1 条走 service 包装（预设试听）的同类整串断言，复用既有 `CLASSIFIED` 表。
+
+**变异验证 2 条**：①构造退回「只有状态码」→ 恰红 3 条（两个写入点各 1 + 旧失败语义）；②只把 `voice-synthesis.js` 改回字面量（模拟单点漂移）→ 恰红 3 条（合成层用例 + 旧失败语义 + 源码守卫），而预设侧仍绿——正是要防的形态。还原后 395/395。
+
+**验收**：后端 393 → **395** / 前端 **104** 全绿，`lint` 0、`format:check` 通过、`build` 成功（`dist/` 已 `git checkout`、新 hash 产物移出仓库），`test:coverage` 聚合 98.67/87.92/93.87（仍在 96/83/92 之上）。churn **68 行**（新 60 / 删 8），远低于 200。
+
+**没做 / 下次可做**：`web/src/voice-presets-editor.jsx:46` 的「重试试听」按钮在分类失败时仍会渲染（文案已写明重试无效；按分类隐藏需要新增 `retryable` 字段，属接口变化）；`tts-http.js` 非百炼失败只回 `语音服务返回 HTTP n`，要读上游 body 才能分类（需限 4 KB / 只认 JSON / 只取 `code`，单独立项）。
+
+**并发与边界**：`.work.lock` 已在收尾删除；无 version 改动、无 `npm pack`、无 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未碰 `~/.dsh/AGENTS.md`，也未创建或修改任何 cron 作业。未用规划子代理。

@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createVoiceSynthesis, readProviderKey } from '../src/core/voice-synthesis.js'
 import { RequestError } from '../src/core/service.js'
-import { MODEL_TTS, MODEL_TTS_SYNTH } from '../src/core/voice-design.js'
+import { MODEL_TTS, MODEL_TTS_SYNTH, synthesisFailureText } from '../src/core/voice-design.js'
 import { BREEZE_PRESET_VOICES } from '../src/core/breeze-voices.js'
 
 const requireValue = (ok, message, status = 400) => { if (!ok) throw new RequestError(message, status) }
@@ -88,10 +88,36 @@ test('失败语义：abort 不留痕，上游失败留 1 条 synthesis + 1 条 e
   assert.equal(failed.audit[0].usage, null)
   assert.equal(failed.audit[1].kind, 'error')
   assert.equal(failed.audit[1].turnId, 'turn-1')
-  assert.match(failed.audit[1].text, /^Speech synthesis failed \(HTTP 500\)$/)
+  // 纯文本响应没法当 JSON 解析 → problem(500,{code:'NonJsonResponse'}) → 未分类=upstream
+  assert.equal(failed.audit[1].text, 'Speech synthesis failed (HTTP 500, upstream, NonJsonResponse)')
   // 注：`status:'cancelled'` 分支目前只有「错误自带 499 且 signal 未 abort」才会走到，
   // 而两个上游合成器（synthesizeTts / synthesizeHttpTts）都把非 abort 失败映射成 502/402，
   // abort 又在 catch 开头直接 rethrow，所以该分支现状不可达。重构保留原样，不改审计语义。
+})
+
+// 三类「重试永远不会成功」的失败必须能事后从审计里分辨出来：此前两处写入点都只写
+// `Speech synthesis failed (HTTP n)`，运维在 535 条审计里看到的是同一条。
+const SYNTH_FAILURES = [
+  [{ status: 429, body: { code: 'Throttling.AllocationQuota', message: 'insufficient quota' } }, 'HTTP 429, quota-or-balance, Throttling.AllocationQuota', 'insufficient quota'],
+  [{ status: 401, body: { code: 'InvalidApiKey', message: 'Invalid API-key provided' } }, 'HTTP 401, authorization, InvalidApiKey', 'Invalid API-key provided'],
+  [{ status: 400, body: { code: 'ModelNotFound', message: 'model not exist' } }, 'HTTP 400, model-unavailable, ModelNotFound', 'model not exist'],
+]
+
+test('合成失败审计按分类写明原因，且不回显上游原文', async () => {
+  for (const [reply, detail, upstream] of SYNTH_FAILURES) {
+    const h = fixture({ settings: { tts_voice_provider: 'qwen', tts_profiles: {} }, reply: async () => Response.json(reply.body, { status: reply.status }) })
+    const error = await h.synth.synthVoiceLayer('文本', '', {}, { use_tts_voice: true }, emptyVoiceState()).then(() => null, e => e)
+    assert.ok(error, '合成必须失败')
+    assert.equal(h.audit.length, 2)
+    assert.equal(h.audit[1].kind, 'error')
+    assert.equal(h.audit[1].text, `Speech synthesis failed (${detail})`)
+    assert.equal(h.audit[1].text, synthesisFailureText(error))
+    // 上游 message 只用于分类，绝不进审计文本（可能带账号与请求细节）。
+    assert.doesNotMatch(h.audit[1].text, new RegExp(upstream))
+  }
+  // 非百炼提供方走 tts-http.js 的 failure()，错误上不带 safe → 退化成 `HTTP n, upstream`。
+  // 这是可接受的降级：仍比只有一个状态码多一层「上游失败」，用例锁住别退回到无分类。
+  assert.equal(synthesisFailureText(Object.assign(new Error('上游挂了'), { status: 502 })), 'Speech synthesis failed (HTTP 502, upstream)')
 })
 
 test('Breeze 走托管凭据并按文本归一语言，不用中文预设覆盖日语', async () => {
@@ -140,4 +166,11 @@ test('源码守卫：service.js 只注入工厂，不再自带合成层', async 
   assert.ok(!source.includes('async function synthVoiceLayer'), 'service.js 不应再定义 synthVoiceLayer')
   assert.ok(!source.includes('function voiceProfile'), 'service.js 不应再定义 voiceProfile')
   assert.ok(!source.includes('async function readProviderKey'), 'service.js 不应再定义 readProviderKey')
+  // 合成失败的审计文本必须由同一处构造：两个写入点各抄一份字面量正是这条 bug 的成因，
+  // 改一处就漂移成两种格式，而两边的用例只会红一条。
+  for (const file of ['service.js', 'voice-synthesis.js']) {
+    const text = await readFile(new URL('../src/core/' + file, import.meta.url), 'utf8')
+    assert.match(text, /text: synthesisFailureText\(error\)/, `${file} 的合成审计文本必须走共用构造`)
+    assert.ok(!text.includes('Speech synthesis failed'), `${file} 不得再自带审计文案字面量`)
+  }
 })

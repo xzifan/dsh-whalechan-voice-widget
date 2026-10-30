@@ -233,6 +233,19 @@ test('classified greeting failures name the fix instead of asking to retry', asy
   }
 })
 
+// 预设试听走的是 service.js 的合成包装，与 realtime 合成层是两个写入点；
+// 两边必须写出同一种审计文本（同一条 `Speech synthesis failed (...)` 构造）。
+test('预设试听失败的审计文本带上分类与 code，与合成层同格式', async t => {
+  for (const [greetingFailure, , code, upstream] of CLASSIFIED) {
+    const f = await fixture(t, { greetingFailure })
+    await f.post('generate')
+    const errors = (await f.query('audit')).records.filter(r => r.kind === 'error')
+    assert.equal(errors.length, 1, '一次失败只落一条 error 审计')
+    assert.match(errors[0].text, new RegExp(`^Speech synthesis failed \\(HTTP \\d+, [a-z-]+, ${code}\\)$`))
+    assert.doesNotMatch(errors[0].text, new RegExp(upstream), '上游原文不得进审计')
+  }
+})
+
 test('unclassified, upstream and classified generation failures keep their contract', async t => {
   const upstream = await fixture(t, { greetingFailure: { status: 500, body: { code: 'InternalError', message: 'upstream secret boom' } } })
   const generated = await upstream.post('generate')

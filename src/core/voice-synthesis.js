@@ -6,7 +6,7 @@ import { getTtsProfile } from './tts-config.js'
 import { synthesizeHttpTts } from './tts-http.js'
 import { audioDurationSeconds } from './audio-duration.js'
 import { numericUsage } from './audit-log.js'
-import { synthesizeTts, MODEL_TTS, MODEL_TTS_SYNTH } from './voice-design.js'
+import { synthesizeTts, MODEL_TTS, MODEL_TTS_SYNTH, synthesisFailureText } from './voice-design.js'
 import { resolveBreezeLanguage, normalizeBreezeProfile } from './breeze-voices.js'
 
 // Minimal key-file reader for a provider profile (env-style KEY=value files).
@@ -78,7 +78,7 @@ export function createVoiceSynthesis({ getSettings, credential, modelCredential,
     } catch (error) {
       if (context.signal?.aborted) throw error
       await audit.append({ ...record, status: error.status === 499 ? 'cancelled' : 'failed', usage: null })
-      await audit.append({ ...context, ...metadata, kind: 'error', status: 'failed', text: `Speech synthesis failed (HTTP ${Number.isInteger(error.status) ? error.status : 502})`, usage: null })
+      await audit.append({ ...context, ...metadata, kind: 'error', status: 'failed', text: synthesisFailureText(error), usage: null })
       throw error
     }
   }
