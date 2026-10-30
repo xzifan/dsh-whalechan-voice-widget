@@ -1109,3 +1109,27 @@
 **下次可做**：清单里已无可做的 `- [ ]`（5 条全部人堵），下一班走第 7 步提候选；上一轮未选的两条仍在案——「实时指令缺『`edit` 前先 `read`』」（审计 `edit: cannot modify … has not been read` 4 条）优先，「socket 握手窗口内 `appendAudio`/`commit` 被静默丢弃」风险高、收益量级未知，排在后面。
 
 2026-10-30 · patch 发布 0.6.6 · 结果 成功 · 失败原因 无（后端 395 / 前端 105 全绿，health `version=0.6.6` 断言通过，main + `v0.6.6` 已推远端，tarball `artifacts/releases/dsh-voice-workbench-0.6.6.tgz`）
+
+## 2026-10-30 16:20 · 第 7 步再取证：选「握手被拒只发 error 不发 closed」入清单（本轮零实现）
+
+**取活**：`grep '^- \[ \]' BACKLOG.md` 剩 5 条，全是人堵的（`⛔ 阻塞待决策`、夜间冒烟调度「需人拍板」、`[arch]` 状态机属架构决策、「需先定口径归属」、「单独立项」），一条不碰，走第 7 步。开始时无 `.release.lock`，已建 `.work.lock`（收尾已删）。
+
+**只读取证子代理（1 个）**：给的是四类证据方向（空 catch / 静默 return / 测试盲区 / `CHANGELOG.md` 近期修复的「只修一半」/ 审计 jsonl 高频 error / WORKLOG 末尾两条待办核实）。它提三条候选、并明确说「(a) `edit` 前先 `read` 不成立」——**这条我自己复核过，结论一致**：4 条 `edit: cannot modify … has not been read` 全在 `2026-10-28 22:24` 前后同一个 session，而 0.6.3（复用 agent 修「先读后改」守卫）的发布日志是 `.release-logs/20261028T224335-patch.log`（`0.6.2 -> 0.6.3`，22:43:35），失败发生在修复部署前 19 分钟；同一 session 里 `read` 紧挨着 `edit` 且状态 completed。所以上一班 WORKLOG 里排第一的那条待办**作废**，不再占坑。
+
+**候选 1 的证据我自己到源码核了一遍（不采信子代理自评）**：`src/core/realtime-service.js:447` 的 `unexpected-response` 监听只 `emit` error；`/Applications/DSH Desktop.app/Contents/Resources/app/node_modules/ws/lib/websocket.js:943` 是 `else if (!websocket.emit('unexpected-response', req, res)) abortHandshake(...)` —— 有监听就**不进** `abortHandshake`，所以 `emitErrorAndClose` 不跑、`close` 不来；`:902-906` 的 `req.on('timeout')` 是唯一兜底且依赖 socket 空闲（body 已被 `res.resume()` 排空）。`src/core/service.js:385` 只在 `event.type === 'closed'` 才 `settleRealtimeSession`，health 的 `realtime.activeSessions`（`:263`）同源，`test/test-realtime.test.js:436` 的源码守卫只锁 `connect()` 三条 `return`。
+
+**三选一的取舍**：
+
+1. **选中**：握手被拒只发 `error` 不发 `closed`。理由：0.6.6 刚修完同族三条路径（上游断开 / ws 缺失 / 构造抛错），这条是漏掉的第四条，401 鉴权失败、模型名写错都会走；用户可见代价是停在「我在听」+ 麦克风不放 + 死会话吃并发额度（4 次后 429）。改动只有两行（`req.destroy()` + 补 `closed`），不新增事件类型、不改路由出入参，≈50 行含测试，纯后端单测可锁。
+2. **未选**：非百炼提供方（Breeze 等）的合成失败仍只有「语音服务返回 HTTP n」，与 0.6.6 的宣称不符——`src/core/tts-http.js:153-156` 扔掉上游 body，`failureAdvice()` 因此返回空串、试听页退回「请重试试听」。收益也高，但要新写「读 ≤4 KiB body + 只取 `code` + 不泄原文」的分类器（≈72 行，3 个代码文件），比候选 1 重，排在它后面。
+3. **未选**：握手窗口（CONNECTING）内 `appendAudio`/`commit` 静默丢弃——`src/core/realtime-service.js:63` 的 `send()` 只认 `readyState === 1`，假 socket 全部构造即 `1`，CONNECTING 分支 0 覆盖；核实**仍成立**。但修法要动实时关键路径的发送语义（入队 + flush + 上限 + 打断清队），且丢帧量无指标，风险/收益都比候选 1 差。
+
+**入清单**：BACKLOG `## P2 · 结构性改进` 末尾追加 1 条 `- [ ]`（证据精确到 ws 源码行与两条测试守卫，可直接取活，不需要规划子代理）。
+
+**验收**：本轮零源码改动，只动 `BACKLOG.md`（+2 行）与 `WORKLOG.md`（本节）。仍实跑基线：`npm test` **395/395** exit 0、`npm run test:web` **105/105** exit 0、`npm run format:check` 通过（新增条目的 `['error:handshake_401','closed']` 等通配符都已包进反引号，避免被 Prettier 当强调语法改写）。
+
+**是否用规划子代理**：用了 1 个**只读**子代理，仅用于找候选（禁止改文件、禁止 git 写操作），未用于实现规划——本轮不实现任何条目。
+
+**并发与边界**：`.work.lock` 已删除；无 version 改动、无 `npm pack`、无 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未碰 `~/.dsh/AGENTS.md`，也未创建或修改任何 cron 作业。
+
+**下次可做**：清单新入「握手被拒只发 error 不发 closed」（可直接取，两行改动 + 两个测试文件，不需要规划子代理）；其后依次是上面未选的第 2 条（Breeze 等提供方的合成失败分类）与第 3 条（CONNECTING 窗口丢帧）。
