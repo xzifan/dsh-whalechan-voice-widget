@@ -543,6 +543,38 @@ test('dedicated TTS transcript fills tool audit correlation without creating ano
   assert.equal(state.toolCalls[0].status, 'completed')
 })
 
+test('下一轮开口清掉上一轮的错误横幅，但已结束的会话保留原因', () => {
+  // 可恢复错误（audio_too_large 一类）之后用户继续说话：横幅必须消失，
+  // 否则 UI 会一直挂着一条上游英文原文，而会话其实还在正常工作。
+  const errored = reduceEvents([
+    { type: 'user-transcript-done', text: '第一轮' },
+    { type: 'transcript-delta', text: '在呢' },
+    { type: 'error', message: 'Your session was closed because no response was generated for 180 seconds.' },
+  ])
+  assert.match(errored.error, /no response was generated/)
+  // `closed` 只在真正结束/新一轮开始时置位，错误事件不动它
+  assert.ok(!errored.closed)
+
+  const resumed = applyRealtimeEvent(errored, { type: 'speech-started' })
+  assert.equal(resumed.error, '')
+  assert.equal(resumed.closed, false)
+  assert.equal(resumed.done, false)
+  assert.equal(resumed.listening, true)
+  // 新一轮不得继承上一轮的流式消息状态
+  assert.equal(resumed.messages.every(message => message.status !== 'streaming'), true)
+
+  // 走 user-transcript 那条入口（push-to-talk 没有 speech-started）同样要清
+  const viaTranscript = applyRealtimeEvent(errored, { type: 'user-transcript-done', text: '第二轮' })
+  assert.equal(viaTranscript.error, '')
+
+  // 致命收尾后 `closed` 已置位：错误是用户唯一能看到的结束原因，不得清掉
+  const closed = applyRealtimeEvent(errored, { type: 'closed' })
+  assert.equal(closed.closed, true)
+  const afterClose = applyRealtimeEvent(closed, { type: 'speech-started' })
+  // `closed` 的既有语义不动（新一轮仍会把它置回 false），要守的是错误不被吞掉
+  assert.match(afterClose.error, /no response was generated/)
+})
+
 test('会话结束判据：done 与 closed 都算结束，单轮 done 与可恢复的 error 不算', () => {
   // 服务端 done：手动 end / 上游断连后的收尾
   assert.equal(shouldSettleRealtime({done: true}, []), true)

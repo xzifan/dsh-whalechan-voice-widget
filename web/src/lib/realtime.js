@@ -170,6 +170,10 @@ export function applyRealtimeEvent(state, event) {
   const beginUserTurn = () => {
     finish('user')
     finish('assistant', next.speaking ? 'interrupted' : 'complete')
+    // An error banner belongs to the turn that produced it, so a new user turn
+    // clears it — but a terminally closed session keeps it visible (`closed` is
+    // the end signal; clearing here would hide why the session ended).
+    if (!next.closed) next.error = ''
     next.userText = ''
     next.assistantText = ''
     next.done = false

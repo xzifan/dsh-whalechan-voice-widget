@@ -1086,3 +1086,24 @@
 **并发与边界**：`.work.lock` 已删除；无 version 改动、无 `npm pack`、无 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未碰 `~/.dsh/AGENTS.md`，也未创建或修改任何 cron 作业。
 
 **下次可做**：清单新入「实时错误横幅跨轮不清」（可直接取，证据已精确到行号，单源码文件 + 单测试文件，不需要规划子代理）；紧随其后是上面未选的第 2、3 条。
+
+## 2026-10-30 15:19 · 实时错误横幅跨轮不清（`beginUserTurn` 一行守卫）
+
+**取活**：`grep '^- \[ \]'` 剩 5 条全部是人堵的（第 34 条 `⛔ 阻塞待决策`、第 46 条夜间冒烟调度「需人拍板」、第 58 条 `[arch]` 状态机属架构决策、第 60 条「需先定口径归属」、第 61 条「单独立项」），按规则一条不碰；第一条可做的就是上一轮按三选一追加的「实时错误横幅跨轮不清」。开始时无 `.release.lock`，已建 `.work.lock`（收尾已删）。
+
+**改动**：`web/src/lib/realtime.js` 的 `beginUserTurn()` 在两次 `finish()` 之后、重置 `closed` **之前**加 `if (!next.closed) next.error = ''`（4 行含注释）。顺序是硬约束——先读旧的 `closed` 再置 `false`，否则「已结束的会话保留原因」这条立刻失效。两个入口（`speech-started`、push-to-talk 那条 `user-transcript-*`）都进这个函数，一处改动覆盖两条路径；`playbackError`、事件契约、`closed`/`done` 语义、`main.jsx` 全部零改动。
+
+**实测推翻条目里两处字面描述**：
+
+1. `error` 事件**不清** `closed`，所以错误发生后 `closed` 是 `undefined` 而非 `false`——第一版按条目写的 `assert.equal(errored.closed, false)` 当场红，改成 `assert.ok(!errored.closed)`。
+2. `beginUserTurn` 里 `next.closed = false` 是既有语义，`closed` 之后再来 `speech-started` 会把它置回 `false`。所以「已结束保留错误」只能断言 `error` 仍在，不能连 `closed` 一起断言（第一版写了 `closed === true`，红在 574 行）。语义按条目要求「不动 `closed`」，没有为了让断言好看去改。
+
+**测试（+32 行，新增 1 条前端用例）**：可恢复错误（用审计里那条真实的 `Your session was closed because no response was generated for 180 seconds.`）之后，`speech-started` 与 `user-transcript-done` 两条入口都清空 `error`、`listening` 起来、`done`/流式消息状态按原语义重置；`closed` 置位后再来一轮，`error` 仍在。**变异 2 条各恰红 1 条**：①守卫换 `if (false && …)` → 红在「清空」断言；②去掉 `!next.closed` 恒清 → 红在「结束保留原因」，报错正是 `did not match /no response was generated/`。既有 `:85`（错误即时 surface）与「partial message 保留」两条断言一行未改、仍绿。
+
+**验收**：后端 **395/395**（不变）、前端 104 → **105**、`lint` 0、`format:check` 通过、`build` 成功（`dist/` 已 `git checkout`、新 hash 产物移出仓库）。churn **37 行**（源码 4 / 测试 32 / CHANGELOG 1），远低于 200。`CHANGELOG.md` 的 `[Unreleased]` 补一条（用户可见的行为变化）。
+
+**是否用规划子代理**：未用——单源码文件 4 行、无接口与数据结构变化，条目已精确到函数与行号。
+
+**并发与边界**：`.work.lock` 已删除；无 version 改动、无 `npm pack`、无 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未碰 `~/.dsh/AGENTS.md`，也未创建或修改任何 cron 作业。
+
+**下次可做**：清单里已无可做的 `- [ ]`（5 条全部人堵），下一班走第 7 步提候选；上一轮未选的两条仍在案——「实时指令缺『`edit` 前先 `read`』」（审计 `edit: cannot modify … has not been read` 4 条）优先，「socket 握手窗口内 `appendAudio`/`commit` 被静默丢弃」风险高、收益量级未知，排在后面。
