@@ -1107,3 +1107,5 @@
 **并发与边界**：`.work.lock` 已删除；无 version 改动、无 `npm pack`、无 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未碰 `~/.dsh/AGENTS.md`，也未创建或修改任何 cron 作业。
 
 **下次可做**：清单里已无可做的 `- [ ]`（5 条全部人堵），下一班走第 7 步提候选；上一轮未选的两条仍在案——「实时指令缺『`edit` 前先 `read`』」（审计 `edit: cannot modify … has not been read` 4 条）优先，「socket 握手窗口内 `appendAudio`/`commit` 被静默丢弃」风险高、收益量级未知，排在后面。
+
+2026-10-30 · patch 发布 0.6.6 · 结果 成功 · 失败原因 无（后端 395 / 前端 105 全绿，health `version=0.6.6` 断言通过，main + `v0.6.6` 已推远端，tarball `artifacts/releases/dsh-voice-workbench-0.6.6.tgz`）
