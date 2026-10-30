@@ -1202,3 +1202,23 @@
 **边界**：只做了这 1 条；`.work.lock` 本轮创建、提交前删除；无 version 改动、无 `npm pack`、无 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未碰 `~/.dsh/AGENTS.md`。
 
 **下次可做**：`FAILURE_ADVICE` 的文案写死「百炼」（「凭据无效或无权限，请检查百炼 API Key」），现在非百炼音色撞 401 会照搬这句、指错对象——要么按 provider 分文案（qwen/百炼 vs Breeze/自定义），要么改成不点名的「检查所选语音服务的 API Key」。次选仍是上一轮记下的两条：`audio_too_large` 不锁存、预设状态写盘失败被报成「试听合成失败」且仍宣称「已保存」。
+
+## 2026-10-30 21:40 · 第 7 步取证：审计「只看失败」漏掉 `completed` + `outcome:error`（入清单，本轮不实现）
+
+**本轮为何只取证**：清单剩下的 5 个 `- [ ]` 全部落在 J1 不得自行处理的范围，逐条点名跳过——`:34` `⛔ 阻塞待决策`（husky + lint-staged，前置是 Prettier 大目录豁免）、`:46` `需人拍板`（夜间冒烟接入调度，J1 不自行建定时任务）、`:58` `[arch] 架构决策`（`runTool`/`onMessage` 状态机化）、`:60` `需先定口径归属`（首帧延迟锚点统一）、`:61` `单独立项`（打断后的真实停播时延）。按任务书第 7 步取证：只读子代理提 3 个候选，我选 1 个入清单，本轮不实现。
+
+**测试基线**：`npm test` **399/399**、`npm run test:web` **105/105**（零源码改动，跑一遍确认工作区干净）。
+
+**三个候选**（子代理提出，行号与代码片段由我逐条实读复核，未采信自述）：
+
+- ✅ **入选**：审计「只看失败」与统计页「失败记录」漏掉 `status:completed` + `outcome:error`。实测 `src/core/audit-log.js:243` 的筛选谓词是 `failed && record.kind !== 'error' && !failedStatuses.has(record.status)`，`:144` 的 `failedStatuses` 只有 `['failed','error']`，`:278` 的 `result.failed++` 用同一谓词——三处都不看 `outcome`；而 `web/src/audit-view.jsx:199` 的行内红点**认** `outcome`，`RecordBadges`（`:20`）的失败判定不认，于是同一行在同一页被判成两种结论。测试锁不住：`test/audit-log.test.js:198` 造了 `{kind:'tool',status:'completed',outcome:'error',exitCode:2}`，但 `failed:true` 的断言（`:136`）走另一个 fixture、唯一失败记录是 `kind:'error'`；`grep 'statistics().failed' test/` 零命中。
+- ❌ 未入选：实时会话在 socket 未 OPEN 时把录音与 `commit`/`response` 静默丢弃、接口仍回 `{ok:true}`。证据实读成立——`src/core/realtime-service.js:463` 的 `appendAudio` 只在 `readyState === 1` 时转发，`:467` 的 `commit()` 先改本地 `userSpeaking` 再发帧，`src/core/service.js:420-424` 三条写入路径一律 `{ok:true}`；前端也没有就绪信号可等（`session.created` 只在 `:297` 内部消费，`grep 'session.created' web/src/` 零命中）。这是真缺口，但修法要把 `/api/realtime/audio|commit|response` 从恒 200 改成未就绪 409 并动前端开麦时序，属对外行为变化 + 接口语义变化，工作量（≈3 源码 / 2 测试 / ≈80 行）与风险都高于入选条，应单独一轮做。
+- ❌ 未入选：凭据保存失败把宿主给的具体指令吞成「请重新输入后重试」。证据实读成立——`src/native-services.js:59,62` 抛的是可执行文案（「请在 DSH 模型设置中配置」/「此模型正在使用账户授权，请在 DSH 模型设置中管理」），`src/core/service.js:283` 的裸 `catch` 一律重写成 `DSH 凭据保存失败…`（503），`web/src/voice-layer-view.jsx:37` 再吞成「凭据保存失败，请重新输入后重试」；`grep '凭据保存失败' test/` 零命中。改动最小（≈6 行源码），但只在错误配置凭据时触发，价值面窄于入选条。
+
+**取舍**：入选条是上面那条 `toolOutcome` 工作的收尾缺口（字段写了、白名单加了、红点加了，筛选/聚合/徽章没跟上），改动最小（2 源码 ≈8 行 + 2 测试 ≈30 行）、无接口与数据结构变化、不需要产品决策，且后果对用户直接可见：勾上「只看失败」后正是那些红点行消失，统计页「失败记录」也比红点数少。另外两条价值都成立但都更大或更窄，已写进下方「下次可做」。
+
+**是否用规划子代理**：用了（只读盘点型，非拆解型）。它只做取证，未改任何文件，也未跑 `npm test`；它给出的 6 处「零覆盖」结论我另行用 grep 复核。
+
+**边界**：本轮零源码改动——没有碰 version / `npm pack` / tag / push / `dsh plugin add` / `dsh web` 重启 / `~/.dsh/AGENTS.md`。`.work.lock` 本轮创建、提交后删除。
+
+**下次可做**：按顺序取最上面一个非阻塞条目，即本轮新增的「审计只看失败漏掉 `completed` + `outcome:error`」（≈38 行 / 4 文件）。次选为上面两个未入选候选（实时会话未就绪静默丢弃录音、凭据失败文案被吞），二者都还不在清单里，要动需再走一次第 7 步取证。
