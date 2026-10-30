@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert'
-import { designVoice, deleteBailianVoice, synthesizeTts, VOICE_PRESETS, DEFAULT_VOICE_ID, readDashKey, MODEL_TTS, MODEL_RT } from '../src/core/voice-design.js'
+import { designVoice, deleteBailianVoice, failureDetail, synthesizeTts, VOICE_PRESETS, DEFAULT_VOICE_ID, readDashKey, MODEL_TTS, MODEL_RT } from '../src/core/voice-design.js'
 import { toolDefinitions, REALTIME_INSTRUCTIONS, realtimeInstructions, DEFAULT_TOOLS } from '../src/core/realtime-service.js'
 
 function fakeFetch(handler) { return async (url, options) => { const result = await handler(url, options); return { ok: result.ok !== false, status: result.status || 200, json: async () => result.json, arrayBuffer: async () => result.buffer || new ArrayBuffer(0) } } }
@@ -77,6 +77,35 @@ test('designVoice without clone skips realtime step', async () => {
   const result = await designVoice({ key: 'k', description: 'x', cloneToRealtime: false, fetcher })
   assert.equal(result.realtimeVoiceId, '')
   assert.equal(result.designVoiceId, 'd2')
+})
+
+test('problem() 把失败分类写进 message，且不回显上游原文', async () => {
+  const cases = [
+    ['ModelNotFoundException', 'The model does not exist.', 'model-unavailable', '音色模型不可用'],
+    ['Throttling', 'insufficient balance', 'quota-or-balance', '配额或余额不足'],
+    ['InvalidApiKey', 'invalid api key', 'authorization', '凭据无效或无权限'],
+    ['InternalError', 'internal error, request id abc123', 'upstream', '上游返回错误'],
+  ]
+  for (const [code, upstream, category, label] of cases) {
+    const fetcher = fakeFetch(async () => ({ ok: false, status: 400, json: { code, message: upstream } }))
+    await assert.rejects(() => synthesizeTts({ key: 'k', text: '你好', fetcher }), error => {
+      assert.equal(error.safe.category, category)
+      assert.equal(error.safe.code, code)
+      assert.ok(error.message.includes(label), `message 应含分类短语「${label}」，实际：${error.message}`)
+      assert.ok(error.message.includes(code), `message 应含 safe.code，实际：${error.message}`)
+      assert.ok(!error.message.includes(upstream), `message 不得回显上游原文，实际：${error.message}`)
+      assert.match(error.message, /^百炼音色请求失败：/)
+      return true
+    })
+  }
+})
+
+test('failureDetail 给审计用的单行摘要：状态码 + 分类 + code，缺 code 时不编造', async () => {
+  const withCode = Object.assign(new Error('x'), { name: 'VoiceNativeError', status: 429, safe: { status: 429, code: 'Throttling', category: 'quota-or-balance' } })
+  assert.equal(failureDetail(withCode), 'HTTP 429, quota-or-balance, Throttling')
+  const noCode = Object.assign(new Error('x'), { name: 'VoiceNativeError', status: 499 })
+  assert.equal(failureDetail(noCode), 'HTTP 499, upstream')
+  assert.equal(failureDetail(Object.assign(new Error('x'), { safe: { code: 'unknown' } })), 'HTTP 502, upstream')
 })
 
 test('designVoice redacts no key and rejects bad status', async () => {

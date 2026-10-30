@@ -82,7 +82,7 @@
 - 同会话内 `set_tts_provider('mimo')` 后 `get_voice_config` 返回 `provider === 'mimo'`（证明注入的是 live getter）。
 - Breeze 下 `design_voice` / `apply_voice` / `delete_voice` 抛 400 且 message 精确等于 `breezeDisabled`。
 - 非 qwen 下 `list_voice_presets` 返回 `{presets:[],candidates:[],note}` 三键齐全。
-- `design_voice` 失败时 audit 恰好追加 1 条 `kind:'error'`，`text` 匹配 `/^Voice design failed \(HTTP \d+\)$/`。
+- `design_voice` 失败时 audit 恰好追加 1 条 `kind:'error'`，`text` 匹配 `/^Voice design failed \(HTTP \d+, [a-z-]+(, [A-Za-z0-9_.-]+)?\)$/`（2026-10-30 起 text 带失败分类与 `safe.code`，不再只有 HTTP 码）。
 - `__settingsChanged` / `__voiceSettingsPatch` 仍被 session 转成 `voice-settings-changed` 事件。
 
 **步骤 3**

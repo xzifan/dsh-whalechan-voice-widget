@@ -76,10 +76,15 @@ test('非 qwen 提供方取预设返回三键空表；design_voice 失败只写�
   h.current().tts_voice_provider = 'qwen'
   const context = { turnId: 'turn-1', sessionId: 's-1' }
   // Voice design failed 的审计记录写在 dispatchRealtimeTool 的 catch 里（runVoiceTool 只抛）。
-  await assert.rejects(h.bridge.dispatchRealtimeTool('design_voice', { description: '温柔的女声' }, { use_tts_voice: true }, new Set(['design_voice']), '/w', context, emptyVoiceState()))
+  await assert.rejects(h.bridge.dispatchRealtimeTool('design_voice', { description: '温柔的女声' }, { use_tts_voice: true }, new Set(['design_voice']), '/w', context, emptyVoiceState()), error => {
+    // 模型侧拿到的是同一条 message：必须说明哪一类失败，不能只有 HTTP 码。
+    assert.match(error.message, /上游返回错误/)
+    assert.match(error.message, /NonJsonResponse/)
+    return true
+  })
   assert.equal(h.audit.length, 1)
   assert.equal(h.audit[0].kind, 'error')
-  assert.match(h.audit[0].text, /^Voice design failed \(HTTP \d+\)$/)
+  assert.match(h.audit[0].text, /^Voice design failed \(HTTP 500, upstream, NonJsonResponse\)$/)
   assert.equal(h.audit[0].sessionId, 's-1')
 })
 
@@ -147,7 +152,7 @@ test('delete_voice 失败如实报错、保留候选可重试、只写一条上�
   assert.deepEqual(state.list().map(c => c.designVoiceId), ['design-9'])
   assert.equal(h.audit.length, 1)
   assert.equal(h.audit[0].kind, 'error')
-  assert.match(h.audit[0].text, /^Voice delete failed \(HTTP 500\)$/)
+  assert.match(h.audit[0].text, /^Voice delete failed \(HTTP 500, upstream, InternalError\)$/)
   assert.equal(h.audit[0].sessionId, 's-1')
 
   // 修好上游后重试：候选还在，所以重试能真的删掉并释放配额。

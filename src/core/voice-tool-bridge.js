@@ -3,7 +3,7 @@
 // 闭包变量，传值快照会打挂 voice-presets-cache 与 voice-settings-persistence；
 // 本模块自身零可变态、不缓存任何 settings 读取。
 import { BREEZE_PRESET_VOICES, BREEZE_ZH_VOICES, normalizeBreezeProfile } from './breeze-voices.js'
-import { designVoice, deleteBailianVoice, voiceAlreadyGone, VOICE_PRESETS, DEFAULT_VOICE_ID, MODEL_TTS } from './voice-design.js'
+import { designVoice, deleteBailianVoice, voiceAlreadyGone, failureDetail, VOICE_PRESETS, DEFAULT_VOICE_ID, MODEL_TTS } from './voice-design.js'
 import { spokenText } from './voice-candidate.js'
 import { DEFAULT_TOOLS } from './realtime-protocol.js'
 
@@ -136,8 +136,11 @@ export function createVoiceToolBridge({ getSettings, persistSettings, credential
       }
       if (failed.length) {
         const detail = failed.map(f => `${f.voiceId || '(空 id)'}${f.code ? ` ${f.code}` : ''}（HTTP ${f.status}）`).join('、')
+        // Carry the first failure's category/code so the audit line says which
+        // upstream condition hit instead of only an HTTP status.
         throw Object.assign(new Error(`候选音色删除失败：${detail}。配额尚未释放，候选已保留，可以重试删除。`), {
           name: 'VoiceNativeError', status: failed[0].status, upstream: true, failed: failed.map(f => f.voiceId),
+          safe: { status: failed[0].status, code: failed[0].code || '', category: 'upstream' },
         })
       }
       voiceState.forget(candidate)
@@ -153,11 +156,12 @@ export function createVoiceToolBridge({ getSettings, persistSettings, credential
   async function dispatchRealtimeTool(name, args, rt, allowedTools, workspace, context, voiceState) {
     if (voiceToolNames.has(name)) {
       try { return await runVoiceTool(name, args, rt, context, voiceState) } catch (error) {
-        const status = Number.isInteger(error.status) ? error.status : 502
-        if (name === 'design_voice' && s().tts_voice_provider !== 'breeze') await audit.append({ ...context, kind: 'error', provider: 'bailian', model: 'voice-enrollment', status: 'failed', text: `Voice design failed (HTTP ${status})`, usage: null })
+        // The audit line must say *why* it failed: the model gets the same detail
+        // in its output, and "only an HTTP code" is unactionable after the fact.
+        if (name === 'design_voice' && s().tts_voice_provider !== 'breeze') await audit.append({ ...context, kind: 'error', provider: 'bailian', model: 'voice-enrollment', status: 'failed', text: `Voice design failed (${failureDetail(error)})`, usage: null })
         // Only upstream delete failures are audited: a local 400 (no such candidate)
         // is already visible as a failed tool call and is not a quota problem.
-        if (name === 'delete_voice' && error.upstream) await audit.append({ ...context, kind: 'error', provider: 'bailian', model: 'voice-enrollment', status: 'failed', text: `Voice delete failed (HTTP ${status})`, usage: null })
+        if (name === 'delete_voice' && error.upstream) await audit.append({ ...context, kind: 'error', provider: 'bailian', model: 'voice-enrollment', status: 'failed', text: `Voice delete failed (${failureDetail(error)})`, usage: null })
         throw error
       }
     }

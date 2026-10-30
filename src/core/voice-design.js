@@ -22,12 +22,38 @@ export async function readDashKey(keyFile = '~/.dsh/secrets/bailian.env') {
   return ''
 }
 
+// `problem()` already knows which class of failure it saw, but until now only
+// scripts/nightly-smoke.mjs read it: every UI and model-facing error said
+// "百炼音色请求失败" whether the model was retired, the balance was empty or the
+// key was wrong. Map the category to a phrase that says which step to fix.
+const FAILURE_LABELS = {
+  'model-unavailable': '音色模型不可用（可能已下架或更名）',
+  'quota-or-balance': '配额或余额不足',
+  authorization: '凭据无效或无权限',
+  upstream: '上游返回错误',
+}
+const failureLabel = category => FAILURE_LABELS[category] || FAILURE_LABELS.upstream
+const knownCode = value => {
+  const code = safeCode(value)
+  return code === 'unknown' ? '' : code
+}
+/** One-line failure detail for audit text, e.g. `HTTP 400, quota-or-balance, InvalidApiKey`. */
+export function failureDetail(error) {
+  const status = Number.isInteger(error?.status) ? error.status : 502
+  const code = knownCode(error?.safe?.code)
+  return [`HTTP ${status}`, String(error?.safe?.category || 'upstream'), ...(code ? [code] : [])].join(', ')
+}
+
 function problem(status, data) {
   const message = String(data?.message || data?.error?.message || '')
   const category = /model.*(?:not.*exist|invalid|not.*support)/i.test(message) ? 'model-unavailable'
     : /insufficient|quota|balance|credit/i.test(message) ? 'quota-or-balance'
     : /api.?key|auth|permission/i.test(message) ? 'authorization' : 'upstream'
-  return Object.assign(new Error('百炼音色请求失败'), { name: 'VoiceNativeError', status, safe: { status, code: safeCode(data?.code || data?.error?.code), category } })
+  const code = safeCode(data?.code || data?.error?.code)
+  const detail = [`HTTP ${status}`, ...(knownCode(code) ? [knownCode(code)] : [])].join('，')
+  // The upstream message is only used to pick the category above; it is never
+  // echoed into ours (it can carry account ids and request details).
+  return Object.assign(new Error(`百炼音色请求失败：${failureLabel(category)}（${detail}）`), { name: 'VoiceNativeError', status, safe: { status, code, category } })
 }
 
 /** POST to Bailian customization endpoint. */

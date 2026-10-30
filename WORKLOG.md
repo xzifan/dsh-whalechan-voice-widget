@@ -959,3 +959,27 @@
 **并发**：收尾删 `.work.lock`。未做任何发版动作（无 version 改动、无 `npm pack`、无 tag/push、未装插件、未重启 dsh、未碰 `~/.dsh/AGENTS.md`），也未创建或修改任何 cron 作业。
 
 **下次可做**：清单新入 1 条「音色/合成失败只剩 HTTP 码」（可直接取；证据已精确到文件行号，属单模块改动，不需要规划子代理）；`[ ]` 里剩下的仍是那 5 条硬阻塞。紧随其后可排候选 2（路由三方清单守卫）与候选 3（审计错误码）。
+
+## 2026-10-30 09:20 · 音色/合成失败不再只剩 HTTP 码（分类进 message 与审计）
+
+**条目**：BACKLOG「音色/合成失败只剩 HTTP 码」。`problem()` 早就把失败分成 `model-unavailable` / `quota-or-balance` / `authorization` / `upstream` 四类，但只塞进 `safe.category`，全仓唯一读取方是运维脚本 `scripts/nightly-smoke.mjs`；`Error` 的 message 是常量「百炼音色请求失败」，所以 API 响应体、模型侧 output、审计 text 三处消费者拿到的都只有一个状态码。**未用规划子代理**：条目已精确到文件行号、改动集中在 `src/core` 两个模块、无接口与数据结构变化。
+
+**做了什么（源码 40 行 / 测试 42 行，churn 85 行 + 文档 3 行）**
+
+- `src/core/voice-design.js`：新增 `FAILURE_LABELS`（四类 → 中文短语）与 `failureLabel`、`knownCode`（把 `safeCode` 的 `'unknown'` 视为「没有 code」，不编造）；`problem()` 的 message 从常量改成 `百炼音色请求失败：<分类短语>（HTTP n，<code>）`，`safe` 三键原样保留（`status`/`code`/`category` 不变，夜间冒烟继续读 `safe.category`）；新增导出 `failureDetail(error)` → `HTTP 500, upstream, NonJsonResponse` 单行摘要给审计用。**上游 message 只用于分类，仍不回显**（它可能带账号与请求细节）——这是原有脱敏姿态，本轮没松。
+- `src/core/voice-tool-bridge.js`：`dispatchRealtimeTool` 的 catch 里两条审计 text 改走 `failureDetail`（`Voice design failed (HTTP 500, upstream, NonJsonResponse)` / `Voice delete failed (...)`）；删掉因改动而失去用途的 `const status`；`delete_voice` 的聚合失败错误补 `safe:{status, code, category:'upstream'}`（此前只有 `status`，审计只能默认分类、拿不到 code）。
+- **`src/index.js` 与 `src/core/realtime-service.js` 零改动**：两者都直通 `error.message`（前者拼进 API 响应体，后者 `JSON.stringify({error: errorText})` 给模型），message 一改自动受益——这就是「三处消费者」里另外两处，所以本轮没有新增任何响应字段，接口形状不变。
+- 测试：`test/test-voice-design.test.js` +2 条——四类分类映射（各断言「含分类短语」「含 `safe.code`」「**不含上游原文**」「前缀仍是 `百炼音色请求失败：`」）+ `failureDetail` 三种形态（有 code / 无 safe / code 为 `unknown` 时不编造）。`test/voice-tool-bridge.test.js` 两条锚定正则按新格式改写（`^Voice design failed \(HTTP 500, upstream, NonJsonResponse\)$`、`^Voice delete failed \(HTTP 500, upstream, InternalError\)$`），并为 design_voice 补「模型侧 message 含分类与 code」断言。
+
+**变异验证（两条，各恰好打红预期用例）**
+
+- message 回退成常量 → 红 2：新的分类映射用例 + bridge 里「模型侧 message 含分类」断言（证明三处消费者真的连着这一条 message）。
+- `failureDetail` 只回 `HTTP n` → 红 3：`failureDetail` 用例 + design/delete 两条审计断言。还原后 26/26 绿。
+
+**验收**：`npm test` 后端 389 → **391** 全绿、`npm run test:web` 前端 **104** 全绿、`npm run lint` 0 问题、`npm run format:check` 通过、`npm run build` 成功（构建改了 `dist/` 4 个跟踪文件 + 1 个新 hash 产物，已 `git checkout -- dist/` 并把新产物移出仓库，未进提交）。`docs/refactor-split-plan.md` 里那条旧正则同步改成新格式（它冻结的是审计 text，属设计上的绊线，不是回归）。
+
+**没做**：`/api` 响应体没有加 `code`/`category` 字段——条目要求是「文案变具体」，加字段属接口变化；`src/core/persona.js` 的 `TOOL_HONESTY_RULES` 未动（规则本来就要求如实说明，缺的是信息不是规则）。
+
+**并发**：本轮开始前无 `.release.lock`，已建 `.work.lock` 并在收尾删除。未做任何发版动作（无 version 改动、无 `npm pack`、无 tag/push、未装插件、未重启 dsh、未碰 `~/.dsh/AGENTS.md`），也未创建或修改任何 cron 作业。
+
+**下次可做**：清单里剩下的 `- [ ]` 全是硬阻塞（`⛔ 阻塞待决策`、`需人拍板`、`需先定口径归属`、`单独立项` 各一条，外加 `[arch]` 那条要先把时序语义定下来），下一班应走第 7 步从证据提候选。
