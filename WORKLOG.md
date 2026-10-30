@@ -1335,3 +1335,19 @@
 **边界**：没有碰 version / `npm pack` / `git tag` / `git push` / `dsh plugin add` / `dsh web` 重启 / `~/.dsh/AGENTS.md`。`.work.lock` 本轮创建、提交前删除。
 
 **下次可做**：实现本轮新入清单的凭据错误透传（≈45 行 / 3 文件，可用「`VoiceNativeError` 与 plain `Error` 两条断言必须同时绿」做变异验证）；次选 ②预设写盘失败误报（≈60-70 行 / 2 文件，`chmod 0500` 可确定性构造）、③`test/audit-log.test.js:258` 的假红（3-5 行，0.602% 已用探针复现）。
+
+## 2026-10-31 03:19 · 凭据保存失败透传宿主的可执行指令（不再压成「请重新输入后重试」）
+
+**做了什么**（1 条清单项，未用规划子代理——条目已精确到文件行号、改动是单点接线、无接口与数据结构变化）
+
+- `src/core/service.js`（+7/−1）：`/api/credentials/save` 的裸 `catch` 改成收 `error`，只对 `error.name === 'VoiceNativeError'` 透传——`throw new RequestError(error.message, Number.isInteger(error.status) ? error.status : 503)`；其余异常仍掩成常量 503「DSH 凭据保存失败，请检查宿主凭据服务；原配置未在插件中另存」。`error.status` 不是整数时回落 503，否则 `Response.json` 会拿到 `undefined` 状态、`index.js` 的 `safe ? error.status : 500` 也兜不住。
+- `web/src/lib/core.js`（+6）：新增纯函数 `errorText(error, fallback)`（服务端 message 非空则用它，trim 后为空才回落），`web/src/voice-layer-view.jsx`（+1 import / 改 1 行）的保存失败文案改成 `errorText(error, '凭据保存失败，请重新输入后重试。')`；`status` 检查那条路径的文案一字未动（契约里没有它）。下沉成 lib 纯函数是因为 `npm run test:web` 是纯 `node:test`，`.jsx` 里那一行无法单测。
+- `src/index.js`、`src/native-services.js` **零改动**：前者早就把 `VoiceNativeError` 的 message/status 原样出成响应，后者 `failure()` 早就有具体文案——断点只有 service 那一层。
+- 测试：`test/model-credential-service.test.js` 的 fixture 加 `saveError` 注入口，新增 1 条用例（带 409 的宿主拒绝 → 状态码与文案原样到达且密钥不回显；不带 status 的宿主拒绝 → 503 + 原文案；两条 `saves` 都为空、凭据状态仍 `ready:false`）；`web/src/lib/core.test.js` 新增 1 条 `errorText` 用例（服务端文案优先、trim、无 detail 时回落、`undefined`/`null`/`{}`/空串/非字符串 message 六种回落）。
+- `CHANGELOG.md` `[Unreleased]` 补 1 条；不改 version、不 pack、不 tag、不 push、不碰 dsh。
+
+**验证**：后端 **404 → 405**、前端 **108 → 109** 全绿；`lint` 0、`format:check` 通过（`src/`、`test/`、`web/src/` 仍在 `.prettierignore` 账本里，不受影响）、`build` 成功（`dist/` 已 `git checkout`，新 hash 产物 `index-DGRqF9HE.js` 移出仓库）。**变异 2 条各恰好红 1 条**：①service 的 catch 退回裸 `catch` → 只红新那条后端用例（既有 `failSave:true` 的掩码用例仍绿，证明「未知异常仍掩码」没被放松）；②`errorText` 恒回 `fallback` → 只红新那条前端用例。两条都从备份还原后重跑全量。churn **55 行**（+51/−4）。
+
+**欠**：没跑浏览器 e2e——五个 `test/browser*.py` 都把 `/api/credentials/save` mock 成成功响应，覆盖不到这条失败路径；要给 `voice-layer-view.jsx` 那行加断言得先给 `Harness` 加一个「保存失败」路由变体，属另一条。
+
+**下次可做**：清单里唯一的 `- [ ]` 本轮已做掉，后端/前端清单均见底；下一班按第 7 步重新取证。上两班留下的候选仍在：①预设状态写盘失败被报成「试听合成失败」且仍宣称「已保存」（≈60-70 行 / 2 文件，`chmod 0500` 可确定性构造）；②`audio_too_large` 每帧重复上报 error 并挤爆 256 条事件环；③`test/audit-log.test.js:258` 的 `search:'900'` 假红（约 0.6%，已复现）。

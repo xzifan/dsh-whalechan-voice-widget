@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {bridgeRequest, createRequestGate, normalizeSettings, redistributeWeights, ENDPOINT_METHODS} from './core.js'
+import {bridgeRequest, createRequestGate, normalizeSettings, redistributeWeights, ENDPOINT_METHODS, errorText} from './core.js'
 
 test('linked mix remains integral, bounded and totals 100 across zero and extreme weights', () => {
   for (const initial of [[60, 40, 0], [100, 0, 0], [0, 0, 0], [1, 1, 98]]) {
@@ -70,4 +70,14 @@ test('iframe bridge validates origin/source/id and abort removes listeners and i
   assert.equal(messages.at(-1).message.type, 'voice-workbench:abort')
   assert.equal(messages.at(-1).origin, window.location.origin)
   delete globalThis.window
+})
+
+test('errorText prefers the server reason and falls back only when there is none', () => {
+  const fallback = '凭据保存失败，请重新输入后重试。'
+  assert.equal(errorText(new Error('此模型正在使用账户授权，请在 DSH 模型设置中管理'), fallback), '此模型正在使用账户授权，请在 DSH 模型设置中管理')
+  // 服务端文案带首尾空白时不能原样透出，否则提示条会出现空行。
+  assert.equal(errorText(new Error('  请在 DSH 模型设置中配置  '), fallback), '请在 DSH 模型设置中配置')
+  // api() 在拿不到 detail 时会造「请求失败（503）」，那是壳不是原因，但仍比空串有信息。
+  assert.equal(errorText(new Error('请求失败（503）'), fallback), '请求失败（503）')
+  for (const empty of [undefined, null, {}, new Error(''), new Error('   '), {message: 42}]) assert.equal(errorText(empty, fallback), fallback)
 })

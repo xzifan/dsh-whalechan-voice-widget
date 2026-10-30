@@ -109,4 +109,10 @@ export async function api(endpoint, {signal, ...body} = {}, method = 'POST') {
   }
   return payload || {}
 }
+// 服务端已经写明原因（例如「此模型正在使用账户授权，请在 DSH 模型设置中管理」）时
+// 优先展示它：用通用文案会把人送进「重新输入再重试」的死循环，而这类失败重输无效。
+export function errorText(error, fallback) {
+  const detail = typeof error?.message === 'string' ? error.message.trim() : ''
+  return detail || fallback
+}
 export function newId() { return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}` }

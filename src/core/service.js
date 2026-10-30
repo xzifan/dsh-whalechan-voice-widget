@@ -280,7 +280,13 @@ export function createService(config = {}, dependencies = {}) {
       requireValue(typeof dependencies.configureModelCredential === 'function', '当前宿主不支持保存凭据，请在 DSH 模型设置中配置', 503)
       audit.addSecret(body.key.trim())
       try { await dependencies.configureModelCredential(body.provider, body.key.trim()) }
-      catch { throw new RequestError('DSH 凭据保存失败，请检查宿主凭据服务；原配置未在插件中另存', 503) }
+      // 宿主拒绝保存时给的是可执行指令（「请在 DSH 模型设置中配置」），原样透传它的
+      // message 与状态码；否则前端只能提示「重新输入后重试」，而账户授权型提供方重输
+      // 永远不会成功。未知异常可能带宿主内部细节（甚至密钥），必须继续掩成常量 503。
+      catch(error) {
+        if(error?.name==='VoiceNativeError'&&typeof error.message==='string')throw new RequestError(error.message,Number.isInteger(error.status)?error.status:503)
+        throw new RequestError('DSH 凭据保存失败，请检查宿主凭据服务；原配置未在插件中另存', 503)
+      }
       return { body: { providers: await credentialStatuses() } }
     }
     const presetAction = path.match(/^\/api\/voice-presets\/(save|generate|apply|greeting)$/)?.[1]

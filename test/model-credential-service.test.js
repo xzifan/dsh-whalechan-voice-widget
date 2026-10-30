@@ -6,7 +6,7 @@ import {join} from 'node:path'
 import {createService} from '../src/core/service.js'
 import {TTS_BUILTINS} from '../src/core/tts-config.js'
 
-async function fixture(t,{keys={},failResolve=false,failSave=false}={}) {
+async function fixture(t,{keys={},failResolve=false,failSave=false,saveError=null}={}) {
   const dir=await mkdtemp(join(tmpdir(),'model-credential-service-'))
   const resolutions=[],saves=[],sockets=[],network=[]
   class Socket {
@@ -22,6 +22,7 @@ async function fixture(t,{keys={},failResolve=false,failSave=false}={}) {
     },
     configureModelCredential:async(provider,key)=>{
       if(failSave)throw Error('private-secret-in-save-exception')
+      if(saveError)throw saveError
       saves.push({provider,key});keys[provider]=key
     },
     fetch:async(url,options)=>{network.push({url,options});throw Error('Unexpected network request')},
@@ -121,6 +122,27 @@ test('resolver and save exceptions do not leak their messages into states or err
   await assert.rejects(h.save({provider:'bailian',key:'not-persisted-key'}),error=>error.status===503&&!/private-secret/.test(error.message))
   const settings=(await h.config()).settings;settings.realtime.use_tts_voice=false
   await assert.rejects(h.service.handle('POST','/api/realtime/start',{settings}),error=>error.status===503&&!/private-secret/.test(error.message))
+})
+
+test('host-issued credential guidance reaches the caller instead of a constant 503',async t=>{
+  const authorization=Object.assign(new Error('此模型正在使用账户授权，请在 DSH 模型设置中管理'),{name:'VoiceNativeError',status:409})
+  const h=await fixture(t,{saveError:authorization})
+  await assert.rejects(h.save({provider:'bailian',key:'never-echoed-key'}),error=>{
+    assert.equal(error.status,409)
+    assert.equal(error.message,'此模型正在使用账户授权，请在 DSH 模型设置中管理')
+    assert.doesNotMatch(error.message,/never-echoed-key/)
+    return true
+  })
+  const noStatus=new Error('当前模型凭据无法在此编辑，请在 DSH 模型设置中配置')
+  noStatus.name='VoiceNativeError'
+  const fallback=await fixture(t,{saveError:noStatus})
+  await assert.rejects(fallback.save({provider:'bailian',key:'never-echoed-key'}),error=>{
+    assert.equal(error.status,503,'宿主异常没带状态码时仍要给一个明确状态')
+    assert.equal(error.message,noStatus.message)
+    return true
+  })
+  assert.deepEqual(h.saves,[]);assert.deepEqual(fallback.saves,[])
+  for(const result of [h,fallback])for(const provider of Object.values((await result.status()).providers))assert.equal(provider.ready,false)
 })
 
 test('configuring Volcengine credentials does not activate its unavailable realtime model',async t=>{

@@ -9,6 +9,7 @@ import {Select,SelectTrigger,SelectValue,SelectContent,SelectItem} from './compo
 import {Switch} from './components/ui/switch'
 import {BrainCircuit,Volume2,ChevronDown} from 'lucide-react'
 import {VOICE_PROVIDERS,REALTIME_PROVIDERS} from './lib/voice-layer.js'
+import {errorText} from './lib/core.js'
 import {TTS_BUILTINS} from '../../src/core/tts-config.js'
 import {BREEZE_PRESET_VOICES,BREEZE_ZH_VOICES} from '../../src/core/breeze-voices.js'
 import {VoicePresetsEditor} from './voice-presets-editor.jsx'
@@ -34,7 +35,7 @@ function ProviderCredentials({provider,label,status,disabled,onCheck,onSave}){
       if(kind==='save'){setEditing(false);setMessage('已保存到 DSH；未测试远端鉴权。')}
       else setMessage('状态已刷新；未发起模型请求。')
     }catch(error){
-      if(active.current&&error.name!=='AbortError')setMessage(kind==='save'?'凭据保存失败，请重新输入后重试。':'状态读取失败，请稍后重试。')
+      if(active.current&&error.name!=='AbortError')setMessage(kind==='save'?errorText(error,'凭据保存失败，请重新输入后重试。'):'状态读取失败，请稍后重试。')
     }finally{if(active.current){setBusy('');request.current=null}}
   }
   const cancel=()=>{clear();setEditing(false);setMessage('')}
