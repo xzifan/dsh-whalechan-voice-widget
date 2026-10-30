@@ -983,3 +983,23 @@
 **并发**：本轮开始前无 `.release.lock`，已建 `.work.lock` 并在收尾删除。未做任何发版动作（无 version 改动、无 `npm pack`、无 tag/push、未装插件、未重启 dsh、未碰 `~/.dsh/AGENTS.md`），也未创建或修改任何 cron 作业。
 
 **下次可做**：清单里剩下的 `- [ ]` 全是硬阻塞（`⛔ 阻塞待决策`、`需人拍板`、`需先定口径归属`、`单独立项` 各一条，外加 `[arch]` 那条要先把时序语义定下来），下一班应走第 7 步从证据提候选。
+
+## 2026-10-30 10:20 · 第 7 步：从证据追加「预设页吞掉失败分类」条目（本轮零实现）
+
+**取活**：`grep '^- \[ \]' BACKLOG.md` 仍是 5 条，全部人堵（第 34 条 `⛔ 阻塞待决策`、第 46 条夜间冒烟调度「需人拍板」、第 58 条 `[arch]` 要改 `continueResponse`/`deliverDone` 时序语义、第 60 条「需先定口径归属」、第 61 条「单独立项」），按作业规则一律不碰，走第 7 步。开始时无 `.release.lock`，建 `.work.lock`（`2026-10-30T10:17:49+0800`），收尾删除。
+
+**用了只读取证子代理（1 个，全程只读，禁止改仓库、禁止 git 写）**：要求它从源码缺口（空 catch / 未验证的成功 / 同一份清单多处维护）、测试缺口（用 `grep` 反证某失败路径零断言）、`voice-audit.jsonl` 里 `kind:error` 的聚类、以及 CHANGELOG / WORKLOG 里「没做、刻意不做」的段落提 3 个候选，并明确告知 5 条硬阻塞不得改头换面重提。它交回的三条，我**逐条自己复核**过证据（不是照抄它自评）：
+
+- **①** `src/core/voice-presets.js:93` 的试听合成是裸 `catch { return { greetingError: … '请重试试听' } }`；同文件 `generate` 的 catch 除 `409` 外一律重写成「音色生成失败，请检查百炼配置后重试」并丢掉 `e.message` / `e.safe`。实测 `grep greetingError` 只有 4 处消费者，`test/voice-presets.test.js:79,83` 与 `test/voice-presets-cache.test.js:36` 都只断言 truthy / `typeof === 'string'`，`grep '请重试试听' test/` 零命中。
+- **②** `src/core/tts-http.js:153-155` 非百炼提供方失败只回 `语音服务返回 HTTP n`，body 直接 `cancel()` 丢弃；`grep '语音服务返回 HTTP' test/` 零命中。
+- **③** 合成失败的审计 text 在 `src/core/service.js:187` 与 `src/core/voice-synthesis.js:81` 是两份副本，都还是裸 `Speech synthesis failed (HTTP n)`，而 `test/voice-synthesis.test.js:91` 的正则把旧格式锁死。
+
+**入选：候选 ①「预设页把已分类的失败吞成『请重试』」**，作为 `- [ ]` 追加在清单底部、紧贴「需要产品决策」小节之前（保证下一班按顺序直接取到）。取舍理由：它是三条里唯一**用户当场踩到且被引向错误动作**的——配额/凭据/模型下架这三类重试永不会成功，UI 却显示「请重试试听」并给一个 `重试试听` 按钮（`web/src/voice-presets-editor.jsx:46`），用户照做就是确定性死循环，每次还白烧一次付费的 `design`/合成调用；而且 `CHANGELOG.md` 的 `[Unreleased]` 上一轮已经宣称「预设试听合成…错误文案现在写明失败分类」，在预设页这条路径上并不成立，属已发布说明与实现不符。改动面 1 个源码文件（`failureLabel` 已有现成导出）+ 2 个测试文件，≈70 行，无接口变化、不需产品决策。
+
+**未选（备查，下一轮可直接取用）**：候选 ② 风险在「要读上游 body 才能分类」，必须限 4 KB、只认 JSON content-type、只取 `code`/`type` 映射短语，落错就会回显上游原文——比 ① 更需要小心，且只影响非 qwen 提供方（少数配置）。候选 ③ 是同一条 CHANGELOG 宣称在**审计侧**的另一半缺口（两份副本已实际漂移），改动最小最安全，但与 ① 同在「分类只走了一条路径」这一族，按「一轮一条」先做用户可见的 ①。
+
+**验收**：本轮**零源码改动**，只动 `BACKLOG.md`（+1 条）与 `WORKLOG.md`（本节），因此没跑 `npm test` / `npm run test:web`（后端 391 / 前端 104 基线不受影响）；跑 `npm run format:check` 确认 markdown 没被 Prettier 打红——S2 之后根目录 md 都在校验范围内，本节所有通配写法（`kind:error`、`[Unreleased]`、`grep '^- \[ \]'`）都已包进反引号，避开「裸 glob 被格式化成 `X-_`」那个坑。
+
+**并发**：收尾删 `.work.lock`。未做任何发版动作（无 version 改动、无 `npm pack`、无 tag/push、未装插件、未重启 dsh、未碰 `~/.dsh/AGENTS.md`），也未创建或修改任何 cron 作业。
+
+**下次可做**：直接取新入的「预设页把已分类的失败吞成『请重试』」（证据已到文件行号、单模块改动，不需要规划子代理，但要注意 `generate` 那条同时被 `web/src/hooks/use-voice-presets.js` 的 `message()` 消费，改文案前先确认前端没有二次拼接）；其后可排候选 ③（合成审计错误码，最小）、候选 ②（非百炼提供方错误分类，需谨慎读 body）。
