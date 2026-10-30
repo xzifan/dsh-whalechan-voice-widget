@@ -940,3 +940,22 @@
 **并发**：开始时无 `.release.lock`，建了 `.work.lock`（2026-10-30T07:17:36+0800），收尾删除。未做任何发版动作（无 version 改动、无 pack/tag/push、未重装插件、未重启 dsh、未碰 `~/.dsh/AGENTS.md`）。
 
 **下次可做**：清单剩下的 `- [ ]` 又是那 5 条硬阻塞（第 34 条 `⛔ 阻塞待决策`、第 46 条夜间冒烟调度需人拍板、第 58 条 `[arch]` 要改时序语义、第 60 条「需先定口径归属」、第 61 条「单独立项」），所以下一班次走第 7 步（只读子代理从证据提 3 个候选）。可优先复用的现成候选 2 个：`error.safe.category` 被整条丢弃（`voice-design.js` 算了四类，主链路只剩 HTTP 码）、路由三方清单无集合级守卫（服务端 23 / `lib/client.js` 22 / `web/src/lib/core.js` 21，`/api/models/check` 与 `/api/health` 缺登记）。
+
+## 2026-10-30 08:23 · 无可做条目 → 3 候选取证，选「音色失败分类被丢弃」入清单（本轮不实现）
+
+**取活**：`grep '^- \[ \]' BACKLOG.md` 只剩 5 条，全部是人堵的（第 34 条 `⛔ 阻塞待决策`、第 46 条夜间冒烟调度「需人拍板」、第 58 条 `[arch]` 要改 `continueResponse`/`deliverDone` 的时序语义、第 60 条「需先定口径归属」、第 61 条「单独立项」），按作业规则一律不碰，走第 7 步。开始时无 `.release.lock`，建 `.work.lock`（2026-10-30T08:17:44+0800）。
+
+**用了只读取证子代理（1 个，全程只读，禁止改仓库、禁止 git 写）**：要求它从三类证据里提 3 个候选——①源码缺口（空 catch / 未验证的成功 / 同一份清单多处维护）；②测试缺口（失败路径零断言，用 grep 反证）；③`voice-audit.jsonl` 里 `kind:error` 的高频类型，加上 CHANGELOG / BACKLOG / WORKLOG 里「没做、刻意不做」的段落。它给的三条主要事实我逐条自己复核过（不是照抄它的自评）：**①** `src/core/voice-design.js:26-30` 的 `problem()` 确实把上游 message 分成 `model-unavailable` / `quota-or-balance` / `authorization` / `upstream` 四类，但只塞进 `safe.category`，`Error` 的 message 是常量「百炼音色请求失败」；全仓 `grep category` 只有 2 处命中，唯一消费者是运维脚本 `scripts/nightly-smoke.mjs:36`。**②** 三份路由清单实测 `src/index.js` 23 条 / `lib/client.js` 22 条 / `web/src/lib/core.js` 21 条，差集恰为 index−client=只有 `/api/health`、client−core=只有 `/api/models/check`；`/api/health` 是**有意**不进前端清单的（`release.sh` 直连插件路由做发布校验，不走 UI 桥），所以守卫不能要求三方相等。**③** `src/core/audit-log.js:58` 的字符串白名单 11 个键（id/sessionId/messageId/turnId/responseId/callId/role/provider/model/status/requestId）里确实没有 `code`，任何上游错误码都在这层被静默丢弃。
+
+**入选：候选 1「音色/合成失败只剩 HTTP 码」**，已作为 `- [ ]` 追加到清单底部、紧贴「需要产品决策」小节之前（保证下一班按顺序就能取到，不会落进要跳过的小节里）。取舍理由：三个候选里只有它是**用户与模型当场可感知的 bug**——`src/core/persona.js` 的 `TOOL_HONESTY_RULES` 明确要求模型「如实说明哪一步没成功、看到的错误是什么」，而 `src/core/realtime-service.js:232` 交给模型的只有 `{error: error.message}`、`src/index.js:44-46` 回给客户端的也只有 `error.message`，于是「配额不够 / 凭据失效 / 模型下架」三种处置方式完全不同的失败，在模型和用户眼里长得一模一样（本机审计里 3 条一模一样的 `Voice design failed (HTTP 400)` 就是证据）。源码改动只有约 10 行，两条锚定正则的绊线明确，≈70 行 churn 在单人轮预算内，不需要产品决策。
+
+**未选（备查，下一轮可直接取用）**：
+
+- 候选 2「路由三方清单集合级守卫」：价值在防漂移，而且已经抓到一处真实不一致（`/api/models/check` 在 `web/src/lib/core.js` 没登记，从 iframe 侧调用只会得到固定的「不支持的工作台操作」且不带路径；该端点当前零调用、零覆盖）。没选的原因是它属**补守卫**而非修 bug，且要先定「`/api/health` 是有意例外」这条口径、落地当天还要补登一行清单。
+- 候选 3「审计记录带上游错误码」：纯增量观测字段（白名单加 `code` + `searchableText` + 前端详情一行），价值在长尾；与候选 1 同源（都在 `voice-tool-bridge.js` 的审计 text 那一带），先做 1 再做 3 可以少改一次同一行，所以排在 1 之后。
+
+**验收**：本轮**零源码改动**，只动 `BACKLOG.md`（+1 条 `- [ ]`）与 `WORKLOG.md`（本节），因此没跑 `npm test` / `npm run test:web`（后端 389 / 前端 104 的基线本轮不受影响）；只跑 `npm run format:check` 确认 markdown 没被 Prettier 打红——S2 之后根目录 md 都在校验范围内，本节所有通配符写法都已包进反引号，避开「裸 glob 被格式化成 `X-_`」那个坑。
+
+**并发**：收尾删 `.work.lock`。未做任何发版动作（无 version 改动、无 `npm pack`、无 tag/push、未装插件、未重启 dsh、未碰 `~/.dsh/AGENTS.md`），也未创建或修改任何 cron 作业。
+
+**下次可做**：清单新入 1 条「音色/合成失败只剩 HTTP 码」（可直接取；证据已精确到文件行号，属单模块改动，不需要规划子代理）；`[ ]` 里剩下的仍是那 5 条硬阻塞。紧随其后可排候选 2（路由三方清单守卫）与候选 3（审计错误码）。
