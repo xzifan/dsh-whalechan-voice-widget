@@ -1066,3 +1066,23 @@
 **没做 / 下次可做**：`web/src/voice-presets-editor.jsx:46` 的「重试试听」按钮在分类失败时仍会渲染（文案已写明重试无效；按分类隐藏需要新增 `retryable` 字段，属接口变化）；`tts-http.js` 非百炼失败只回 `语音服务返回 HTTP n`，要读上游 body 才能分类（需限 4 KB / 只认 JSON / 只取 `code`，单独立项）。
 
 **并发与边界**：`.work.lock` 已在收尾删除；无 version 改动、无 `npm pack`、无 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未碰 `~/.dsh/AGENTS.md`，也未创建或修改任何 cron 作业。未用规划子代理。
+
+## 2026-10-30 14:20 · 第 7 步再取证：可做条目仍全部阻塞，选「实时错误横幅跨轮不清」入清单（本轮零实现）
+
+**取活**：`grep '^- \[ \]' BACKLOG.md` 剩 5 条，全是人堵的（第 34 条 `⛔ 阻塞待决策`、第 46 条夜间冒烟调度「需人拍板」、第 58 条 `[arch]` 状态机属架构决策、第 60 条「需先定口径归属」、第 61 条「单独立项」），按规则一条不碰，走第 7 步。开始时无 `.release.lock`，已建 `.work.lock`。
+
+**只读取证子代理（1 个）**：给了它四类证据方向（TODO/FIXME 注释、测试缺口、`CHANGELOG.md` 的 `[Unreleased]` 逐条核实、`voice-audit.jsonl` 高频失败类型）。它自报「TODO 类 0 命中」「CHANGELOG 7 条宣称全部落地」——这两条我自己复核过：`grep -rn 'TODO\|FIXME\|HACK\|XXX' src lib web/src test scripts` 只命中 `docs/iteration-automation.md` 里的一句作业说明；7 条宣称对应的 `settleRealtimeSession`、`connectionFailed`、`delete_voice` 逐 id 收集、`FAILURE_LABELS`/`failureAdvice`、`synthesisFailureText` 都能在源码里指到。它提的三条候选我也逐条看了源码与审计原文，不是照抄它的自评。
+
+**三选一的取舍**：
+
+1. **选中**：实时错误横幅跨轮不清——`web/src/lib/realtime.js:170-178` 的 `beginUserTurn()` 重置了 5 个一次性字段却不清 `next.error`，清理动作只存在于 `web/src/main.jsx:186`（重新点开始对话）；`error` 写入点在 `:355-357`，渲染无附加条件（`web/src/realtime-view.jsx:83`）。理由：唯一一条**用户每场都能看到、修起来只要 2 行**的缺陷，且清理只落在 `beginUserTurn` 上，不动 `closed`/`done`/`playbackError`，纯 reducer 单测就能锁住，不依赖浏览器门禁。
+2. **未选**：实时指令缺「`edit` 前先 `read`」一条——审计里 `edit: cannot modify … has not been read` 共 4 条，其中 1 个会话 3 秒内连击 3 次（`grep '"outcome":"error"' voice-audit.jsonl` 复核过频次与 sessionId）。改动只有 `src/core/persona.js` 一条规则 + 三条 persona 断言，但它只能锁「规则在且只一次」，锁不住「模型不再撞」，且与 0.6.3 修的 agent 复用条款语义重叠，得先判断是真缺指令还是偶发，留给下一轮。
+3. **未选**：socket 握手窗口内的 `appendAudio`/`commit` 被 `send()` 静默丢弃——`src/core/realtime-service.js:63` 只认 `readyState === 1`，全仓无 `socket.on('open')` 处理，测试里的假 socket 全部构造即 `readyState = 1` 所以盖不到。结构性问题、修法确定（入队 + `open` flush + 上限 + `close` 清队），但**实际丢多少帧没有指标**，收益量级未知，且要动实时关键路径的发送语义，风险高于候选 1，排在后面。
+
+**验收**：本轮零源码改动，只动 `BACKLOG.md`（+1 条 `- [ ]`）与 `WORKLOG.md`（本节）。仍实跑确认基线：`npm test` **395/395** exit 0、`npm run test:web` **104/104** exit 0，`npm run format:check` 通过（S2 之后根目录 md 都在校验范围内，本节与新增条目的通配符都包进了反引号）。
+
+**是否用规划子代理**：用了 1 个**只读**子代理，仅用于找候选（禁止改文件、禁止 git 写操作），未用于实现规划——本轮不实现任何条目。
+
+**并发与边界**：`.work.lock` 已删除；无 version 改动、无 `npm pack`、无 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未碰 `~/.dsh/AGENTS.md`，也未创建或修改任何 cron 作业。
+
+**下次可做**：清单新入「实时错误横幅跨轮不清」（可直接取，证据已精确到行号，单源码文件 + 单测试文件，不需要规划子代理）；紧随其后是上面未选的第 2、3 条。
