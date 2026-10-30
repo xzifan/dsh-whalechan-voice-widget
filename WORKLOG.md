@@ -2,6 +2,28 @@
 
 本轮工作的技术记录：做了什么、怎么验证的、还欠什么。发布记录由 `scripts/release.sh` 自动追加。
 
+## 2026-10-29 · 断句策略层 + 会话质量评估（SDK 前置）
+
+**断句策略（`src/core/endpoint/`）**
+- 注册表 + 降级链：`registerEndpointStrategy` / `resolveEndpointChain` / `createEndpointChain`。
+- 内置两个零依赖策略：`passthrough`（provider 自带语义断句时不插嘴）、`energy-vad`（能量 VAD，链尾兜底）。
+- 降级语义：策略抛错或超时（默认 120ms）→ 禁用该策略并落到下一级，`decision.fallbackFrom` 记录原因；被禁用的策略本回合不再调用。
+- 11 条测试覆盖：静音不误判、句间 300ms 停顿不切断、极短噪声不算一次说话、抛错降级、异步超时降级、空帧不崩、reset/dispose。
+- **尚未接进主链路**：现有 Realtime 走 provider 侧 `smart_turn`（passthrough），本地策略只在未来的级联模式下才有意义，接入点已留好。
+
+**会话质量评估（`src/core/conversation-judge.js` + `scripts/judge-conversation.mjs`）**
+- 确定性规则（入退出码）：空回复、工具失败、会话错误、语言漂移、声称操作但无工具调用、有文字无合成。6 类 14 条测试。
+- LLM 复核（`--llm`，默认不计入退出码）：把回合还原成 payload 喂 qwen-plus，按 rubric 判 pass/score/reasons。
+- 真机跑出结果：7 天内 86 个回合，error 28 个——全部是修复前那批 `edit: file has not been read`。
+- **教训（已写进 rubric）**：LLM 复核会自行加戏——第一版把 `web_search` 查到的天气判成"没有天气工具"、把 `Hello.` 判成失败、把 `outcome: completed` 判成"无法确认成功"。修法两条：① 判定条件做成数据结构（`ok: true/false` 归一），不靠提示词劝说；② LLM 结论默认只作参考，`--strict-llm` 才进门禁。
+- 误报修复：`read` 工具原样念出的 `QXVB` 曾触发"语言漂移"，改为需出现 ≥3 个英文单词才判。
+
+**TypeScript 评估（`docs/typescript-evaluation.md`）**
+- 实测 `tsc --allowJs --checkJs`：`src/core` 37 个类型错，`src/**` 62 个，不是"从零上类型"。
+- 结论：不改写；用 JSDoc + `tsc --noEmit` 拿收益，发 SDK 时 `--emitDeclarationOnly` 出 `.d.ts`。
+
+**验证**：后端 434/434、前端 109/109、lint 干净、build 通过。
+
 ## 2026-10-29 · 核心逻辑抽成 `src/core`（可复用模块第一步）
 
 **为什么**：目标是不依赖 DSH 也能跑（独立 agent core SDK）。审计发现耦合面其实很小——3252 行里只有 6 个文件碰宿主 `ctx`，业务逻辑没有 import 任何宿主包。
