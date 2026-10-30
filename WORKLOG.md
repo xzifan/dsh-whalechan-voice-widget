@@ -1027,3 +1027,19 @@
 **没做 / 下次可做**：①`web/src/voice-presets-editor.jsx:46` 的「重试试听」按钮在分类失败时仍会渲染（文案已写明重试无效，而要按分类隐藏按钮需新增响应字段，条目要点④明令不许），建议下轮单列一条：在后端已能分类的前提下加一个 `retryable` 标志并让按钮跟着走；②候选 ③（`src/core/service.js` 与 `src/core/voice-synthesis.js` 两份 `Speech synthesis failed (HTTP n)` 审计文案副本已漂移）；③候选 ②（`src/core/tts-http.js` 非百炼提供方失败只回 `语音服务返回 HTTP n`，要读上游 body，需限 4 KB / 只认 JSON / 只取 `code`）。
 
 **并发与边界**：收尾删 `.work.lock`。未做任何发版动作（无 version 改动、无 `npm pack`、无 tag/push、未装插件、未重启 dsh、未碰 `~/.dsh/AGENTS.md`），也未创建或修改任何 cron 作业。
+
+## 2026-10-30 迭代（J1 每小时作业）— 可做条目全部阻塞，按三选一补 1 条 BACKLOG（未实现）
+
+**本轮没有代码改动**。取活时 BACKLOG 剩下 5 个 `- [ ]` 全部带阻塞标记，逐条按规则跳过（不改、不实现）：`⛔ 阻塞待决策`（husky + lint-staged 前置是「Prettier 大目录迁移是否豁免 200 行」）、`需人拍板`（夜间冒烟接入调度，且 J1 不自行建定时任务）、`[arch]`（`createRealtimeSession` 剩 228 行只能改状态机，属架构决策）、`需先定口径归属`（首帧延迟锚点）、`单独立项`（打断后真实停播时延要新增记录类型）。按作业规则第 7 步派**只读**子代理从证据提 3 个候选，我复核后选 1 条追加到 BACKLOG 底部。
+
+**三选一的取舍（都复核过，不是照抄子代理）**：
+
+1. **选中**：合成失败审计文本仍只有 HTTP 码（`src/core/service.js:186` + `src/core/voice-synthesis.js:81` 两份 `Speech synthesis failed (HTTP n)`）。理由：有可对照的宣称（`CHANGELOG.md:13` 明写预设试听合成的审计文本带分类与 code）、信息本来就在 `error.safe` 里、`failureDetail()` 已在 `src/core/voice-tool-bridge.js:161,164` 用着，属「实现没跟上文档」的确定缺口；且上一轮 WORKLOG 的「下次可做」已把它列为候选 ③，两轮独立指向同一条。
+2. **未选**：`query({failed:true})` 与 `statistics().failed` 不认 `outcome:error`（`src/core/audit-log.js:243,278`）。证据同样确凿（`test/test-realtime.test.js:289-308` 锁着 `status:'completed'` + `outcome:'error'` 这种行，前端 `web/src/audit-view.jsx:199` 红点已认它、`:20` 徽标不认），但「命令失败算不算一条失败记录」是口径问题，会让统计页可见数字整体变大，属产品判断，不该由 J1 自行定。
+3. **未选**：前端覆盖账本盲区（`web/src/hooks/` 155 行零覆盖仍在 `test:coverage:web` 的 include 里被聚合吞掉、33 个 `.jsx` / 3040 行完全不入账）。价值更高但要一次性把现有缺口全列白名单，等于重写门禁账本，超出单轮 ≤200 行与「一轮一条」的边界。
+
+**测试数**：本轮无代码改动，仍实跑确认基线 **后端 393 / 前端 104 全绿**（`npm test` exit 0、`npm run test:web` exit 0）。
+
+**是否用规划子代理**：用了，但只用于「找候选」的**只读盘点**（禁止改文件与 git 写操作），没有用于实现规划——本轮不实现任何条目。
+
+**并发与边界**：`.work.lock` 已在收尾删除；无 version 改动、无 `npm pack`、无 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未碰 `~/.dsh/AGENTS.md`，也未创建或修改任何 cron 作业。
