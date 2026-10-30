@@ -10,6 +10,10 @@ export const PRESET_GREETING_INSTRUCTION = '用开心、自然、轻快的语气
 const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(k => [k, canonical(value[k])])) : value
 const digest = value => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex')
 const MAX_DESIGNS = 24, MAX_AUDIOS = 12, MAX_AUDIO_BYTES = 24 * 1024 * 1024
+// 状态文件写不进去与「音色生成/合成失败」是两件事：前者改磁盘或权限就好，
+// 后者才该看百炼配置。用一个固定 code 让上游能分开这两类，同时把原始 fs 错误
+// 挂在 cause 上（它的 message 会带状态目录路径，属于本机路径，不发给客户端）。
+const STORE_FAILURE = { code: 'preset-store-failed', message: '音色预设状态写入失败，请检查状态目录的磁盘空间与权限' }
 
 // Persist paid design results before attempting optional preview synthesis.
 export function createVoicePresets({ stateDir, mutate, getSettings, persistSettings, credential, design, synthesize, error, provider = 'qwen', profileFor }) {
@@ -35,10 +39,17 @@ export function createVoicePresets({ stateDir, mutate, getSettings, persistSetti
   ready.catch(() => {})
   function trimAudio() { while (audios.reduce((n, v) => n + v.greeting.audio.length, 0) > MAX_AUDIO_BYTES) audios.shift() }
   async function store(next = presets) {
-    await mkdir(stateDir, { recursive: true, mode: 0o700 })
-    const tmp = join(stateDir, `voice-presets-${randomUUID()}.tmp`)
-    await writeFile(tmp, JSON.stringify({ version: 2, presets: next, designs, audios }), { mode: 0o600 })
-    await rename(tmp, path)
+    try {
+      await mkdir(stateDir, { recursive: true, mode: 0o700 })
+      const tmp = join(stateDir, `voice-presets-${randomUUID()}.tmp`)
+      await writeFile(tmp, JSON.stringify({ version: 2, presets: next, designs, audios }), { mode: 0o600 })
+      await rename(tmp, path)
+    } catch (e) {
+      const failure = error(STORE_FAILURE.message, 500)
+      failure.code = STORE_FAILURE.code
+      failure.cause = e
+      throw failure
+    }
     presets = next
   }
   function profileIdentity(settings) {
@@ -85,7 +96,14 @@ export function createVoicePresets({ stateDir, mutate, getSettings, persistSetti
         const result = await synthesize({ key: auth.key, host: settings.realtime?.api_host || undefined, text: PRESET_GREETING_TEXT, instruction, voice: preset.candidate.voiceId, model: preset.candidate.model, profile: profileFor?.(settings), language: '', signal: requestSignal })
         if (!result?.audio || typeof result.audio !== 'string') throw Error('missing audio')
         const value = { audio: result.audio, mime: result.mime || 'audio/wav', text: PRESET_GREETING_TEXT }
-        await mutate(async () => { audios = [...audios.filter(v => v.key !== cacheKey), { key: cacheKey, greeting: value }].slice(-MAX_AUDIOS); trimAudio(); await store() })
+        // 合成（付费调用）已经成功，落盘只是缓存：写盘失败不能让用户看到
+        // 「试听合成失败」，也不能丢掉内存里这份可播放的结果——否则再点一次
+        // 重试就会白付第二次合成费。
+        await mutate(async () => {
+          audios = [...audios.filter(v => v.key !== cacheKey), { key: cacheKey, greeting: value }].slice(-MAX_AUDIOS)
+          trimAudio()
+          try { await store() } catch (e) { console.warn(`[voice-workbench] 试听音频未写入状态目录（本次会话内仍可播放，重启后需重新合成）：${e?.cause?.code || e?.message || e}`) }
+        })
         return value
       })
       signal?.throwIfAborted()
@@ -148,6 +166,9 @@ export function createVoicePresets({ stateDir, mutate, getSettings, persistSetti
           return { provider, voicePresets: snapshot(), candidate: structuredClone(candidate), ...audio }
         } catch (e) {
           if (e.status === 409) throw e
+          // 状态文件写不进去时，百炼那边音色其实已经建好（真占了配额），只是本地
+          // 记不下来。原样透出持久化文案，别改写成「请检查百炼配置」把用户引偏。
+          if (e?.code === STORE_FAILURE.code) throw e
           const advice = failureAdvice(e)
           const base = provider === 'qwen' ? '音色生成失败，请检查百炼配置后重试' : '音色生成失败，请检查 Breeze 地址、模型和 DSH 凭据后重试'
           throw error(advice ? `音色生成失败：${advice}` : base, 502)

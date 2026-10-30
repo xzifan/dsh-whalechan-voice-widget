@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, chmod } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createService } from '../src/core/service.js'
@@ -25,6 +25,9 @@ async function fixture(t, options = {}) {
       }
       if (failGreeting) throw Error('secret-must-not-leak')
       if (options.greetingFailure) return Response.json(options.greetingFailure.body, { status: options.greetingFailure.status })
+      // 试听合成请求这一刻才把状态目录变只读：音色设计/预设的两次落盘已经成功，
+      // 只有「音频缓存落盘」会失败，正好复现「合成成功、写盘失败」。
+      await options.beforeTts?.(stateDir)
       return Response.json({ output: { audio: { url: 'https://audio.test/greeting' } }, usage: options.usage, request_id: 'greeting-request' })
     },
   }
@@ -261,4 +264,46 @@ test('unclassified, upstream and classified generation failures keep their contr
   const unknownError = await unknown.post('generate').then(() => null, e => e)
   assert.equal(unknownError.status, 502)
   assert.equal(unknownError.message, '音色生成失败，请检查百炼配置后重试')
+})
+
+// 状态文件写不进去时常被误报成「试听合成失败」：合成（付费）其实已经成功，
+// 只是缓存没落盘。用户该看到的不是「改百炼配置」，也不需要再付一次合成费。
+test('状态目录写不进去时试听照常返回音频，重试不再重复合成', async t => {
+  let locked = null
+  const f = await fixture(t, { beforeTts: async dir => { if (!locked) { locked = dir; await chmod(dir, 0o500) } } })
+  try {
+    const generated = await f.post('generate')
+    assert.ok(generated.candidate.voiceId)
+    assert.ok(generated.greeting?.audio, '合成成功后写盘失败不得把试听变成失败')
+    assert.equal(generated.greetingError, undefined)
+    const synthesized = () => f.calls.filter(c => c.model !== 'voice-enrollment').length
+    assert.equal(synthesized(), 1)
+    const retried = await f.post('greeting')
+    assert.ok(retried.greeting?.audio, '内存里那份已经合成好的音频仍可用')
+    assert.equal(retried.greetingError, undefined)
+    assert.equal(synthesized(), 1, '重试不得再付一次合成费')
+  } finally { if (locked) await chmod(locked, 0o700) }
+  // 权限恢复后 apply 仍复用内存里那份音频（不只是「没红」，是一分钱没再花）
+  const applied = await f.post('apply')
+  assert.equal(applied.applied, true)
+  assert.ok(applied.greeting?.audio)
+  assert.equal(f.calls.filter(c => c.model !== 'voice-enrollment').length, 1)
+})
+
+// generate 路径更贵：百炼那边音色已经建好、配额已经花了，只是本地记不下来。
+// 这条失败必须如实说是写盘问题，否则用户会去改百炼 Key 并重付一次设计费。
+test('状态目录写不进去时生成与保存如实报写盘失败，不再指向百炼配置', async t => {
+  const f = await fixture(t)
+  await chmod(f.stateDir, 0o500)
+  try {
+    const failure = await f.post('generate').then(() => null, e => e)
+    assert.equal(failure?.status, 500)
+    assert.equal(failure.message, '音色预设状态写入失败，请检查状态目录的磁盘空间与权限')
+    assert.doesNotMatch(failure.message, /百炼|音色生成失败|请重试/)
+    assert.equal(f.calls.filter(c => c.model === 'voice-enrollment').length, 1, '设计请求已经花掉，才会撞上落盘')
+    assert.equal(f.calls.filter(c => c.model !== 'voice-enrollment').length, 0, '落盘失败不该继续去合成试听')
+    const saveFailure = await f.post('save', { presetId: 'preset-bright', prompt: '自然开心的成年女性声音' }).then(() => null, e => e)
+    assert.equal(saveFailure?.status, 500)
+    assert.equal(saveFailure.message, '音色预设状态写入失败，请检查状态目录的磁盘空间与权限')
+  } finally { await chmod(f.stateDir, 0o700) }
 })

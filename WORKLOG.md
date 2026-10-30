@@ -1401,3 +1401,24 @@
 - 本轮基线（未改动、实跑确认）：后端 **407** / 前端 **109** 全绿。
 
 **欠**：本轮按规则不实现任何代码，新入清单那条留给下一班；②③仍待排期。
+
+## 2026-10-31 07:45 · 预设状态写盘失败不再谎报成「试听合成失败 / 生成失败，请检查百炼配置」
+
+**做了什么**（1 条；未用规划子代理——条目已精确到行号、单模块改动、无接口与响应形状变化）
+
+- 并发保护：开工前无 `.release.lock`，已建 `.work.lock`（07:17），提交前删除。HEAD = `698015d`，工作区干净。
+- 取活：清单里 5 个 `- [ ]` 全是阻塞项（`:34` ⛔ 阻塞待决策、`:46` 需人拍板、`:58` `[arch]` 架构决策、`:60` 需先定口径归属、`:61` 单独立项），按 J1 规则一条没动；唯一可做的是上一班刚取证入清单的「预设状态写盘失败被误报成合成失败」，本班只做这一条。
+- `src/core/voice-presets.js`：顶部新增 `STORE_FAILURE = { code: 'preset-store-failed', message: '音色预设状态写入失败，请检查状态目录的磁盘空间与权限' }`；`store()` 的 `mkdir/writeFile/rename` 整段进 try/catch，失败时 `error(STORE_FAILURE.message, 500)` + `.code` + `.cause`（原始 fs 错误带状态目录路径，只留本机、不进响应体）。
+- 试听改 best-effort：`audios` 的内存赋值本来就早于 `store()`，catch 掉落盘失败后仍 `return { greeting }`，只在进程日志 `console.warn` 一行。响应形状与 `greetingError` 语义一字未动——重试直接命中内存缓存，不会再付一次合成费。
+- `generate` 的 catch 先判 `e?.code === STORE_FAILURE.code` 原样 rethrow（409 分流与其它失败的 502 都不动）；`save` / `initialize` 走同一个 `store()`，于是从「笼统 500 语音请求失败 / 请检查百炼配置」自动变成这条具体文案。
+- `CHANGELOG.md` `[Unreleased]` 补 1 条；`BACKLOG.md` 该条改 `- [x]` 并追加完成说明。
+
+**验证**（全部实跑）
+
+- 新增 2 条用例（`test/voice-presets.test.js`）：①fixture 新增 `beforeTts` 钩子，在**试听合成请求那一刻**才 `chmod 0500`（此时设计缓存与预设的两次落盘已成功，只有音频缓存落盘会失败）→ `greeting.audio` 仍在、`greetingError` 为空、重试与恢复权限后的 `apply` 合成请求数恒为 1；②一开始就 `chmod 0500` → `generate` 报 500、文案恰为写盘那条且不含「百炼/音色生成失败/请重试」，`save` 同样，并断言撞上落盘后不再继续去合成。
+- **变异 2 条各恰红 1 条**：删掉 `generate` 的 `STORE_FAILURE` 分支 → ②红；把试听那层 try/catch 退回裸 `await store()` → ①红；均从备份还原后重跑全绿。
+- 后端 **407 → 409**、前端 **109** 全绿；`lint` 0、`format:check` 通过、`build` 成功（`dist/` 已 `git checkout`，新 hash 产物 `index-DGRqF9HE.js` 移出仓库）；`test:coverage` 98.72/87.94/94.20（`voice-presets.js` 100/86.89/95.16，仍高于 96/83/92）。churn **85 行**（源码 +27/−4 / 测试 +47/−1，文档另计）。
+
+**欠**：写盘失败时那份试听只存在内存，重启后仍需重新合成——要跨重启保住，得有一个「写不进去时也能落到别处」的落点，属另一件事；`ready` 读取失败的文案没动。
+
+**下次可做**：清单只剩 5 个阻塞项，下一班按第 7 步重新取证；候选仍在：①`audio_too_large` 每帧重复上报 error 并挤爆 256 条事件环（≈55 行）；②`test/audit-log.test.js:258` 的 `search:'900'` 与 `randomUUID` 相撞（约 0.73% 假红，10-15 行）；③审计 `kind:error` 记录丢掉上游 `code`（本机 10 条此类记录零 code）。
