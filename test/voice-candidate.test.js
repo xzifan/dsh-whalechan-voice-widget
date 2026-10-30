@@ -37,7 +37,8 @@ async function setup(t, native = false, delayDesign, retainedBreeze = false) {
   t.after(async () => { await service.dispose(); await rm(dir, { recursive: true, force: true }) })
   const initial = (await service.handle('GET', '/api/config')).body.settings
   await service.handle('PUT', '/api/config', { settings: { ...initial, ...(retainedBreeze ? {tts_voice_provider:'breeze'} : {}), tts_profiles: retainedBreeze ? {breeze:{voice:'old-breeze-id'}} : native ? initial.tts_profiles : { ...initial.tts_profiles, qwen: { ...initial.tts_profiles?.qwen, voice: 'longanhuan_v3.1' } }, realtime: { ...initial.realtime, voice: native ? 'Cherry' : initial.realtime.voice, use_tts_voice: !native, instructions: 'test' } } })
-  const start = async () => { const { sessionId } = (await service.handle('POST', '/api/realtime/start')).body; return { socket: sockets.at(-1), sessionId } }
+  // 真实上游在握手完成后一定会推 session.created；测试也走这一步，否则出站消息会停在握手队列里（不丢，但还没发出）。
+  const start = async () => { const { sessionId } = (await service.handle('POST', '/api/realtime/start')).body; const socket = sockets.at(-1); socket.event('session.created'); return { socket, sessionId } }
   const first = await start()
   const config = async () => (await service.handle('GET', '/api/config')).body.settings
   const settle = async () => { for (let i = 0; i < 12; i++) await tick() }

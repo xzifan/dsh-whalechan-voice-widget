@@ -140,6 +140,7 @@ test('function_call triggers executeTool and writes back function_call_output th
   })
   session.connect()
   const socket = FakeSocket.instances[0]
+  socket.emitRaw('session.created', {})
   socket.emitRaw('response.output_item.done', { item: { type: 'function_call', call_id: 'call_1', name: 'read', arguments: '{"file_path":"/a/b.txt"}' } })
   socket.emitRaw('response.done', { response: { status: 'completed' } })
   // runTool is async; give it a tick.
@@ -177,6 +178,8 @@ test('audio append forwards input_audio_buffer.append with base64 and bounds siz
   const session = createRealtimeSession({ settings: realtimeDefaults(), key: 'k', executeTool: async () => ({}), emit: () => {}, WebSocketCtor: FakeSocket })
   session.connect()
   const socket = FakeSocket.instances[0]
+  // 握手完成前是「暂存」而不是「直发」，所以先走一遍真实的 session.created。
+  socket.emitRaw('session.created', {})
   session.appendAudio('AAAA')
   assert.ok(socket.sent.some(m => m.type === 'input_audio_buffer.append' && m.audio === 'AAAA'))
   // Oversized base64 rejected.
@@ -189,12 +192,123 @@ test('cancel, response.create, commit, and dispose emit correct client events', 
   const session = createRealtimeSession({ settings: realtimeDefaults(), key: 'k', executeTool: async () => ({}), emit: () => {}, WebSocketCtor: FakeSocket })
   session.connect()
   const socket = FakeSocket.instances[0]
+  socket.emitRaw('session.created', {})
   session.createResponse(); session.commit(); session.cancel()
   assert.ok(socket.sent.some(m => m.type === 'response.create'))
   assert.ok(socket.sent.some(m => m.type === 'input_audio_buffer.commit'))
   assert.ok(socket.sent.some(m => m.type === 'response.cancel'))
   session.dispose()
   assert.equal(socket.readyState, 3)
+})
+
+test('握手期出站消息先暂存，session.created 之后按入队顺序一次补发', () => {
+  const emitted = [], instances = []
+  class ConnectingSocket {
+    constructor() { this.readyState = 0; this.handlers = {}; this.sent = []; instances.push(this) }
+    on(event, fn) { this.handlers[event] = fn }
+    send(data) { this.sent.push(JSON.parse(data)) }
+    close() { this.readyState = 3; this.handlers.close?.() }
+    emitRaw(type, payload = {}) { this.handlers.message?.(Buffer.from(JSON.stringify({ type, ...payload }))) }
+  }
+  const session = createRealtimeSession({ settings: realtimeDefaults(), key: 'k', executeTool: async () => ({}), emit: e => emitted.push(e), WebSocketCtor: ConnectingSocket })
+  session.connect()
+  const socket = instances[0]
+
+  // ① 握手还没完成（CONNECTING）：帧、commit、response.create 既不丢也不发——用户第一句的开头被吃掉就是这里。
+  session.appendAudio('frame-1'); session.appendAudio('frame-2')
+  session.commit(); session.createResponse()
+  assert.deepEqual(socket.sent, [], 'CONNECTING 期间不得发出任何消息（此刻 send() 自己也会丢掉）')
+
+  // ② socket 已 OPEN 但 session.created 未到：仍然不许 flush，否则可能早于 session.update 被上游按默认音色处理。
+  socket.readyState = 1
+  session.appendAudio('frame-3')
+  assert.deepEqual(socket.sent, [], 'OPEN 但没有 session.created 时也要暂存')
+
+  // ③ session.created 之后：session.update 先发，其余严格按入队顺序补发。
+  socket.emitRaw('session.created')
+  assert.deepEqual(socket.sent.map(m => m.type), [
+    'session.update', 'input_audio_buffer.append', 'input_audio_buffer.append',
+    'input_audio_buffer.commit', 'response.create', 'input_audio_buffer.append',
+  ], '补发必须保持入队顺序：append* → commit → response.create')
+  assert.deepEqual(socket.sent.filter(m => m.type === 'input_audio_buffer.append').map(m => m.audio), ['frame-1', 'frame-2', 'frame-3'], '补发内容不得被改写或重排')
+  assert.equal(emitted.filter(e => e.type === 'error').length, 0, '没有积压就不该报丢帧')
+
+  // ④ ready 之后回到直发，不再排队。
+  session.appendAudio('frame-4')
+  assert.equal(socket.sent.at(-1).audio, 'frame-4')
+  session.dispose()
+})
+
+test('握手期音频积压超上限时丢最旧帧，只报一条 error，commit 不被淘汰', () => {
+  const emitted = [], instances = []
+  class ConnectingSocket {
+    constructor() { this.readyState = 0; this.handlers = {}; this.sent = []; instances.push(this) }
+    on(event, fn) { this.handlers[event] = fn }
+    send(data) { this.sent.push(JSON.parse(data)) }
+    close() { this.readyState = 3; this.handlers.close?.() }
+    emitRaw(type, payload = {}) { this.handlers.message?.(Buffer.from(JSON.stringify({ type, ...payload }))) }
+  }
+  const session = createRealtimeSession({ settings: realtimeDefaults(), key: 'k', executeTool: async () => ({}), emit: e => emitted.push(e), WebSocketCtor: ConnectingSocket })
+  session.connect()
+  const socket = instances[0]
+  const frame = i => String(i).padStart(5, '0') + 'a'.repeat(8187) // 每帧 8192 字符 base64
+  socket.readyState = 1
+  for (let i = 0; i < 26; i++) session.appendAudio(frame(i)) // 26 × 8 KB = 212 KB，远超 86 KB 上限
+  session.commit()
+
+  const drops = emitted.filter(e => e.type === 'error' && e.code === 'audio_backlog_dropped')
+  assert.equal(drops.length, 1, '丢帧必须报出来，且一次积压只报一条（不能每帧刷一条）')
+  assert.ok(drops[0].message, '丢帧告警要有可读文案，不能只给 code')
+
+  socket.emitRaw('session.created')
+  const appends = socket.sent.filter(m => m.type === 'input_audio_buffer.append')
+  assert.equal(appends.length, 10, '保留最新的 10 帧（81920 字符 ≤ 86 KB）')
+  assert.equal(appends[0].audio, frame(16), '丢的是最旧的帧，不是最新的')
+  assert.equal(appends.at(-1).audio, frame(25))
+  assert.equal(socket.sent.at(-1).type, 'input_audio_buffer.commit', 'commit 体积极小，不许跟着音频一起被淘汰')
+  session.dispose()
+})
+
+test('dispose / cancel 会清空握手期积压，之后不再补发', () => {
+  const instances = []
+  class ConnectingSocket {
+    constructor() { this.readyState = 0; this.handlers = {}; this.sent = []; instances.push(this) }
+    on(event, fn) { this.handlers[event] = fn }
+    send(data) { this.sent.push(JSON.parse(data)) }
+    close() { this.readyState = 3; this.handlers.close?.() }
+    emitRaw(type, payload = {}) { this.handlers.message?.(Buffer.from(JSON.stringify({ type, ...payload }))) }
+  }
+  const make = () => createRealtimeSession({ settings: realtimeDefaults(), key: 'k', executeTool: async () => ({}), emit: () => {}, WebSocketCtor: ConnectingSocket })
+
+  const disposed = make()
+  disposed.connect()
+  const first = instances[0]
+  disposed.appendAudio('pending-a'); disposed.commit()
+  disposed.dispose()
+  first.emitRaw('session.created')
+  assert.deepEqual(first.sent, [], 'dispose 之后不得再补发（会话已收尾，上游不认这些音频）')
+
+  const cancelled = make()
+  cancelled.connect()
+  const second = instances[1]
+  second.readyState = 1
+  cancelled.appendAudio('pending-b'); cancelled.appendAudio('pending-c')
+  cancelled.cancel()
+  second.emitRaw('session.created')
+  assert.equal(second.sent.filter(m => m.type === 'input_audio_buffer.append').length, 0, 'cancel 清空积压：已取消的一段不该再上行')
+  cancelled.dispose()
+})
+
+test('源码守卫：三个出站入口都走 outbound，不得回退成「readyState 不满足就丢掉」', () => {
+  const source = readFileSync(new URL('../src/core/realtime-service.js', import.meta.url), 'utf8')
+  // 只对代码判断「不该出现什么」：注释里提到旧写法（说明为什么这么改）不该让守卫变红。
+  const code = source.replace(/^\s*\/\/.*$/gm, '')
+  assert.match(source, /appendAudio\(base64\) \{[\s\S]{0,300}?outbound\(\{ type: 'input_audio_buffer\.append'/, 'appendAudio 必须经 outbound 暂存/直发')
+  assert.match(source, /commit\(\) \{ userSpeaking = false; fillers\.userStopped\(\); outbound\(/, 'commit 必须经 outbound')
+  assert.match(source, /function requestResponse\(\)[\s\S]{0,400}?outbound\(\{ type: 'response\.create'/, 'requestResponse 必须经 outbound')
+  assert.doesNotMatch(code, /readyState === 1 && typeof base64/, '旧写法把「握手未完成」和「体积超限」混成一个早退——正是丢帧的形态')
+  assert.match(source, /if \(type === 'session\.created'\) \{ sessionUpdate\(\); flushPending\(\) \}/, 'session.update 必须先发，然后才 flush')
+  assert.doesNotMatch(code, /socket\.on\('open'/, '不能在 open 就 flush：那时 session.update 还没送达')
 })
 
 test('toolDefinitions never fabricates native schemas and preserves provided parameters', () => {

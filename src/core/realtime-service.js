@@ -19,6 +19,12 @@ import {
   toolDefinitions, realtimeInstructions,
 } from './realtime-protocol.js'
 
+// 握手完成（上游 `session.created`）之前，任何出站消息都可能被吞：socket 还没 OPEN 时 `send()` 什么都不做，
+// 而 OPEN 但 `session.update` 还没送达时上游会按默认音色处理音频。所以未 ready 期间的消息先入队。
+// 只有音频帧按累计 base64 长度封顶（约 2 s：24 kHz PCM16 的 20 ms 帧 ≈ 1.3 KB base64 / 64 帧）；commit 与
+// response.create 体积极小，丢它们等于让「整句不上行」变成静默失败，所以不参与淘汰。
+const AUDIO_BACKLOG_LIMIT = 86 * 1024
+
 /**
  * Manage one Qwen Audio Realtime WebSocket session.
  * `emit(event)` pushes sanitized events to the frontend buffer; `executeTool` runs DSH tools.
@@ -26,6 +32,9 @@ import {
  */
 export function createRealtimeSession({ settings, key, executeTool, emit, nativeTools = [], voiceState, generateFiller, synthesizeFiller, fillerOptions, confirmationTimeoutMs = 1500, WebSocketCtor = WebSocket }) {
   let socket, disposed = false, generation = 0, blocked = false
+  // 握手期出站队列：session.created 之前的 append/commit/response.create 暂存于此，见 outbound()/flushPending()。
+  const pending = []
+  let pendingAudio = 0, ready = false, backlogNotified = false
   let audioTotal = 0
   let controller = new AbortController(), voiceQueue = Promise.resolve()
   const ttsActive = () => useTts || !!voiceState?.get()
@@ -61,6 +70,35 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
   const url = `${host}?model=${encodeURIComponent(settings.model || MODEL)}`
 
   function send(value) { if (!disposed && socket?.readyState === 1) socket.send(JSON.stringify(value)) }
+  // `send()` 保持不变（真发才发）。三个业务入口走 outbound()：ready 之前入队，避免开局几十到几百毫秒的帧被静默丢掉。
+  function queueOutbound(value, audioChars = 0) {
+    pending.push({ value, audioChars })
+    pendingAudio += audioChars
+    while (pendingAudio > AUDIO_BACKLOG_LIMIT) {
+      const oldest = pending.findIndex(item => item.audioChars)
+      if (oldest < 0) break
+      pendingAudio -= pending[oldest].audioChars
+      pending.splice(oldest, 1)
+      // 丢帧不静默：一次积压只报一次，避免每帧刷一条 error。
+      if (!backlogNotified) {
+        backlogNotified = true
+        emit({ type: 'error', code: 'audio_backlog_dropped', message: '通话建立前的录音积压过多，开头一小段已丢弃' })
+      }
+    }
+  }
+  function outbound(value, audioChars = 0) {
+    if (disposed) return
+    if (ready && socket?.readyState === 1) send(value)
+    else queueOutbound(value, audioChars)
+  }
+  // 只在 session.created（即 session.update 已发出）之后放行，不能在 socket.on('open') 就 flush。
+  function flushPending() {
+    ready = true
+    while (!disposed && pending.length && socket?.readyState === 1) send(pending.shift().value)
+    if (disposed || socket?.readyState !== 1) clearPending()
+    else pendingAudio = 0
+  }
+  function clearPending() { pending.length = 0; pendingAudio = 0 }
   function voiceId() { return (settings.voice || '').trim() || SYSTEM_VOICE }
   function modalities() { return ttsActive() ? ['text'] : ['text', 'audio'] }
   function currentTurn() { if (!turn) { turn = { id: `turn-${randomUUID()}`, generation }; fillers.newTurn(turn.id) }; return turn }
@@ -99,6 +137,8 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
     voiceQueue = Promise.resolve()
     requestedOutputModes.length = 0
     requestedAtQueue.length = 0
+    // 会话结束/取消后不得再补发握手期的积压帧：上游已经不认这些音频了。
+    if (clearCandidate) clearPending()
     if (clearCandidate) voiceState?.clear()
     generation++
     blocked = true
@@ -114,7 +154,7 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
     fillers.schedule('thinking')
     requestedOutputModes.push(ttsActive())
     requestedAtQueue.push(Date.now())
-    send({ type: 'response.create', response: { modalities: modalities() } })
+    outbound({ type: 'response.create', response: { modalities: modalities() } })
   }
   function deliverDone(response) {
     if (!response.deliveryDone || response.deliveryFinished || !live(response)) return
@@ -298,7 +338,7 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
     try { event = JSON.parse(raw.toString()) } catch { return }
     const type = event?.type
     if (typeof type !== 'string') return
-    if (type === 'session.created') sessionUpdate()
+    if (type === 'session.created') { sessionUpdate(); flushPending() }
     else if (type === 'error') {
       fillers.cancel()
       const message = redactError(event.error?.message || '').slice(0, 200)
@@ -464,11 +504,11 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
   return {
     connect,
     appendAudio(base64) {
-      if (socket?.readyState === 1 && typeof base64 === 'string' && base64.length && base64.length <= 3 * 1024 * 1024) {
-        send({ type: 'input_audio_buffer.append', audio: base64 })
-      }
+      // 体积超限是「拒绝」，握手未完成是「暂存」——两者不能混成同一个早退。
+      if (typeof base64 !== 'string' || !base64.length || base64.length > 3 * 1024 * 1024) return
+      outbound({ type: 'input_audio_buffer.append', audio: base64 }, base64.length)
     },
-    commit() { userSpeaking = false; fillers.userStopped(); send({ type: 'input_audio_buffer.commit' }) },
+    commit() { userSpeaking = false; fillers.userStopped(); outbound({ type: 'input_audio_buffer.commit' }) },
     playback({ kind, active }) {
       if (kind !== 'main') return
       mainPlaying = active

@@ -138,6 +138,8 @@ function setup(executeTool = async () => ({}), settings = {}) {
   }
   const session = createRealtimeSession({ settings: { ...realtimeDefaults(), ...settings }, key: 'secret', executeTool, emit: event => events.push(event), WebSocketCtor: Socket })
   session.connect()
+  // 真实上游握手成功后必推 session.created；出站消息在它之前会暂存，所以 fixture 也走这一步。
+  socket.event('session.created')
   const start = (id = 'r1') => socket.event('response.created', { response: { id } })
   const tool = (callId, name = 'synth_tts', responseId = 'r1', args = { text: '你好主人' }) => socket.event('response.output_item.done', { response_id: responseId, item: { id: `item-${callId}`, type: 'function_call', call_id: callId, name, arguments: JSON.stringify(args) } })
   const done = (id = 'r1', extra = {}) => socket.event('response.done', { response: { id, status: 'completed', ...extra } })
@@ -149,7 +151,6 @@ function setup(executeTool = async () => ({}), settings = {}) {
 test('HQ synthesis is terminal, deduplicates call IDs, and never plays native audio', async () => {
   let executions = 0, toolContext
   const s = setup(async (_name, _args, context) => { executions++; toolContext = context; return { __previewData: 'tts-audio' } })
-  s.socket.event('session.created')
   s.session.createResponse()
   s.socket.event('input_audio_buffer.speech_started', { item_id: 'user-1' })
   s.start()
@@ -244,7 +245,6 @@ for (const interrupt of ['speech-start', 'cancel', 'dispose']) test(`late tool c
 
 test('native mode retains audio modalities for initial and tool continuation requests', async () => {
   const s = setup(async () => ({}), { use_tts_voice: false })
-  s.socket.event('session.created')
   s.session.createResponse()
   s.start()
   s.tool('config', 'get_voice_config')

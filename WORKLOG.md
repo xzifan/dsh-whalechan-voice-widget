@@ -1299,3 +1299,21 @@
 **边界**：本轮零源码改动——没有碰 version / `npm pack` / tag / push / `dsh plugin add` / `dsh web` 重启 / `~/.dsh/AGENTS.md`。`.work.lock` 本轮创建、提交前删除。
 
 **下次可做**：取本轮新增的「会话建立初期丢帧」（≈120 行 / 2 文件，单一闭包、可用假 socket 精确锁死）。次选是上面两个未入选候选（凭据失败吞指令 ≈70 行 / 4 文件、预设写盘失败误报 ≈85 行 / 2 文件）；另外本轮实测到一条**约 0.57% 必红的既有偶发**——`test/audit-log.test.js:258` 用 `search:'900'` 断言迟延数字不进检索列，但 `searchableText` 含 `randomUUID` 的 id，id 里撞上 `900` 就假红（探针已复现，修法是把断言换成构造一个必然不含目标数字的 id，或改搜一个不可能出现的串），下次第 7 步取证时可优先考虑。三者都还不在清单里，要动需再走一次第 7 步取证。
+
+## 2026-10-31 01:40 · 握手完成前的录音帧与 `commit`/`response.create` 不再被静默丢掉
+
+**做了什么**（1 条清单项，未用规划子代理——条目已精确到行号、改动集中在单一闭包、无接口与数据结构变化）
+
+- `src/core/realtime-service.js`（+38）：新增握手期出站队列 `pending`（`{value, audioChars}`）、`pendingAudio`、`ready`、`backlogNotified`，以及 `queueOutbound` / `outbound` / `flushPending` / `clearPending` 四个函数。`outbound` 在 `ready && readyState === 1` 时直发，否则入队；放行点是 `session.created` 分支的 `{ sessionUpdate(); flushPending() }`——不是 `socket.on('open')`，否则 `session.update`（modalities/voice/instructions）还没送达，上游可能按默认音色处理音频。`appendAudio` / `commit` / `requestResponse` 三个入口改走 `outbound`，`send()` 一字未动。
+- 积压封顶只按音频帧的累计 base64 长度（86 KB ≈ 2 s / 64 帧）：超限丢**最旧**的音频帧并只 `emit` 一次 `{type:'error', code:'audio_backlog_dropped', message:'通话建立前的录音积压过多，开头一小段已丢弃'}`（不静默、也不每帧刷一条）。`commit` 与 `response.create` 体积极小，丢它们等于「整句不上行」，所以不参与淘汰。`invalidate(clearCandidate)` 里 `if (clearCandidate) clearPending()`，因此 `cancel()` / socket close / `dispose()` 都清空积压，已结束会话不再补发（`speech_started` 的 `invalidate(false, …)` 不清，本回合的帧仍有效）。
+- 接口语义零变化：`/api/realtime/audio` 仍回 `{ok:true}`，没有引入 409 / `accepted:false`（那属另一条行为变化，条目要点⑥明确排除）。
+- 测试：`test/test-realtime.test.js` +4 条 / 114 行（暂存与按序补发、超限丢最旧且恰好一条 error 且 commit 不被淘汰、`dispose()`/`cancel()` 清空不再补发、源码守卫）。源码守卫判断「不该出现什么」前先剥掉行注释，否则注释里解释旧写法的那句话会把守卫打红（第一版就这么红的）。
+- `CHANGELOG.md` `[Unreleased]` 补 1 条；不改 version、不 pack、不 tag、不 push、不碰 dsh。
+
+**验证**：后端 **400 → 404**、前端 **108** 全绿（基线先 `git stash` 掉本轮改动实跑 HEAD 复核：400 / 108；WORKLOG 上一版记的「前端 105」已过期，本轮按实测更正）；`lint` 0、`format:check` 通过、`build` 成功（`dist/` 已 `git checkout`，新 hash 产物移出仓库）。**变异 2 条**：①`appendAudio` 退回旧的 `readyState === 1 && typeof base64` 内联写法 → 恰红 4 条（3 条行为 + 源码守卫）；②`session.created` 只留 `sessionUpdate()`、去掉 `flushPending()` → 恰红 6 条。两条都从备份还原，还原后 `test-realtime.test.js` 25/25。
+
+**踩到的坑（值得记住）**：改动让 7 条既有用例当场红，原因不是逻辑错，而是**它们的假 socket 只 `connect()` 从不推 `session.created`**——真实上游一定推，所以这是 fixture 缺了真实前提，不是断言被放宽。修法：`test/realtime-tts.test.js` 的 `setup()` 里统一补一次 `socket.event('session.created')`（顺带删掉两条因此冗余的手工调用）、`test/voice-candidate.test.js` 的 `start()` 里补、`test/test-realtime.test.js` 三条用例各补一行；所有断言原文未动。
+
+**欠**：没跑浏览器 e2e——改动在服务端会话层，五个 `test/browser*.py` 全部 mock `/api/realtime/*`，根本不经过这段代码。
+
+**下次可做**：清单里剩下的 `- [ ]` 全部是阻塞项（`⛔ 阻塞待决策`、`需人拍板`、`[arch]`、`需先定口径归属`、`单独立项`），下一班按第 7 步重新取证。上一班留下的候选仍在：①凭据保存失败把宿主给的具体指令吞成「请重新输入后重试」（≈6 行，触发面窄）；②预设状态写盘失败被报成「试听合成失败」且仍宣称「已保存」；③`audio_too_large` 每帧重复上报 error 并挤爆 256 条事件环。另有一条**既有偶发**仍未修：`test/audit-log.test.js:258` 用 `search:'900'` 断言迟延数字不进检索列，但 `searchableText` 含 `randomUUID` 的 id，id 里撞上 `900` 就假红（约 0.57%，上一班已复现）。
