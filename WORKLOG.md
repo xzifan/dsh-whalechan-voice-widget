@@ -1158,3 +1158,25 @@
 **并发与边界**：`.work.lock` 本轮创建并在提交后删除；无 version 改动、无 `npm pack`、无 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未碰 `~/.dsh/AGENTS.md`。
 
 **下次可做**：上一轮未选的第 2 条（非百炼提供方合成失败仍只有 HTTP 码，`src/core/tts-http.js` 扔掉上游 body，需新写「读 ≤4 KiB + 只取 code + 不泄原文」分类器 ≈72 行 / 3 文件）与第 3 条（CONNECTING 窗口内 `appendAudio`/`commit` 静默丢帧，要动发送语义并入队 flush）。两者都不在清单里，得先走第 7 步取证才能入。
+
+## 2026-10-30 18:23 — J1 第 7 步：清单无可做条目，只读取证并入 1 条候选
+
+**做了什么**：**没有改任何源码**。`BACKLOG.md` 里剩余 5 个 `- [ ]` 全部是阻塞类——`⛔ 阻塞待决策`（husky + lint-staged）、`需人拍板`（夜间冒烟接调度）、`[arch]`（`runTool`/`onMessage` 改状态机）、`需先定口径归属`（首帧延迟锚点统一）、`单独立项`（打断后真实停播时延）——按 J1 规则一律不碰，故走第 7 步：取证 → 选 1 条追加到清单底部，本轮不实现。
+
+**用的规划子代理**：1 个，严格只读（禁改文件、禁 git 写、禁 `npm install`/`pack`/重启）。取证面：源码 TODO/FIXME（`src/ web/src/ lib/ scripts/ test/` **0 命中**）、弱断言与「冻结错误行为」的测试、`CHANGELOG [Unreleased]` 宣称与代码的差、审计日志高频失败聚类、空/兜底 `catch` 面。它纠正了任务书里的测试基线（实测 **397 / 105**，任务书写的是 384 / 104——最新提交已补过用例）。审计侧实测：`~/.dsh/storages/voice-workbench/voice-audit.jsonl` 不存在（代码默认路径），只有 preview 那份 535 条：`tool 168 / response 154 / synthesis 100 / transcription 81 / usage 22 / error 10`，error 全为 4× 上游 180 s 空响应、3× `Voice design failed (HTTP 400)`、3× `Cannot create response … no user message.`。
+
+**三个候选与取舍**：
+
+- ✅ **入选**：非百炼提供方的合成失败分类恒为 `upstream`、真实码被压成 502 → `failureAdvice()` 返回空 → UI 对「Key 失效 / 配额耗尽」这两类重试确定无效的失败显示「请重试」。它是唯一「`CHANGELOG.md:21` 已宣称修好、代码对 `openai-speech`/`mimo-chat`/`breeze-tts`/`custom-http` 四个协议其实没落地」的缺口，触发频率最高、改动最小（纯接线，`FAILURE_LABELS`/`FAILURE_ADVICE` 现成）。上一轮 WORKLOG 的「下次可做」也独立点到同一处，两路证据交叉一致。
+- ❌ `audio_too_large` 不锁存（`src/core/realtime-service.js:398-403`）：护栏触发后上游仍在续写，每帧 emit 一条 error、逐帧打断播放，并用同一句文案挤爆 `service.js:383` 的 256 条事件环（轮询稍慢就永久丢 delta），且这条分支不写审计、`grep audio_too_large test/` 零命中。属单点缺陷，价值低于入选条。
+- ❌ 预设状态写盘失败被报成「试听合成失败」且仍宣称「候选音色已保存」（`src/core/voice-presets.js:84-97`：`store()` 与合成在同一个 try 里，EACCES/ENOSPC 也落进合成失败的 catch）。与刚修好的 `delete_voice` 谎报成功同类，但只在磁盘故障时触发，频率低。
+
+**复核方式**：候选的行号与代码片段由我逐条实读确认，未采信子代理自述——`src/core/tts-http.js:5` 的 `failure()` 确无 `safe`、`:155` 只保留 402、`src/core/voice-design.js:44-48` 的 `FAILURE_ADVICE` 确无 `upstream`、两处写入点（`src/core/voice-synthesis.js:81`、`src/core/service.js:186`）确经 `synthesisFailureText()`。
+
+**验收**：`npm test` **397/397** exit 0、`npm run test:web` **105/105** exit 0（本轮零源码改动，跑一遍确认工作区未被本轮碰坏）；`BACKLOG.md` 追加 1 条、`WORKLOG.md` 追加本节。
+
+**是否用规划子代理**：用了（只读盘点型，非拆解型）。
+
+**并发与边界**：`.work.lock` 本轮创建、提交后删除；无 version 改动、无 `npm pack`、无 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未碰 `~/.dsh/AGENTS.md`。
+
+**下次可做**：清单被追加后已恢复可做——按顺序取最上面一个非阻塞条目，即本轮新增的「非百炼提供方失败分类」（≈70 行 / 3-4 文件）。次选为上面两个未入选候选，二者都还不在清单里，若要动需再走一次第 7 步取证。
