@@ -1317,3 +1317,21 @@
 **欠**：没跑浏览器 e2e——改动在服务端会话层，五个 `test/browser*.py` 全部 mock `/api/realtime/*`，根本不经过这段代码。
 
 **下次可做**：清单里剩下的 `- [ ]` 全部是阻塞项（`⛔ 阻塞待决策`、`需人拍板`、`[arch]`、`需先定口径归属`、`单独立项`），下一班按第 7 步重新取证。上一班留下的候选仍在：①凭据保存失败把宿主给的具体指令吞成「请重新输入后重试」（≈6 行，触发面窄）；②预设状态写盘失败被报成「试听合成失败」且仍宣称「已保存」；③`audio_too_large` 每帧重复上报 error 并挤爆 256 条事件环。另有一条**既有偶发**仍未修：`test/audit-log.test.js:258` 用 `search:'900'` 断言迟延数字不进检索列，但 `searchableText` 含 `randomUUID` 的 id，id 里撞上 `900` 就假红（约 0.57%，上一班已复现）。
+
+## 2026-10-31 02:25 · 第 7 步取证：清单已无可用条目，取证 3 选 1 入清单
+
+**做了什么**（零源码改动；用了**只读取证**子代理，不是规划子代理）
+
+- 取活结果：`BACKLOG.md` 里 5 个未完成条目**全部是阻塞项**，按 J1 规则不得自行处理 —— `:34` `⛔ 阻塞待决策`（husky + lint-staged，前置是 Prettier 大目录豁免）、`:46` `需人拍板`（夜间冒烟接入调度）、`:58` `[arch]`（`runTool`/`onMessage` 状态机化）、`:60` `需先定口径归属`（首帧延迟锚点）、`:61` `单独立项`（打断后的真实停播时延）；文末「需要产品决策」4 条同样不动。故按第 7 步取证。
+- 取证：派只读子代理（`delegate_task`，明确禁 git 写、禁改仓库文件，探针只写 `~/.hermes/cache/scratch/`；42 次工具调用）。证据面：TODO/FIXME/HACK/XXX 全仓 **0 命中**；`CHANGELOG` `[Unreleased]` 5 条逐条比对代码，**全部已落地、无新缺口**；真实审计日志 `~/.dsh/storages/voice-workbench-preview/voice-audit.jsonl`（535 条，`kinds` = response 154 / tool 168 / synthesis 100 / transcription 81 / usage 22 / error 10；`tool` 里 `outcome:error` 13 条但 `exitCode!=0` 0 条）；失败文本前四类是 180 s 无响应 ×4、`web_fetch` 跨域重定向 ×4、`edit` 未先读文件 ×4、`Voice design failed (HTTP 400)` ×3（后者已被 0.6.6 的分类修复覆盖）；另 `Cannot create response…` ×3 是 10-27 旧构建产物，不当现行缺陷。它的行号我逐条实读复核（`sed -n` / `grep -n`），并纠正了它一处估计。
+- **入选**：凭据保存失败把宿主给的可执行指令压成常量 503，前端再压成「凭据保存失败，请重新输入后重试。」。实读确认链路只差一处：`src/core/service.js:283` 是裸 `catch { throw new RequestError('DSH 凭据保存失败，请检查宿主凭据服务；原配置未在插件中另存', 503) }`；`src/native-services.js:57,61` 抛的是**给用户的指令**（「当前模型凭据无法在此编辑，请在 DSH 模型设置中配置」/「此模型正在使用账户授权，请在 DSH 模型设置中管理」，均为 `failure()` 造的 `VoiceNativeError` 且带 `status`）；`src/index.js:45-46` 与 `web/src/lib/core.js:107-108` 本来就会原样透传 message 与 status；`web/src/voice-layer-view.jsx:37` 最后再压成「重新输入后重试」。
+- **纠正了一处估计（值得留）**：上一班与我起初都估「≈6 行、直接透传 `error.message` 即可」。实际不行 —— `test/model-credential-service.test.js:116-124` 用 `failSave:true` 明确断言 503 且 `!/private-secret/`，因为宿主抛的未知异常 message 可能带密钥。所以正确改法是**只放行 `VoiceNativeError`**、未知异常继续掩成常量 503；那条用例是绊线不是回归。规模上调到 ≈45 行（源码 2 文件 ≈10 行 + 测试 1-2 文件 ≈35 行）。
+- 取舍：②预设状态写盘失败被报成「试听合成失败」只在磁盘故障时触发，且修法要同时定内存 `designs` 的回滚语义（风险更高）；③`test/audit-log.test.js:258` 的 `search:'900'` 与 `randomUUID` 相撞（探针实测 200k 个 UUID 里含 `900` 占 **0.602%**，约每 170 次跑必假红一次）虽只要 3-5 行，但测的是测试自身、配不上一整班。入选条是「用户点了保存就 100% 失败、提示还是确定性无效的重试」，与已修的 `delete_voice` 谎报成功、预设页「请重试试听」同一类缺陷，且只改文案与 status、不动响应形状。
+- 明确排除：`audio_too_large` 每帧重复 `emit` 并挤爆 256 条事件环（阈值 `src/core/realtime-protocol.js:9` 的 `MAX_AUDIO_BYTES = 24 MiB`，48 kHz/16-bit 下 ≈8.7 分钟的单一 response 才触发，只有上游失控才命中；且真正的修法要碰「上游失控时如何收尾」的口径）；MiMo/自定义提供方在设置页被当「旧版提供方」藏掉（要设计通用编辑器，属 UI 设计选择）；被打断的实时合成不进审计（需先定口径）；256 事件环在后台标签页节流时静默丢事件（改游标契约＝对外行为变化）；`/api/realtime/response` 全仓无前端调用方（死接口，无用户影响）。
+- 唯一落盘改动：`BACKLOG.md` 追加 1 个 `- [ ]`（按第 7 步，本轮不实现）。
+
+**验证**：零源码改动、无可回归对象，未跑全量测试；`npx prettier --check BACKLOG.md WORKLOG.md` 通过（这两个 md 在 S2 后已进 `format:check` 门禁，本轮只动它们）。改动只有新增段落，`git diff --stat` 见下一条提交。
+
+**边界**：没有碰 version / `npm pack` / `git tag` / `git push` / `dsh plugin add` / `dsh web` 重启 / `~/.dsh/AGENTS.md`。`.work.lock` 本轮创建、提交前删除。
+
+**下次可做**：实现本轮新入清单的凭据错误透传（≈45 行 / 3 文件，可用「`VoiceNativeError` 与 plain `Error` 两条断言必须同时绿」做变异验证）；次选 ②预设写盘失败误报（≈60-70 行 / 2 文件，`chmod 0500` 可确定性构造）、③`test/audit-log.test.js:258` 的假红（3-5 行，0.602% 已用探针复现）。
