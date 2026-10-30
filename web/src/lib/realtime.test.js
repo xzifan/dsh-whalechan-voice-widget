@@ -394,6 +394,39 @@ test('backend tool failure is sanitized and stop cancels only running records', 
   assert.equal(state.toolCalls[1].status, 'running')
 })
 
+test('a completed call whose command failed is not rendered as completed', () => {
+  const state = reduceEvents([
+    { type: 'tool-start', callId: 'a', name: 'bash' },
+    { type: 'tool-end', callId: 'a', name: 'bash', ok: true, status: 'completed', outcome: 'error', exitCode: 2 },
+  ])
+  // `ok`/`status` stay the lifecycle; the result decides what the user sees.
+  assert.equal(state.toolCalls[0].status, 'failed')
+  assert.match(state.toolCalls[0].errorSummary, /审计记录/)
+  assert.equal(state.tool.ok, false)
+})
+
+test('failure is sticky and cancellation never upgrades to a failure', () => {
+  let state = reduceEvents([
+    { type: 'tool-start', callId: 'a', name: 'bash' },
+    { type: 'tool-end', callId: 'a', name: 'bash', status: 'failed', outcome: 'ok' },
+  ])
+  assert.equal(state.toolCalls[0].status, 'failed')
+  // A later `outcome:'ok'` must not acquit an already failed call.
+  state = reduceEvents([{ type: 'tool-end', callId: 'a', name: 'bash', status: 'completed', outcome: 'ok' }], state)
+  assert.equal(state.toolCalls[0].status, 'failed')
+
+  // A manual cancel is a lifecycle fact even when the result also errored.
+  const cancelled = reduceEvents([
+    { type: 'tool-start', callId: 'b', name: 'bash' },
+    { type: 'tool-end', callId: 'b', name: 'bash', status: 'cancelled', outcome: 'error' },
+  ])
+  assert.equal(cancelled.toolCalls[0].status, 'cancelled')
+
+  // `outcome:'ok'` alone still lands on completed.
+  const ok = reduceEvents([{ type: 'tool-end', callId: 'c', name: 'bash', status: 'completed', outcome: 'ok' }])
+  assert.equal(ok.toolCalls[0].status, 'completed')
+})
+
 test('tool and correlated message histories remain bounded with monotonic order', () => {
   let state = {}
   for (let i = 0; i < MAX_REALTIME_TOOL_CALLS + 25; i++) state = reduceEvents([

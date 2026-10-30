@@ -84,7 +84,11 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
   function finishTool(call, status, detail, outcome = status === 'completed' ? 'ok' : status === 'failed' ? 'error' : 'cancelled', exitCode) {
     if (call.finished) return
     call.finished = true
-    emit({ type: 'tool-end', ...call.context, name: call.name, ok: status === 'completed', status })
+    // `ok`/`status` stay the call lifecycle; `outcome`/`exitCode` carry the
+    // result itself, so a call that completed but ran a failing command (e.g.
+    // `exit_code:2`) cannot be rendered as plain "已完成".
+    emit({ type: 'tool-end', ...call.context, name: call.name, ok: status === 'completed', status,
+      outcome, ...(Number.isInteger(exitCode) ? { exitCode } : {}) })
     audit('tool', call.context, status, { outcome, ...(detail ? { resultSummary: detail } : {}),
       ...(Number.isInteger(exitCode) ? { exitCode } : {}), text: redactError(`${call.name}${detail && status !== 'completed' ? ': ' + detail : ''}`) })
   }

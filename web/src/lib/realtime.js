@@ -138,9 +138,13 @@ export function applyRealtimeEvent(state, event) {
       ? tool.callId === event.callId
       : tool.name === event.name && tool.messageId === event.messageId && tool.turnId === event.turnId)
     const previous = next.toolCalls[index]
+    // `status` is the call lifecycle, `outcome` is the result: a completed call
+    // whose command failed (`exit_code:2`) must not render as "已完成".
+    // Failure is sticky — a later `outcome:'ok'` never acquits a failed call.
     const status = !ending ? (previous?.status || 'running')
-      : event.status === 'cancelled' ? 'cancelled'
-        : event.status === 'failed' || event.status === 'error' || event.ok === false ? 'failed' : 'completed'
+      : previous?.status === 'failed' ? 'failed'
+        : event.status === 'cancelled' ? 'cancelled'
+          : event.status === 'failed' || event.status === 'error' || event.ok === false || event.outcome === 'error' ? 'failed' : 'completed'
     const at = eventTime(event)
     const position = previous?.order ?? order()
     const tool = {
@@ -156,7 +160,7 @@ export function applyRealtimeEvent(state, event) {
     if (ending && Number.isFinite(event.durationMs) && event.durationMs >= 0) tool.durationMs = event.durationMs
     else if (tool.startedAt !== undefined && tool.endedAt !== undefined) tool.durationMs = Math.max(0, tool.endedAt - tool.startedAt)
     // Backend errors can contain credentials/arguments. Retain only a safe summary.
-    if (status === 'failed' && (event.error || event.errorSummary || event.message || event.code)) tool.errorSummary = '工具执行失败，请查看审计记录。'
+    if (status === 'failed' && (event.error || event.errorSummary || event.message || event.code || event.outcome === 'error')) tool.errorSummary = '工具执行失败，请查看审计记录。'
     if (index < 0) next.toolCalls.push(tool)
     else next.toolCalls[index] = tool
     return { tool, previous }

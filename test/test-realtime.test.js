@@ -301,6 +301,10 @@ test('a completed tool call whose result failed is audited with outcome, exit co
   const end = emitted.find(e => e.type === 'tool-end' && e.callId === 'call_1')
   // `completed` stays the call lifecycle: the model still received the output.
   assert.equal(end.status, 'completed')
+  assert.equal(end.ok, true)
+  // ...while the result itself is reported so the UI cannot show "已完成" only.
+  assert.equal(end.outcome, 'error')
+  assert.equal(end.exitCode, 2)
   const record = emitted.find(e => e.type === 'audit' && e.record.kind === 'tool').record
   assert.equal(record.status, 'completed')
   assert.equal(record.outcome, 'error')
@@ -326,6 +330,9 @@ test('a successful tool call records an ok outcome with the first line of its ou
   assert.equal(record.exitCode, 0)
   assert.equal(record.resultSummary, '文件内容 第二行')
   assert.equal(record.text, 'read')
+  const end = emitted.find(e => e.type === 'tool-end' && e.callId === 'call_2')
+  assert.equal(end.outcome, 'ok')
+  assert.equal(end.exitCode, 0)
   session.dispose()
 })
 

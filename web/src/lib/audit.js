@@ -42,6 +42,16 @@ export function auditResultSummary(record = {}) {
   return typeof record.resultSummary === 'string' ? record.resultSummary.trim() : ''
 }
 
+// 会话记录徽章：`status` 只说明调用生命周期，`outcome` 才是结果成败。
+// 与审计页红点、失败筛选同一口径——失败可叠加，成功不可覆盖。
+const historyStatusLabels = {completed:'已完成',complete:'已完成',success:'成功',done:'已完成',failed:'失败',error:'错误',cancelled:'已取消',canceled:'已取消',interrupted:'已打断',running:'进行中',streaming:'生成中',unreported:'状态未返回'}
+
+export function historyStatusBadge(message = {}) {
+  if (['failed', 'error'].includes(message.status)) return {variant:'destructive', label:historyStatusLabels[message.status]}
+  if (message.kind === 'tool' && message.outcome === 'error') return {variant:'destructive', label:'工具报错'}
+  return {variant:'outline', label:historyStatusLabels[message.status] || message.status || '状态未返回'}
+}
+
 export function auditTimestamp(value) {
   if (value === null || value === undefined || value === '') return null
   // Providers use both Unix seconds and JavaScript milliseconds.

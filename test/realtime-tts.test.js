@@ -340,6 +340,11 @@ test('server cancelled response marks outstanding tools cancelled and retains ac
   waiting.resolve({ __previewData: 'cancelled-audio' })
   await tick()
   assert.equal(s.events.find(e => e.type === 'tool-end').status, 'cancelled')
+  // A cancelled call reports its own outcome and must not invent an exit code.
+  const cancelledEnd = s.events.find(e => e.type === 'tool-end')
+  assert.equal(cancelledEnd.outcome, 'cancelled')
+  assert.equal(cancelledEnd.ok, false)
+  assert.equal('exitCode' in cancelledEnd, false)
   const responseAudit = s.events.find(e => e.type === 'audit' && e.record.kind === 'response').record
   assert.equal(responseAudit.status, 'cancelled')
   assert.deepEqual(responseAudit.usage, { input_tokens: 7, output_tokens: 1 })

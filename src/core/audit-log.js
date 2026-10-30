@@ -330,7 +330,9 @@ export function createAuditLog({ path, maxRecords = 2000, maxBytes = 10 * 1024 *
       const kind = row.kind === 'transcription' ? 'user' : ['response', 'synthesis'].includes(row.kind) ? 'assistant' : row.kind
       const message = { id: clean(row.id), kind, role: kind === 'error' ? clean(row.role || 'system') : kind,
         text: clean(row.text || ''), at: row.at, status: clean(row.status) }
-      for (const key of ['messageId', 'responseId', 'callId', 'model', 'provider', 'audioDurationSeconds']) {
+      // `outcome`/`exitCode` travel with the row so the session view can tell a
+      // completed call apart from a command that actually failed.
+      for (const key of ['messageId', 'responseId', 'callId', 'model', 'provider', 'audioDurationSeconds', 'outcome', 'exitCode']) {
         if (row[key] !== undefined) message[key] = clean(row[key])
       }
       messages.push(message)

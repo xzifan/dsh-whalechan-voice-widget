@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {auditUsage, formatAuditNumber, summarizeAuditUsage, auditTimestamp, formatAuditTime, mergeAuditRecords, auditRangeStart, auditOutcomeLabel, auditResultSummary} from './audit.js'
+import {auditUsage, formatAuditNumber, summarizeAuditUsage, auditTimestamp, formatAuditTime, mergeAuditRecords, auditRangeStart, auditOutcomeLabel, auditResultSummary, historyStatusBadge} from './audit.js'
 
 test('missing usage stays unknown while actual zero remains visible', () => {
   const unknown = {input: null, output: null, total: null}
@@ -65,6 +65,18 @@ test('tool outcome labels separate the call lifecycle from the actual result', (
   assert.equal(auditResultSummary({kind: 'tool', resultSummary: '  ls: bad dir  '}), 'ls: bad dir')
   assert.equal(auditResultSummary({kind: 'tool'}), '')
   assert.equal(auditResultSummary({kind: 'error', resultSummary: 'ignored'}), '')
+})
+
+test('history badges use the same failure rule as the audit table', () => {
+  // A completed call whose command failed must not read as completed.
+  assert.deepEqual(historyStatusBadge({kind: 'tool', status: 'completed', outcome: 'error'}), {variant: 'destructive', label: '工具报错'})
+  assert.deepEqual(historyStatusBadge({kind: 'tool', status: 'completed', outcome: 'ok'}), {variant: 'outline', label: '已完成'})
+  assert.deepEqual(historyStatusBadge({kind: 'error', status: 'failed'}), {variant: 'destructive', label: '失败'})
+  // `outcome` only applies to tool rows; a cancel is not a failure.
+  assert.deepEqual(historyStatusBadge({kind: 'assistant', status: 'completed', outcome: 'error'}), {variant: 'outline', label: '已完成'})
+  assert.deepEqual(historyStatusBadge({kind: 'tool', status: 'cancelled', outcome: 'cancelled'}), {variant: 'outline', label: '已取消'})
+  assert.deepEqual(historyStatusBadge({kind: 'tool'}), {variant: 'outline', label: '状态未返回'})
+  assert.deepEqual(historyStatusBadge({kind: 'tool', status: 'weird'}), {variant: 'outline', label: 'weird'})
 })
 
 test('time range keys map to inclusive query starts and unknown keys stay unlimited', () => {

@@ -4,21 +4,21 @@ import {Button} from './components/ui/button'
 import {Input} from './components/ui/input'
 import {Badge} from './components/ui/badge'
 import {api} from './lib/core.js'
-import {formatAuditTime} from './lib/audit.js'
+import {formatAuditTime, historyStatusBadge} from './lib/audit.js'
 import {formatDuration} from './lib/statistics.js'
 
-const statuses = {completed:'已完成',complete:'已完成',success:'成功',done:'已完成',failed:'失败',error:'错误',cancelled:'已取消',canceled:'已取消',interrupted:'已打断',running:'进行中',streaming:'生成中',unreported:'状态未返回'}
 function Failure({error, retry}) {
   return <div role="alert" className="flex flex-wrap items-center gap-2 p-4 text-sm text-destructive"><span>{error}</span><Button variant="outline" size="sm" onClick={retry}>重试</Button></div>
 }
 function HistoryMessage({message, onInspectMessage}) {
   const user = message.kind === 'user', event = ['tool','error'].includes(message.kind)
+  const badge = historyStatusBadge(message)
   const label = {user:'你',assistant:'小鲸鱼娘',tool:'工具调用',error:'错误记录'}[message.kind] || '记录'
   return <article aria-label={`${label}的历史记录`} className={`group flex min-w-0 flex-col gap-1 ${user ? 'items-end' : 'items-start'}`}>
     <div className="flex max-w-full flex-wrap items-center gap-2 text-xs text-muted-foreground">{user ? <UserRound className="size-4"/> : event ? message.kind==='tool' ? <Wrench className="size-4"/> : <CircleAlert className="size-4"/> : <img src="./avatar.webp" alt="" className="size-6 rounded-full"/>}<span>{label}</span><time>{formatAuditTime(message.at)}</time></div>
     <div className={`max-w-full whitespace-pre-wrap break-words rounded-xl px-3 py-2 text-sm leading-relaxed [overflow-wrap:anywhere] sm:max-w-[90%] ${user ? 'bg-primary text-primary-foreground' : event ? 'w-full border bg-muted/30' : 'border bg-card'}`}>{message.text || '此记录没有文本内容'}</div>
     <div className="flex max-w-full flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-      <Badge variant={['failed','error'].includes(message.status) ? 'destructive' : 'outline'} className="text-[10px]">{statuses[message.status] || message.status || '状态未返回'}</Badge>
+      <Badge variant={badge.variant} className="text-[10px]">{badge.label}</Badge>
       {message.model && message.model !== 'unknown' && <span className="break-all">{message.model}</span>}
       {typeof message.audioDurationSeconds==='number' && <span>音频 {formatDuration(message.audioDurationSeconds)}</span>}
       {message.messageId && onInspectMessage && <Button variant="ghost" size="sm" className="h-6 px-1.5 text-[11px]" onClick={()=>onInspectMessage(message.messageId)}><ScrollText className="size-3"/>查看审计</Button>}

@@ -1257,3 +1257,25 @@
 **边界**：本轮零源码改动——没有碰 version / `npm pack` / tag / push / `dsh plugin add` / `dsh web` 重启 / `~/.dsh/AGENTS.md`。`.work.lock` 本轮创建、提交后删除。
 
 **下次可做**：按顺序取最上面一个非阻塞条目，即本轮新增的「工具调用完成但命令失败仍显示已完成」（≈62 行 / 7 文件）。次选为上面两个未入选候选（MiMo/自定义提供方 UI、被打断合成不进审计），二者都还不在清单里，要动需再走一次第 7 步取证。
+
+## 2026-10-30 23:30 · 工具「调用完成但命令失败」不再显示「已完成」（`tool-end` 带 `outcome`/`exitCode` + 历史白名单 + 前端判定与徽章）
+
+**条目**：`BACKLOG.md` 底部「工具「调用完成但命令失败」在实时对话与会话记录里仍显示「已完成」」。上一轮第 7 步取证入清单的那一条，本轮按顺序取用（清单里它之前的所有 `- [ ]` 都是 `⛔ 阻塞待决策` / `需人拍板` / 架构决策 / `需先定口径归属` / `单独立项`，按 J1 规则不动，见下方「下次可做」）。
+
+**改了什么**（源码 30 行 / 测试 67 行 / 文档 6 行，共 103 行 churn，未超 200 上限）：
+
+- `src/core/realtime-service.js`：`finishTool` 的 `emit({type:'tool-end', …})` 追加 `outcome` 与 `Number.isInteger(exitCode) ? { exitCode } : {}`。`ok`/`status` 仍是调用生命周期，给模型的 `function_call_output` 与随后那条审计记录的字段一字未动——这是纯增量字段，旧消费方无感。
+- `src/core/audit-log.js`：`historyView` 的身份白名单加 `outcome`/`exitCode`。`sanitizeAuditValue` 对有限数字原样返回（`typeof value === 'number'` 分支），所以整数退出码不会像字符串字段那样被 `slice(0,200)`；`cancelled` 的调用不带 `exitCode` 键，前端据此不会把「取消」显示成退出码。
+- `web/src/lib/realtime.js`：`updateTool` 的判定改成四级优先级——① `previous.status === 'failed'` 即失败（失败粘性，后来的 `outcome:'ok'` 不许翻案，与 `failedRecord` 的「失败可叠加、成功不可覆盖」同向）② `status:'cancelled'` 仍是取消（手动取消不是失败，即使结果也报了错）③ `status:failed/error`、`ok:false`、`outcome:'error'` 任一 → `failed` ④ 其余 `completed`。同时把 `outcome === 'error'` 加进失败卡片文案的条件——只改状态会让 `completed + outcome:error` 变成「红色的失败卡片但一句话都没有」。
+- 新增 `web/src/lib/audit.js` 的 `historyStatusBadge(message)`：`failed`/`error` 状态或 `kind:'tool' && outcome:'error'` 都返回 `destructive`，后者文案是「工具报错」。**为什么下沉成纯函数**：`test:web` 是纯 `node:test` 跑 `web/src/lib/*.test.js`，不加载 jsdom、不渲染 React，判定留在 `.jsx` 里就永远进不了回归网。`web/src/history-view.jsx` 改用它，并删掉本地那份 12 键的状态文案表（重复定义）。
+- 测试：`test/test-realtime.test.js` 两条既有用例补齐 `end.outcome`/`end.exitCode`/`end.ok`（成功侧 `'ok'` + `0`）；`test/realtime-tts.test.js` 的取消用例补 `outcome:'cancelled'`、`ok:false` 与 `'exitCode' in end === false`（证明不编造退出码）；`test/history.test.js` 的工具行加 `outcome:'error', exitCode:2` 并断言透传，同时断言 legacy 行**没有**这两个键（不许假装成功也不许假装有值）；`web/src/lib/realtime.test.js` 新增 2 条（`completed+outcome:error` 判失败且带文案、失败粘性/取消优先级/纯 `outcome:'ok'` 仍完成）；`web/src/lib/audit.test.js` 新增 1 条（徽章三态 + `outcome` 只对 tool 行生效 + 未知状态按原样显示）。
+
+**变异验证（5 条，各恰好红 1~2 条，全部还原后重新全绿）**：`tool-end` 去掉 `outcome` → `test-realtime` 红 2；`historyView` 白名单回退 → `history.test` 红 1；`updateTool` 去掉 `outcome === 'error'` → `realtime.test` 红 1；去掉失败粘性分支 → 红 1（取消优先级仍在，所以只红那一条）；`historyStatusBadge` 去掉工具报错分支 → `audit.test` 红 1。第一条特别确认了「旧断言不够」：删掉 `outcome` 后 `record.outcome === 'error'`（审计侧）仍然绿，红的正是新补的事件侧断言。
+
+**验收**：`npm test` **400 / 400 pass**（基线 400，本轮只加断言不加用例）、`npm run test:web` **105 → 108 / 108 pass**、`npm run lint` 0 问题、`npm run format:check` 全仓通过、`npm run build` 成功（`dist/` 已 `git checkout`、新 hash 产物移到 `~/.hermes/cache/scratch/`）。浏览器侧在**新构建**上实跑：`test/browser-smoke.py` PASS（含实时工具时间线的「已完成」——它的 mock `tool-end` 只有 `status:'ok'`、没有 `outcome`，按新判定仍归 completed，行为未变）、`test/browser-pages.py` 返回 `{"statistics": true, "history": true, "audit": true, "pageErrors": []}`（历史页用上了新的 `historyStatusBadge`，零 pageerror）。
+
+**用的规划子代理**：用了（只读，只盘点不落盘——它未改文件、未跑测试）。按任务书第 3 条，条目跨 3 个源码 + 4 个测试文件且动了事件与接口形状，先派盘点值。它纠正了两处我按条目字面会踩的前提：① `web/src/lib/realtime.js:159` 的失败文案条件不含 `outcome`，只改状态判定会得到无说明的失败卡片；② `.jsx` 里的判定在 `test:web` 下不可测，必须下沉成 `lib/` 纯函数。它给的行号我逐条 `sed -n` 复核过（`finishTool` 确在 `:84`、白名单确在 `:333`）。
+
+**边界**：只做了这 1 条；`.work.lock` 本轮创建、提交前删除；无 version 改动、无 `npm pack`、无 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未碰 `~/.dsh/AGENTS.md`。
+
+**下次可做**：清单里已无任何非阻塞条目——剩下的 5 个 `- [ ]` 全部落在 J1 不得自行处理的范围（`⛔ 阻塞待决策` 的 husky + lint-staged、`需人拍板` 的夜间冒烟调度、`[arch]` 的 `runTool`/`onMessage` 状态机化、`需先定口径归属` 的首帧延迟锚点、`单独立项` 的打断停播时延），所以下一班应走第 7 步（只读取证 → 选 1 条入清单，本轮不实现）。取证候选按价值排序：① `browser-pages.py` 的审计/历史 mock 里没有 `outcome:error` 的工具行，本轮给历史页加的「工具报错」徽章只有纯函数单测，没有浏览器断言（要动 mock 的计数与筛选期望，属独立一条）；② MiMo/自定义提供方在设置页被报成「旧版提供方」并藏掉配置区（要设计一套通用编辑器，属 UI 决策）；③ 被打断的实时合成不进审计而预设路径写 `cancelled`（要先定审计口径）。

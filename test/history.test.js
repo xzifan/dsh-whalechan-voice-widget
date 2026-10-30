@@ -69,7 +69,7 @@ test('TTS dedup requires same session, matching identity and exact text; repeats
     { id: 'empty-response', kind: 'response', text: '  ' },
     { id: 'empty-transcription', kind: 'transcription', text: '' },
     { id: 'empty-synthesis', kind: 'synthesis' },
-    { id: 'tool', kind: 'tool', callId: 'call', text: 'tool result', status: 'completed' },
+    { id: 'tool', kind: 'tool', callId: 'call', text: 'tool result', status: 'completed', outcome: 'error', exitCode: 2 },
     { id: 'empty-tool', kind: 'tool' },
     { id: 'error', kind: 'error', text: 'failed', status: 'failed' },
     { id: 'empty-error', kind: 'error' },
@@ -81,6 +81,12 @@ test('TTS dedup requires same session, matching identity and exact text; repeats
   assert.equal(result.session.recordCount, rows.length)
   assert.equal(result.session.messageCount, 10)
   assert.equal(result.messages.find(m => m.id === 'tool').callId, 'call')
+  // The session view needs the result, not only the call lifecycle.
+  assert.equal(result.messages.find(m => m.id === 'tool').outcome, 'error')
+  assert.equal(result.messages.find(m => m.id === 'tool').exitCode, 2)
+  // Legacy rows keep no outcome key at all instead of pretending one.
+  assert.equal('outcome' in result.messages.find(m => m.id === 'empty-tool'), false)
+  assert.equal('exitCode' in result.messages.find(m => m.id === 'empty-tool'), false)
   assert.equal(result.messages.find(m => m.id === 'error').kind, 'error')
   const other = await log.historyMessages({ sessionId: 'b' })
   assert.equal(other.messages[0].id, 'other-tts')
