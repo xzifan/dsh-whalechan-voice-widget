@@ -1133,3 +1133,28 @@
 **并发与边界**：`.work.lock` 已删除；无 version 改动、无 `npm pack`、无 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未碰 `~/.dsh/AGENTS.md`，也未创建或修改任何 cron 作业。
 
 **下次可做**：清单新入「握手被拒只发 error 不发 closed」（可直接取，两行改动 + 两个测试文件，不需要规划子代理）；其后依次是上面未选的第 2 条（Breeze 等提供方的合成失败分类）与第 3 条（CONNECTING 窗口丢帧）。
+
+## 2026-10-30 17:19 · 握手被拒也收尾（`unexpected-response` 补 `closed` + 主动 abort）
+
+**做了哪一条**：BACKLOG `## P2 · 结构性改进` 末尾那条「握手被拒只发 `error` 不发 `closed`」。清单里排在它前面的 5 条全部按规则跳过、一字未动：`⛔ 阻塞待决策`（husky + lint-staged）、`需人拍板`（夜间冒烟接入调度）、`[arch]`（`createRealtimeSession` 的 `runTool`/`onMessage` 改事件分发表，明写「属架构决策」）、`需先定口径归属`（首帧延迟锚点统一）、`单独立项`（打断后真实停播时延）。
+
+**根因复核（不是照抄条目）**：本机仓库没有 `ws`（运行时从 DSH Desktop bundle 解析），所以直接读 `/Applications/DSH Desktop.app/Contents/Resources/app/node_modules/ws`——版本 `8.22.0`，`lib/websocket.js:943` 正是 `} else if (!websocket.emit('unexpected-response', req, res)) {`，`emit` 有监听即返回真，于是 `abortHandshake` 整段被跳过：`readyState` 停在 CONNECTING、`close` 不触发、`service.js:385` 的 `settleRealtimeSession` 永不执行，死会话被 `liveRealtimeSessionCount()` 当活会话占额度。条目对 ws 内部行为的描述与源码逐字一致。
+
+**改了什么**（1 个源码文件 +11/−1）：`src/core/realtime-service.js` 的 `socket.on('unexpected-response', …)` 从单行扩成多行块：`res?.resume?.()` → `emit` 既有 `error`（`code: 'handshake_' + 状态码`）→ `emit({ type: 'closed' })` → `req?.destroy?.()`。
+
+**两处刻意与条目写法不同**：
+
+- **顺序**：条目写「先 `destroy` 再 emit」，实际先 emit 后 destroy。`req.destroy()` 可能同步触发 socket 的 `close` 处理器，那会把信号序列变成 `['closed','error:handshake_401']`，严格序列断言假红；而真实链路上 `emit closed` → `settleRealtimeSession` → `dispose()` → `socket.close()` → ws 内部 `abortHandshake` 本来就会 destroy 请求，显式那句是为了「`disposed` 已为 true 的迟到回调」与测试里的假 socket 也真的 abort（`req.destroyed` 断言才不是空转）。
+- **没有**改写成 `return connectionFailed(...)`：它把 `code` 写死成 `connection`，且会同时撞既有守卫的「`return` 恰三条」与「失败路径必须走 `connectionFailed(`」两条。`connect()` 里的 `return` 数量仍是 3。
+
+**测试**（`test/test-realtime.test.js` 19 → 21 条，+84 行）：服务级复用 `unconnectable()` + 新假 socket `handshakeSocket()`（构造成功、`readyState = 0`、`reject(statusCode)` 手动调监听并返回 `req`/`res`），断言 `res.resumed`、`req.destroyed` 为真，`activeSessions === 0`，`/api/realtime/events` 的 `done === true`，信号恰 `['error:handshake_401','closed']`，`releaseToolSession` 恰 1 次，`/audio` 404，`/end` 仍幂等，再连撞 5 次 403 后额度仍 0（`assertSettles` 里写死的信号列表未动，握手路径另写一条）。会话级断言事件序列、可读 message、`dispose()` 后的迟到回调不再发事件。源码守卫新增一段，但**第一版是空转**：`connect.slice(indexOf("'unexpected-response'"))` 切到函数末尾，块外 `socket.on('close')` 里的 `emit({type:'closed'})` 直接满足了断言，变异 A 只红 2 条——收紧成切到下一个 `socket.on('close'` 之后才真红。
+
+**验收（实跑）**：`npm test` **397/397** exit 0（改前 395）、`npm run test:web` **105/105** exit 0、`npm run lint` 0 问题、`npm run format:check` `All matched files use Prettier code style!`、`npm run build` exit 0 且 `dist/` 零改动（本次改动只在 `src/core`，不进 web bundle）。变异 2 条各恰红 3 条（删块内 `emit closed` / 删 `req?.destroy?.()`），还原后 21/21。churn **100 行**（源码 12 / 测试 84 / CHANGELOG 6，含删 1），未超 200。
+
+**文档**：`CHANGELOG.md` 新建 `## [Unreleased]` → `### 修复` 一条（0.6.6 已发版，不回填旧段；`release.sh` 第 6 步认 `[Unreleased]` 替换成版本号，`test/version-consistency.test.js` 只匹配 `## [x.y.z] - 日期`，不受影响）。
+
+**是否用规划子代理**：未用——条目已精确到行、单文件两行改动、无接口与数据结构变化。
+
+**并发与边界**：`.work.lock` 本轮创建并在提交后删除；无 version 改动、无 `npm pack`、无 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未碰 `~/.dsh/AGENTS.md`。
+
+**下次可做**：上一轮未选的第 2 条（非百炼提供方合成失败仍只有 HTTP 码，`src/core/tts-http.js` 扔掉上游 body，需新写「读 ≤4 KiB + 只取 code + 不泄原文」分类器 ≈72 行 / 3 文件）与第 3 条（CONNECTING 窗口内 `appendAudio`/`commit` 静默丢帧，要动发送语义并入队 flush）。两者都不在清单里，得先走第 7 步取证才能入。

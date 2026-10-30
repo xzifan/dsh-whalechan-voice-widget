@@ -444,7 +444,16 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
     } catch { return connectionFailed('实时语音连接失败') }
     socket.on('message', onMessage)
     socket.on('error', () => { if (!disposed) emit({ type: 'error', code: 'connection', message: '实时语音连接失败' }) })
-    socket.on('unexpected-response', (_req, res) => { res?.resume?.(); if (!disposed) emit({ type: 'error', code: 'handshake_' + (res?.statusCode || 'error'), message: '实时语音鉴权或握手失败' }) })
+    // 握手被拒（401/403、模型或地址写错）不会自己收尾：ws 8.22 只要注册了 unexpected-response 监听，
+    // websocket.js:943 的 `!websocket.emit('unexpected-response', …)` 即为假，abortHandshake 被跳过，
+    // readyState 永远停在 CONNECTING、close 事件不触发（握手超时也只有 socket 空闲时才轮到）。
+    // 所以这里既排空响应体、又主动 destroy 请求，并补发 closed —— 否则服务端把这具死会话当活会话占额度。
+    socket.on('unexpected-response', (req, res) => {
+      res?.resume?.()
+      if (!disposed) emit({ type: 'error', code: 'handshake_' + (res?.statusCode || 'error'), message: '实时语音鉴权或握手失败' })
+      if (!disposed) emit({ type: 'closed' })
+      req?.destroy?.()
+    })
     socket.on('close', () => { if (!disposed) { invalidate(true); emit({ type: 'closed' }) } })
   }
 

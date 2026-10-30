@@ -421,6 +421,52 @@ test('WebSocket 构造抛错时同样发 closed，不只是 error', async t => {
   await assertSettles(t, service, settings, released)
 })
 
+// 握手被拒（401/403、模型名或地址写错）：ws 8.22 注册了 unexpected-response 监听后就不 abortHandshake，
+// readyState 停在 CONNECTING、close 永不触发——不自己 destroy 并补发 closed，这具死会话会被当成活会话占额度。
+function handshakeSocket() {
+  const instances = []
+  class HandshakeSocket {
+    constructor(url, opts) {
+      this.url = url; this.opts = opts; this.readyState = 0
+      this.handlers = {}; this.closed = false
+      instances.push(this)
+    }
+    on(event, fn) { this.handlers[event] = fn }
+    close() { this.closed = true }
+    reject(statusCode = 401) {
+      const req = { destroyed: false, destroy() { this.destroyed = true } }
+      const res = { statusCode, resumed: false, resume() { this.resumed = true } }
+      this.handlers['unexpected-response'](req, res)
+      return { req, res }
+    }
+    static get last() { return instances[instances.length - 1] }
+  }
+  return HandshakeSocket
+}
+
+test('握手被拒（401）时 /start 的会话同样收尾，不占并发额度', async t => {
+  const HandshakeSocket = handshakeSocket()
+  const { service, settings, released } = await unconnectable(t, { realtimeWebSocket: HandshakeSocket })
+  const sessionId = (await service.handle('POST', '/api/realtime/start', { settings })).body.sessionId
+  const { req, res } = HandshakeSocket.last.reject(401)
+  assert.equal(res.resumed, true, '必须排空响应体，否则请求永不释放')
+  assert.equal(req.destroyed, true, '必须真的 abort 请求：只发事件而不 destroy 会让 readyState 永远停在 CONNECTING')
+  assert.equal((await service.handle('GET', '/api/health')).body.realtime.activeSessions, 0, '握手失败不得占并发额度（否则连撞 4 次后新会话一律 429）')
+  const polled = (await service.handle('POST', '/api/realtime/events', { sessionId })).body
+  assert.equal(polled.done, true, '握手失败也必须标记结束，否则前端轮询空转、UI 停在「我在听，主人」')
+  const signals = polled.events.filter(event => event.type === 'error' || event.type === 'closed').map(event => (event.type === 'error' ? `error:${event.code}` : 'closed'))
+  assert.deepEqual(signals, ['error:handshake_401', 'closed'], 'error 说明是握手被拒，closed 才是收尾信号')
+  assert.deepEqual(released, [sessionId], '工具 agent 必须释放，且只释放一次')
+  await assert.rejects(service.handle('POST', '/api/realtime/audio', { sessionId, audio: 'AAAA' }), error => error.status === 404)
+  assert.equal((await service.handle('POST', '/api/realtime/end', { sessionId })).body.ok, true, '客户端收尾时的 /end 仍须幂等成功')
+  // 连续握手失败不得吃满额度（403 与 401 走同一条路径）
+  for (let i = 0; i < 5; i++) {
+    await service.handle('POST', '/api/realtime/start', { settings })
+    HandshakeSocket.last.reject(403)
+  }
+  assert.equal((await service.handle('GET', '/api/health')).body.realtime.activeSessions, 0)
+})
+
 test('会话级：缺组件时自行发 error→closed，dispose 之后 connect 不再发事件', () => {
   const emitted = []
   const session = createRealtimeSession({ settings: realtimeDefaults(), key: 'k', executeTool: async () => ({}), emit: event => emitted.push(event), WebSocketCtor: null })
@@ -431,6 +477,32 @@ test('会话级：缺组件时自行发 error→closed，dispose 之后 connect 
   const settled = emitted.length
   session.connect()
   assert.equal(emitted.length, settled, 'dispose 之后 connect() 不许再发 closed（会话已收尾，重复 closed 会重复收尾）')
+})
+
+test('会话级：握手被拒时自行 abort 请求并补发 closed，不等 close 事件', () => {
+  const emitted = []
+  const instances = []
+  class RejectedSocket {
+    constructor() { this.readyState = 0; this.handlers = {}; this.closed = false; instances.push(this) }
+    on(event, fn) { this.handlers[event] = fn }
+    close() { this.closed = true }
+  }
+  const session = createRealtimeSession({ settings: realtimeDefaults(), key: 'k', executeTool: async () => ({}), emit: event => emitted.push(event), WebSocketCtor: RejectedSocket })
+  session.connect()
+  const socket = instances[0]
+  assert.equal(socket.readyState, 0, '前提：握手尚未完成（CONNECTING）')
+  const req = { destroyed: false, destroy() { this.destroyed = true } }
+  const res = { statusCode: 401, resumed: false, resume() { this.resumed = true } }
+  socket.handlers['unexpected-response'](req, res)
+  assert.equal(res.resumed, true, '必须排空响应体')
+  assert.equal(req.destroyed, true, '必须真的 abort——ws 注册了该监听就不再 abortHandshake')
+  assert.deepEqual(emitted.map(event => (event.type === 'error' ? `error:${event.code}` : event.type)), ['error:handshake_401', 'closed'])
+  assert.ok(emitted[0].message, '握手失败要有可读文案，不能只给 code')
+  // 迟到的重入（socket 随后才真正 close）不得再发事件
+  session.dispose()
+  const settled = emitted.length
+  socket.handlers['unexpected-response'](req, res)
+  assert.equal(emitted.length, settled, 'dispose 之后不得再发 error/closed')
 })
 
 test('源码守卫：connect() 的两条失败路径都必须经 connectionFailed 同时发 error 与 closed', () => {
@@ -450,4 +522,16 @@ test('源码守卫：connect() 的两条失败路径都必须经 connectionFaile
   assert.match(failed, /emit\(\{ type: 'error', code: 'connection', message \}\)/, 'error 事件不能丢：前端要显示原因')
   assert.match(failed, /emit\(\{ type: 'closed' \}\)/, 'closed 事件不能丢：服务端收尾与前端停麦都只认它')
   assert.ok(failed.indexOf("type: 'error'") < failed.indexOf("type: 'closed'"), 'error 必须先于 closed（closed 会同步触发 settle/dispose）')
+
+  // 第四条失败路径：握手被拒。ws 8.22 只要注册了 unexpected-response 监听就不再 abortHandshake
+  // （websocket.js:943 `!emit(...)` 为假），readyState 停在 CONNECTING、close 不触发，所以必须自己 destroy + 发 closed。
+  const rejectedAt = connect.indexOf("'unexpected-response'")
+  // 只取这一个监听块（到下一个 socket.on 为止）——否则块外的 close 处理器里的 emit closed 会让断言空转。
+  const rejected = connect.slice(rejectedAt, connect.indexOf("socket.on('close'", rejectedAt))
+  assert.ok(rejected.length > 0, '找不到 unexpected-response 监听')
+  assert.match(rejected, /res\?\.resume\?\.\(\)/, '握手被拒要先排空响应体，否则请求永不释放')
+  assert.match(rejected, /code: 'handshake_' \+/, 'error 仍要说明是握手被拒（带上游状态码）')
+  assert.match(rejected, /emit\(\{ type: 'closed' \}\)/, '握手被拒也必须发 closed——只发 error 正是本 bug 的形态')
+  assert.match(rejected, /req\?\.destroy\?\.\(\)/, '必须主动 abort 请求：只发事件会让 readyState 永远停在 CONNECTING')
+  assert.ok(rejected.indexOf("type: 'error'") < rejected.indexOf("type: 'closed'"), 'error 必须先于 closed（closed 会同步触发 settle/dispose）')
 })
