@@ -1836,3 +1836,21 @@
 3. `/api/audit` 反向时间区间静默返回 0 条：`src/core/service.js:364` 只校验非负整数，而同形 `/api/statistics` 在 `:348` 有 `since <= until` 的 400 校验。
 4. `package.json` 的 `files` 白名单仍无元测试：删掉 `dist/web` 或 `CHANGELOG.md` 也不会红。
 5. 统计页 `audioMissing` 不会回填：本机审计里 54 条百炼历史行本来就缺 `audioDurationSeconds`（本次只修「以后的记录」），要清掉得重跑合成或做一次迁移——涉及历史数据改写，须人拍板。
+
+## 2026-11-01 06:21 · 第 7 步取证：清单再次全阻塞，入 1 条（更新日志解析器丢 3 个版本 / 17 条）
+
+- 并发保护：开工前无 `.release.lock`，已建 `.work.lock`（06:21），提交前删除。HEAD = `d5a5ff4`，工作区干净。
+- 取活：BACKLOG 里 5 个 `- [ ]` **仍是同一批阻塞项**（`:34` ⛔ 阻塞待决策、`:46` 需人拍板、`:58` `[arch]` 架构决策、`:60` 需先定口径归属、`:61` 单独立项），按 J1 规则一条都不碰、原样保留；上一班已把 `:120` 的百炼时长条目做完，因此本轮无 `- [ ]` 可做，走第 7 步：只取证入条，不实现。
+- 取证：派 1 个**只读**子代理（禁止改/建/删文件、禁止 git 写操作、禁止 `npm install` 与重启任何服务），从源码缺口、真实审计日志、CHANGELOG 已宣称未落地项、测试缺口提 3 个候选。全仓 `grep TODO/FIXME` 仍为空，候选全部来自真实数据可复算的缺口。
+- **主代理复核（不采信子代理自称，逐条自己实读 + 自己跑）**：①`src/core/changelog.js:42-47` 实读确为 `if (itemMatch && section)`，`:58` 为 `entries.filter(entry => entry.sections.length > 0).slice(0, limit)`、`:59` 的 `total` 在过滤前取值；②`grep -c` 于 `CHANGELOG.md` 得 `^## ` 14 / `^### ` 22 / `^- ` 94，`awk` 逐版本计数得 0.5.0 = 7 条、0.3.0 = 6 条、0.2.0 = 4 条且三段 `###` 均为 0（合计 17）；③自写探针 `.hermes/cache/scratch/changelog-probe.mjs` 直接 import `parseChangelog` 跑真文件：`limit=50` → `total=14` / `entries=11`（缺 0.5.0、0.3.0、0.2.0），`limit=6` → `entries=6`，其余 11 个版本 section/条目数与今天一致；④`test/changelog.test.js:92-95` 实读确认断言是 `entries.length === Math.min(6, total)`，过滤（11→6）与不过滤（14→6）都成立，属恒真断言；⑤`src/core/service.js:43-54` 的 `readChangelog(limit = 6)` 与只按月 mtime 的缓存（键不含 `limit`）、`web/src/changelog-corner.jsx:84` 的页脚按 `total` 写「共 N 个版本」均已实读；⑥顺带复算了本机 `voice-audit.jsonl` 535 行的 kind 直方图（response 154 / tool 168 / synthesis 100 / transcription 81 / usage 22 / error 10），`error` 的 `code` 仍 10/10 为空——那是 0.6.6 之前的旧行，不构成新候选。
+- 选入 BACKLOG 的是「更新日志解析器把 3 个无 `###` 版本的 17 条条目永久丢弃」：唯一同时满足「本机可复算的双向证据（`total=14` vs `entries=11`、7+6+4=17、恒真断言）」+「不改接口与响应形状、当前零用户可见变化」+「≈35 行、两个文件」+「变异可双向打红」。**明说了它不修任何已观测的用户故障**：`limit=6` 之下这 3 段本来就渲染不到，修的是数据模型自洽与「将来放宽 limit 就是 3 个空版本」这条隐患——这一点与上一班条目「改了当场能在本机看到效果」不同，实现时不要指望 UI 有变化。
+- 改动：`BACKLOG.md` 新增 1 条 `- [ ]`（放在可执行清单末尾、决策列表之前，保持 J1 取活顺序）；`WORKLOG.md` 追加本节。**零源码改动、零测试改动、未写 CHANGELOG**（没有对外行为变化，条目本身也标注「无产品决策、零用户可见变化」）。
+- 验收：`npm test` **463** / `npm run test:web` **110** 全绿、`format:check` 全仓通过（Markdown 在 Prettier 门禁里）。**本轮未跑 `npm run build`**：零源码改动，构建只会重写被跟踪的 `dist/`，那正是 `release.sh` 干净树前置条件会拦下的脏路径（上一班同样跳过）。
+- 本轮未 bump 版本、未 `npm pack`、未 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未动 `~/.dsh/AGENTS.md`。
+
+**下次可做**（本轮复核过、未入选的候选，按可行性排序）：
+
+1. `/api/audit` 反向时间区间静默返回 0 条：`src/core/service.js:364` 只校验「非负整数」，而同形 `/api/statistics` 在 `:348` 还多一句 `since <= until` 的 400 校验；`src/core/audit-log.js:253` 对每行 `continue`，于是区间写反与「窗口内确实没有记录」完全同形。改法是照抄 `:348` 一句（`审计开始时间不能晚于结束时间`）+ 两条断言（反向 → 400、`since === until` → 200 且 0 条），≈4 行。**短板**：`web/src/audit-view.jsx:129` 只发 `since`、不发 `until`，所以这不是用户可见 bug，只是两个兄弟端点的口径不对称，本机审计里也没有区间写反的痕迹。
+2. `src/core/service.js:133` 的 `settingsLoad` 缺观测式 `catch`：`settings.json` 损坏时该 promise 在任何请求 `await`（唯一消费点 `:261`）之前就已 rejected，全仓 `grep -rn unhandledRejection src test scripts` = 0，Node 默认行为是抛成进程级未处理拒绝；同仓 `src/core/voice-presets.js:38-39` 有现成范本 `ready.catch(() => {})`。改法 1-2 行 + 约 25 行测试。**没选它是因为缺「真实发生」证据**：`grep -rn '工作台配置无法读取' ~/.dsh/logs/` = 0，`~/.dsh/logs` 20 个文件全是 197–527 字节的启动行；而且子代理核实「宿主 `installFailLoud` 会把 `unhandledRejection` 当 fatal `exit(1)`」这一环时 `grep -rl installFailLoud node_modules` = 0，本仓没有宿主启动代码，崩溃只是 Node 默认行为的推论、不是观测。
+3. `package.json` 的 `files` 白名单仍无元测试：删掉 `dist/web` 或 `CHANGELOG.md` 也不会红（与 `coverage-config` / `browser-scripts` 那类接线元测试同族，纯测试、无产品决策）。
+4. 统计页 `audioMissing` 不会回填：本机审计里 54 条百炼历史行本来就缺 `audioDurationSeconds`（上一班只修「以后的记录」），要清掉得重跑合成或做一次历史数据迁移——涉及已落盘数据改写，须人拍板。
