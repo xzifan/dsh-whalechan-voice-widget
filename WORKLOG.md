@@ -1816,3 +1816,23 @@
 2. `src/core/service.js:133` 的 `settingsLoad` 缺观测式 `catch`：`settings.json` 损坏时该 promise 在被任何请求 `await`（唯一消费点 `:261`）之前就拒绝，全仓无 `unhandledRejection` 兜底，宿主 `installFailLoud`（`dsh-app-boot`）会当 `fatal load failure` 直接 `exit(1)`。后果最重但本机 `~/.dsh/logs` 里该串实测 **0** 次，缺「真实发生」证据，故排在后面。
 3. `/api/audit` 反向时间区间静默返回 0 条：`src/core/service.js:364` 只校验非负整数，而同形 `/api/statistics` 在 `:348` 有 `since <= until` 的 400 校验（≈31 行、零产品决策，但本机审计里没有「区间写反」的痕迹可复算）。
 4. `package.json` 的 `files` 白名单仍无元测试：删掉 `dist/web` 或 `CHANGELOG.md` 也不会红（与 `coverage-config` / `browser-scripts` 那类接线元测试同族）。
+
+## 2026-11-01 05:20 · 实现：百炼合成缺 `audioDurationSeconds`（WAV 占位 chunk 尺寸被当成越界）
+
+- 并发保护：开工前无 `.release.lock`，已建 `.work.lock`（05:17），提交前删除。HEAD = `6a31635`，工作区干净。基线实测 `npm test` **461 pass** / `npm run test:web` **110 pass**。
+- 取活：BACKLOG 顶部的 5 个 `- [ ]` 全是阻塞项（`:34` ⛔ 阻塞待决策、`:46` 需人拍板、`:58` `[arch]`、`:60` 需先定口径归属、`:61` 单独立项），全部原样跳过；第一个可做的就是 `:120`「百炼合成的审计行 54/54 条缺 `audioDurationSeconds`」——上一班 04:17 第 7 步取证入的，已写到行号级。本轮只做这一条。
+- **未用规划子代理**：条目已精确到行号、改动是单点判定，无跨模块不确定性（按任务书第 3 条只有 `[plan]` 或跨 3+ 文件才派）。上一班的「下次可做」③ 就是这条，当时缺一份真实百炼 WAV，这次在 `artifacts/anime-soft-voice/` 里找到了，根因确认落在单行。
+- 改动：`src/core/audio-duration.js` 新增 `PLACEHOLDER_CHUNK_SIZE = 0x7f000000`；WAV 分支把 `const size` 改 `let size`，越界判定由裸 `return null` 改成「`placeholder = kind === 'data' && size >= PLACEHOLDER_CHUNK_SIZE && start <= data.length`，越界且可 clamp 时 `size = data.length - start`，否则仍 `return null`」，步进后 `if (placeholder) break`。**非 `data` 块的越界仍然判 null**，`wav().subarray(0,45)` 那条既有绊线仍是 `null`；MP3/FLAC/Ogg 三个分支与三个调用方（`voice-synthesis.js` / `service.js` / `realtime-service.js`）一行未动。
+- 真实样本当场对拍（`node` 探针直读 `artifacts/anime-soft-voice/`）：`tts-check.wav` **9.2 s**、`tts-en.wav` **9.76 s**、`tts-ja.wav` **7.76 s**，三份 `data` 声明都是 `0x7fffff9b`（此前全 `null`）；真实尺寸的 `preview.wav` 仍 10.4954 s（走原路径、未被 clamp 影响）。
+- 测试：`test/statistics.test.js` +17 行一条（9.2 s 精确值、`0xffffffff` → 0.001 s、`fmt ` 块占位尺寸仍 null、真截断仍 null）；`test/voice-synthesis.test.js` +17 行一条（占位头 WAV 跑真 `synthesizeTts` → 审计行 `typeof audioDurationSeconds === 'number'` 且恰为 3，防「只改解析器没接线」）。
+- **变异验证 2 条**（都是改文件→跑测试→从 scratch 备份还原，没用 `-e` 内联脚本）：①还原成 `if (start + size > data.length) return null` → 恰红 **2** 条（两个新用例）；②改成无条件 clamp → 红 **2** 条，实测值正是条目预言的 `0.0000208333…` 与 `0`（截断用例变假绿），证明「只对 data 块 + 占位阈值」这条约束真被锁住。
+- 验收：`npm test` 461 → **463** / `npm run test:web` **110** 全绿、`npm run lint` 0 问题、`npm run format:check` 全仓通过、`npm run build` 成功（`dist/` 已 `git checkout`、新 hash 产物已移出仓库）。churn **50 行**（源码 +14/−2、测试 +34、另 CHANGELOG/BACKLOG/WORKLOG 文档），未超 200。
+- 本轮未 bump 版本、未 `npm pack`、未 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未动 `~/.dsh/AGENTS.md`。
+
+**下次可做**（本轮复核过、未动的候选，按可行性排序）：
+
+1. 更新日志浮窗丢掉 0.5.0 / 0.3.0 / 0.2.0：`src/core/changelog.js:42-47` 只收挂在 `###` 分节下的条目、`:58` 又 `filter(sections.length > 0)`，三段裸 `- ` 条目共 17 条永久不可见，而页脚仍按 `total` 写「共 14 个版本」；`test/changelog.test.js:92-94` 的 `Math.min(6,total)` 恒成立正好盖住它（≈4 行源码 + 25 行测试，无产品决策）。
+2. `src/core/service.js:133` 的 `settingsLoad` 缺观测式 `catch`：`settings.json` 损坏时该 promise 在被 `await` 前就拒绝，宿主 `installFailLoud` 会当 `fatal load failure` 直接 `exit(1)`；本机日志里该串实测 0 次，缺「真实发生」证据。
+3. `/api/audit` 反向时间区间静默返回 0 条：`src/core/service.js:364` 只校验非负整数，而同形 `/api/statistics` 在 `:348` 有 `since <= until` 的 400 校验。
+4. `package.json` 的 `files` 白名单仍无元测试：删掉 `dist/web` 或 `CHANGELOG.md` 也不会红。
+5. 统计页 `audioMissing` 不会回填：本机审计里 54 条百炼历史行本来就缺 `audioDurationSeconds`（本次只修「以后的记录」），要清掉得重跑合成或做一次迁移——涉及历史数据改写，须人拍板。

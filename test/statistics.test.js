@@ -131,3 +131,20 @@ test('duration reads actual WAV, MPEG VBR, FLAC and Ogg samples, rejects malform
   assert.equal(audioDurationSeconds(ogg), 1)
   for (const data of [Buffer.from('ID3fake'), Buffer.alloc(1), mp3.subarray(0, 500), ogg.subarray(0, 46)]) assert.equal(audioDurationSeconds(data), null)
 })
+
+test('placeholder chunk sizes from a streaming encoder are clamped to the bytes received', () => {
+  // 百炼返回的 WAV 用占位 chunk 尺寸（实读 0x7fffffbf RIFF / 0x7fffff9b data），此前第一轮就越界判 null。
+  const bailian = wav(441600)
+  bailian.writeUInt32LE(0x7fffffbf, 4)
+  bailian.writeUInt32LE(0x7fffff9b, 40)
+  assert.equal(audioDurationSeconds(bailian), 9.2)
+  const endless = wav(48)
+  endless.writeUInt32LE(0xffffffff, 40)
+  assert.equal(audioDurationSeconds(endless), 0.001)
+  // 只有 data 块可以被 clamp：别的块宣称的长度越界仍代表文件被截断。
+  const badFmt = wav()
+  badFmt.writeUInt32LE(0x7fffff9b, 16)
+  assert.equal(audioDurationSeconds(badFmt), null)
+  // 真实尺寸但字节没到齐（真截断）依旧是未知。
+  assert.equal(audioDurationSeconds(wav().subarray(0, 45)), null)
+})

@@ -66,6 +66,23 @@ test('一次 qwen 合成只落 1 条 synthesis，字段集合与凭据不外泄'
   assert.ok(!JSON.stringify(h.audit).includes('bailian-secret-key'))
 })
 
+test('百炼的占位 chunk 尺寸也算得出音频时长：审计行不再恒 null', async () => {
+  const placeholder = wav(3)
+  placeholder.writeUInt32LE(0x7fffffbf, 4)
+  placeholder.writeUInt32LE(0x7fffff9b, 40)
+  const h = fixture({
+    settings: { tts_voice_provider: 'qwen', tts_profiles: {} },
+    reply: async url => String(url).includes('SpeechSynthesizer')
+      ? Response.json({ output: { audio: { url: 'https://cdn.test/a.wav' } }, request_id: 'req-2' })
+      : new Response(placeholder, { headers: { 'content-type': 'audio/wav' } }),
+  })
+  await h.synth.synthVoiceLayer('主人，我在呢。', '', {}, { use_tts_voice: true }, emptyVoiceState())
+  // 防「只改解析器没接线」：秒数必须真落进审计行，而不是靠解析器单测通过。
+  assert.equal(h.audit.length, 1)
+  assert.equal(typeof h.audit[0].audioDurationSeconds, 'number')
+  assert.equal(h.audit[0].audioDurationSeconds, 3)
+})
+
 test('voiceProfile 读 live settings：qwen 默认音色与 model 二选一不变', () => {
   const h = fixture({ settings: { tts_voice_provider: 'qwen', tts_profiles: {} }, reply: qwenReply })
   assert.deepEqual(h.synth.voiceProfile(), { provider: 'bailian', model: MODEL_TTS_SYNTH, voice: 'longanhuan_v3.1' })

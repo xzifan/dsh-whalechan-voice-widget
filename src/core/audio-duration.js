@@ -1,11 +1,22 @@
+// Streaming encoders cannot seek back to patch the chunk size they already wrote, so they leave a
+// placeholder (0x7fffff.. / 0xffffffff) in the header — Bailian's WAV does exactly this. Only the
+// `data` chunk may be clamped to the bytes that actually arrived; any other out-of-range size still
+// means the file is truncated and the duration stays unknown.
+const PLACEHOLDER_CHUNK_SIZE = 0x7f000000
+
 // Inspect encoded audio only; unknown/truncated formats stay unknown, never text estimates.
 export function audioDurationSeconds(data) {
   if (!Buffer.isBuffer(data)) return null
   if (data.length >= 12 && data.toString('ascii', 0, 4) === 'RIFF' && data.toString('ascii', 8, 12) === 'WAVE') {
     let rate = 0, bytes = 0
     for (let at = 12; at + 8 <= data.length;) {
-      const kind = data.toString('ascii', at, at + 4), size = data.readUInt32LE(at + 4), start = at + 8
-      if (start + size > data.length) return null
+      const kind = data.toString('ascii', at, at + 4), start = at + 8
+      let size = data.readUInt32LE(at + 4)
+      const placeholder = kind === 'data' && size >= PLACEHOLDER_CHUNK_SIZE && start <= data.length
+      if (start + size > data.length) {
+        if (!placeholder) return null
+        size = data.length - start
+      }
       if (kind === 'fmt ' && size >= 16) {
         const format = data.readUInt16LE(start)
         // PCM, IEEE float, or their extensible container.
@@ -14,6 +25,7 @@ export function audioDurationSeconds(data) {
       }
       if (kind === 'data') bytes += size
       at = start + size + (size % 2)
+      if (placeholder) break // the clamped chunk already runs to the end of the buffer
     }
     return rate > 0 ? bytes / rate : null
   }
