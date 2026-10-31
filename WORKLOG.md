@@ -1593,3 +1593,23 @@
 ## 2026-10-31 16:02 · minor 发布 0.7.0
 
 - 2026-10-31 / 0.7.0 / minor 发布成功（全量回归 → `dsh plugin add` → 重启 → health `version=0.7.0` → commit/tag/push → GitHub Release）/ 本周自 v0.6.6 起 27 个 commit（含 2 个功能、11 处修复、1 处格式回归）。
+
+## 2026-10-31 16:24 · 第 7 步取证：清单只剩 5 个阻塞项，入 1 条新条目（可恢复的 error 被当成回合终止）
+
+**做了什么**（本轮 0 条实现，按第 7 步只取证）
+
+- 并发保护：开工前无 `.release.lock`，已建 `.work.lock`（16:17），提交前删除。HEAD = `d070d42`，工作区干净。
+- 取活：`grep '^- \[ \]' BACKLOG.md` 只剩 5 条，全部不可动——`:34` ⛔ 阻塞待决策（Prettier 大目录迁移是否豁免 200 行）、`:46` 需人拍板（夜间冒烟调度）、`:58` `[arch]` 架构决策、`:60` 需先定口径归属（首帧延迟锚点）、`:61` 单独立项（打断真实停播时延）。一条没碰，转第 7 步。
+- 派两个只读子代理：一个按四类证据提候选，一个独立核实 WORKLOG 里既有的 5 条「下次可做」在 HEAD 上是否仍成立。**主代理逐条实读源码复核后才采信**，子代理自述不算证据。
+- 选定并追加进 BACKLOG 底部：**可恢复的 `error` 被当成回合终止**。复核结论与子代理一致：`web/src/lib/realtime.js:363-366` 的 `case 'error'` 确实先 `finalizeRealtimeMessages` 再写横幅；`:113-126` 确实清 `activeUserMessageId`/`activeAssistantMessageId`、把 running 工具改 `cancelled`、`listening`/`speaking` 置 false；而同文件 `:415-419` 的 `shouldSettleRealtime` 注释与 `realtime.test.js:619` 的断言都明写「error 不得当终止信号」——同一个模块里两条口径互相矛盾。
+- **修正了子代理两处过度陈述**，都写进条目与「未选」说明：①「工具卡片一直显示已取消」不成立——真正的 `tool-end` 到达后 `updateTool`（`:144-147`，只有 `failed` 是粘性的）会把状态改回 `completed`，所以是「命令仍在跑的那段时间里 UI 与审计相反」；②「一条回复必被劈成两个气泡」只在事件不带 `messageId` 时成立（`write` 的 `segments()` 按 `messageId||segmentGroup||id` 归组，active 为空时 group 退化成 `undefined`；带 `messageId` 时会把同一条重新置回 `streaming`），条目里已要求用例分开造。
+- 三条候选的取舍写进条目尾注：选 ①（≈40 行、2 文件、零接口变化、频率最高）；未选 ②（启动期设计失败零审计 + `preset-store-failed` 被误导成「请检查声音配置」，需改注入表与 `service.js` 接线）；未选 ③（事件流缺口，后果最重但要动响应形状，按第 3 条应标 `[plan]`）。
+
+**验证**（本轮零源码改动，只核基线）
+
+- `npm test` → **450 pass / 0 fail**；`npm run test:web` → **109 pass / 0 fail**（改动前的基线，下一班实现后必须 ≥ 这两个数）。
+- 复核读过的行：`realtime.js:113-126`（finalize）、`:136-166`（updateTool）、`:187-206`（segments/write）、`:363-366`（error 分支）、`:410-419`（shouldStopPlayback/shouldSettleRealtime）；`realtime.test.js:176-190`、`:378-394`、`:612-626`（两条绊线 + error 非终止断言）。
+
+**欠**：新条目仍是 `- [ ]`，下一班可直接实现（≈40 行 / 2 文件，无接口变化、不需产品决策）。
+
+**下次可做**：①新入的这条（error 只写横幅，收尾交给 closed/done）；②启动期音色设计失败补审计 + `preset-store-failed` 不再被误导成「检查声音配置」（`voice-presets.js:216` 的 `await store()` 抛 `STORE_FAILURE` 而 `voice-initialization.js` 未透传，`generate` 路径 `:171` 已有该判据；同时给 `createVoiceInitialization` 注入 `audit`）；③事件流缺口（`src/core/service.js:423` 的 `events.shift()` 无 dropped 信号 + `web/src/main.jsx:121` 先 `advanceCursor` 整批推进再逐条处理，任一帧处理抛错就永久丢该批剩余事件）——需先出 `[plan]`；④`audio_too_large` 超限后 `audioTotal` 不清零导致每帧重复 emit（`realtime-service.js:464-468`）；⑤审计列筛选 keys 未含 `code`（`service.js:359` 仍无 code，后端白名单 `audit-log.js:70-72` 与搜索文本已收，前端 `audit-view.jsx:95` 的 fieldLabels 与筛选器缺）。
