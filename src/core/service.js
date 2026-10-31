@@ -2,7 +2,7 @@ import { normalizeBreezeProfile } from './breeze-voices.js'
 import { createVoicePresets } from './voice-presets.js'
 import { createVoiceCandidateState } from './voice-candidate.js'
 import { readFile, mkdir, writeFile, rename, stat } from 'node:fs/promises'
-import { readFileSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { getTtsProfile } from './tts-config.js'
@@ -10,6 +10,7 @@ import { configIssues } from './config-validation.js'
 import { createRealtimeSession, realtimeDefaults } from './realtime-service.js'
 import { audioDurationSeconds } from './audio-duration.js'
 import { createAuditLog, sanitizeAuditRecord, numericUsage } from './audit-log.js'
+import { parseChangelog } from './changelog.js'
 import { designVoice, synthesizeTts, synthesisFailureText } from './voice-design.js'
 import { createVoiceToolBridge, breezeDisabled } from './voice-tool-bridge.js'
 import { createVoiceSynthesis } from './voice-synthesis.js'
@@ -35,6 +36,22 @@ const PLUGIN_VERSION = (() => {
   try { return JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version || 'unknown' }
   catch { return 'unknown' }
 })()
+
+const CHANGELOG_FILE = new URL('../../CHANGELOG.md', import.meta.url)
+let changelogCache = { at: 0, value: null }
+
+function readChangelog(limit = 6) {
+  try {
+    const mtime = statSync(CHANGELOG_FILE).mtimeMs
+    if (changelogCache.value && changelogCache.at === mtime) return changelogCache.value
+    const parsed = parseChangelog(readFileSync(CHANGELOG_FILE, 'utf8'), { limit })
+    const value = { entries: parsed.entries, total: parsed.total }
+    changelogCache = { at: mtime, value }
+    return value
+  } catch {
+    return { entries: [], total: 0 }
+  }
+}
 
 export function createService(config = {}, dependencies = {}) {
   const fetcher = dependencies.fetch || globalThis.fetch
@@ -265,6 +282,10 @@ export function createService(config = {}, dependencies = {}) {
         credentials: { bailian: !!providers.bailian?.ready, breeze: !!providers.breeze?.ready },
         capabilities: { ...(dependencies.status?.() || {}) },
       } }
+    }
+    if (method === 'GET' && path === '/api/changelog') {
+      // 控制台角落的更新日志：只读包内 CHANGELOG.md，按 mtime 缓存，避免每次打开都重新解析。
+      return { body: { version: PLUGIN_VERSION, ...readChangelog() } }
     }
     requireValue(method === 'POST', '不支持的请求方法', 405)
     if (path === '/api/credentials/status') {

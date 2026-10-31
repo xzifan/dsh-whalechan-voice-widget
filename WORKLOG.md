@@ -2,6 +2,15 @@
 
 本轮工作的技术记录：做了什么、怎么验证的、还欠什么。发布记录由 `scripts/release.sh` 自动追加。
 
+## 2026-10-29 · 控制台角落的更新日志
+
+- 后端新增 `GET /api/voice-workbench/changelog`：解析包内 `CHANGELOG.md`（`src/core/changelog.js`），按文件 mtime 缓存，返回 `{version, entries, total}`。GET 路由沿用 `requestBody: 'buffered'`——`streaming` 会让请求在到达插件前就 400。
+- 前端新增 `web/src/changelog-corner.jsx`：右下角常驻小按钮，点开是抽屉面板；默认折叠、懒加载，点版本展开条目，Esc 关闭。
+- 路由数 23 → 24，适配器测试同步（`disposed` 24 → 25）。
+- 验证时抓到一个真 bug：effect 依赖里带了 `busy` 又用 `cancelled` 取消，`setBusy(true)` 立刻触发重跑，上一轮 Promise 的结果被 cleanup 丢弃，面板永远停在「读取中」。改为不取消、用 `error` 兜住重试。
+- 截图：`docs/screenshots/changelog-panel.png`（真实 CHANGELOG 数据，v0.6.6 展开态）。
+- 测试：解析器 7 条（含真实 CHANGELOG 全量解析）+ 适配器路由断言；后端 441/441、前端 109/109。
+
 ## 2026-10-29 · 断句策略层 + 会话质量评估（SDK 前置）
 
 **断句策略（`src/core/endpoint/`）**

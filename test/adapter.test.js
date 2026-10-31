@@ -16,7 +16,7 @@ test('adapter registers authenticated exact APIs and cleans every registration',
   }
   apply(ctx,{stateDir:await mkdtemp(join(tmpdir(),'dsh-voice-adapter-'))})
   assert.ok(Config)
-  assert.equal(routes.length,23)
+  assert.equal(routes.length,24)
   const health=routes.find(r=>r.path==='/api/voice-workbench/health')
   assert.deepEqual(health.methods,['GET'])
   // GET 路由必须走 buffered：宿主的 streaming 模式会让 GET 在到达插件前就返回 400（实测过）。
@@ -32,6 +32,14 @@ test('adapter registers authenticated exact APIs and cleans every registration',
   assert.ok(Number.isFinite(healthBody.uptimeMs)&&healthBody.uptimeMs>=0)
   assert.ok(!JSON.stringify(healthBody).match(/sk-|api[_-]?key|secret/i))
   assert.equal((await health.fetch(new Request('http://localhost/api/voice-workbench/health',{method:'POST',body:'{}'}))).status,404)
+  const changelog=routes.find(r=>r.path==='/api/voice-workbench/changelog')
+  assert.deepEqual(changelog.methods,['GET'])
+  assert.equal(changelog.requestBody,'buffered')
+  const changelogBody=await (await changelog.fetch(new Request('http://localhost/api/voice-workbench/changelog'))).json()
+  assert.equal(changelogBody.version,healthBody.version)
+  assert.ok(Array.isArray(changelogBody.entries)&&changelogBody.entries.length>0)
+  assert.ok(changelogBody.entries.every(e=>e.version&&Array.isArray(e.sections)))
+
   for (const action of ['save','generate','apply','greeting']) {
     const route = routes.find(r => r.path === '/api/voice-workbench/voice-presets/' + action)
     assert.deepEqual(route.methods, ['POST'])
@@ -68,7 +76,7 @@ test('adapter registers authenticated exact APIs and cleans every registration',
   const config=routes.find(r=>r.path.endsWith('/config'))
   assert.equal(config.requestBody,'buffered')
   // 只有 GET 路由用 buffered；POST 一律 streaming。
-  assert.ok(routes.filter(r=>r!==config&&r!==health).every(r=>r.requestBody==='streaming'))
+  assert.ok(routes.filter(r=>r!==config&&r!==health&&r!==changelog).every(r=>r.requestBody==='streaming'))
   const response=await config.fetch(new Request('http://localhost/api/voice-workbench/config'))
   assert.equal(response.status,200)
   const loaded=await response.json()
@@ -87,5 +95,5 @@ test('adapter registers authenticated exact APIs and cleans every registration',
   await statics[0].handler({method:'GET',url:'/voice-workbench/'},{writeHead(code){status=code},end(){}})
   assert.equal(status,401)
   for(const cleanup of effects.reverse())await cleanup()
-  assert.equal(disposed,24)
+  assert.equal(disposed,25)
 })

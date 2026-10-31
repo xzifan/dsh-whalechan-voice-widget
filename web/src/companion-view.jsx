@@ -18,6 +18,7 @@ import {RealtimeView} from './realtime-view.jsx'
 import {AuditView} from './audit-view.jsx'
 import {HistoryView} from './history-view.jsx'
 import {StatisticsView} from './statistics-view.jsx'
+import {ChangelogCorner} from './changelog-corner.jsx'
 import {Settings2,X,LoaderCircle,Mic,ScrollText,BarChart3} from 'lucide-react'
 
 const NAV = [
@@ -73,5 +74,6 @@ export function CompanionView(p){
      {page==='settings'&&<SettingsView {...p}/>}
    </div>
   </SidebarInset>
+  <ChangelogCorner/>
  </SidebarProvider>
 }
