@@ -1752,3 +1752,17 @@
 - 本轮**未改任何源码与测试**：未 bump 版本、未 `npm pack`、未 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未动 `~/.dsh/AGENTS.md`。
 
 **下次可做**：①`package.json` 的 `files` 白名单补一条元测试（`dist/web` 是插件页静态根、`CHANGELOG.md` 是浮窗数据源，删任一条 `npm test`/`pack:check` 都不红，装到 profile 才白屏；≈90 行纯测试，零源码改动）；②`/api/audit` 反向时间区间补与 `/api/statistics` 同形的 400 校验（`service.js:348` 有、`:364` 没有，排障会把「查错区间」当成「确实没发生」；≈31 行）；③`web/src/main.jsx:66` 首次加载 catalog 的空 `catch` 吞掉失败，设置页据此断言「当前没有可用的工具执行服务」并静默清空 `enabled_tools`（≈40 行）；④`changelog-corner.jsx:19` 的 `error` 一旦置位永不清除、关掉重开也不再请求（CHANGELOG 已宣称该症状修复，实际只修了白名单入口；≈115 行，取数策略需先下沉到 `web/src/lib/` 才测得到）；⑤README 的 Breeze 中文音色行仍是已废弃的 `voc_47j4uzfyuxqc`（`src/core/breeze-voices.js` 已是 `voc_u3nxkd5578wc` / `voc_8yud7hz7c9q2`，改 1 行 + 元测试 ≈25 行）。
+
+## 2026-11-01 01:45 · 会话质检器不再把「用户打断」判成工具失败
+
+- 并发保护：开工前无 `.release.lock`；本班建 `.work.lock`（01:17），收尾前删除。HEAD = `b140c6a`，工作区干净。
+- 取活：`grep '^- \[ \]' BACKLOG.md` 共 6 条，前 5 条全是阻塞项（`:34` ⛔ 阻塞待决策、`:46` 需人拍板、`:58` `[arch]` 架构决策、`:60` 需先定口径归属、`:61` 单独立项），按 J1 规则一条没碰；取第一个非阻塞条目 = `:116`「会话质检器把「用户打断」判成工具硬错误」。**只做这一条**，未顺手改其他任何东西。
+- 分级：条目不是 `[plan]`、预计 2 文件 ≈60 行、不改对外接口/findings 形状，故**未派规划子代理**，直接实现。
+- 基线（改前）：`npm test` **455 pass**；`npm run test:web` **110 pass**；`npm run judge -- --since 30d --limit 200` → 86 回合 / error 28 / warn 9，`TOOL_FAILED` 15 条（error 13 + cancelled 2）。与上一班取证到的数字一致，说明这半天里审计没有新增打断样本。
+- 改动：`src/core/conversation-judge.js` +29/−6——新增导出 `toolOutcomeOk` / `toolOutcomeCancelled`（`normalizeOutcome` 只接受字符串，trim+小写），`:72` 的 `failed` 过滤改成「既不 `toolOutcomeOk` 也不 `toolOutcomeCancelled`」，`:122` 的 prompt payload 改成 `ok: toolOutcomeOk(t.outcome)`（两处同源）；`extractTurns` 加 `audioOutput: false` 初始字段并在 `response` 分支 `if (record.audioOutput === true) turn.audioOutput = true`，`TTS_MISSING` 改成 `!turn.synthesis && !turn.audioOutput`。`test/conversation-judge.test.js` +105 行 / 5 条用例：cancelled 零 `TOOL_FAILED`、`success` 算成功且真失败照报（`mixed` 用例）、`audioOutput:true` 零 `TTS_MISSING` 而 `false` 仍报、`extractTurns` 汇总 `audioOutput`、逐 outcome 反查「启发式与 prompt 口径一致」。
+- 端到端复算（同一份真审计 `~/.dsh/storages/voice-workbench-preview/voice-audit.jsonl`，535 行 / 86 回合）：`TOOL_FAILED` 15 → **13**、error 28 → **26**；outcome 直方图 `completed 143 / error 13 / ok 10 / cancelled 2`，`cancelled` 两条**零条**再进 `TOOL_FAILED`；`npm run judge` 仍 exit 1（剩下 13 条是 `edit: file has not been read` 真失败），退出码契约没松。`TTS_MISSING` 仍 8 条（全是没有 `audioOutput` 字段的旧记录，新逻辑对它不该生效）。
+- 变异验证 4 条各恰红对应用例（探针 `~/.hermes/cache/scratch/mutate-judge.mjs`，逐条改源码 → `node --test test/conversation-judge.test.js` → 还原）：只认 `ok|completed` 红 3、`TTS_MISSING` 不看 `audioOutput` 红 1、词表漏 `success` 红 1、`extractTurns` 不汇总红 1。
+- 验收：后端 455 → **460** / 前端 **110** 全绿、`lint` 0、`format:check` 全仓通过、`build` 成功（`dist/` 已 `git checkout` 还原、新 hash 产物 `index-BCNzi94o.js` 移出仓库）。
+- churn **144 行**（+137/−7：源码 +29/−6 / 测试 +105 / CHANGELOG 2 / BACKLOG +1−1），未超 200 上限。本轮未 bump 版本、未 `npm pack`、未 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未动 `~/.dsh/AGENTS.md`。
+
+**下次可做**：①`buildJudgePrompt` 里 `cancelled` 工具仍以 `ok:false` 交给模型，rubric 的失败条件 B（「tools_called 全部不是成功状态」）会据此判失败——要改的是 LLM 复核口径（要么把 cancelled 单列一档、要么在 rubric 里写明打断不算失败），属语义决策；②`package.json` 的 `files` 白名单补一条元测试（删 `dist/web` 或 `CHANGELOG.md` 也全绿，装到 profile 才白屏；≈90 行纯测试）；③`/api/audit` 反向时间区间补与 `/api/statistics` 同形的 400 校验（`service.js:348` 有、`:364` 没有；≈31 行）；④`web/src/main.jsx:66` 首次加载 catalog 的空 `catch` 吞掉失败，设置页据此断言「当前没有可用的工具执行服务」（≈40 行）；⑤`changelog-corner.jsx:19` 的 `error` 一旦置位永不清除、关掉重开也不再请求（≈115 行，取数策略需先下沉到 `web/src/lib/`）；⑥README 的 Breeze 中文音色行仍是已废弃的 `voc_47j4uzfyuxqc`（≈25 行）。

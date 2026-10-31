@@ -7,6 +7,24 @@
 const CLAIM_PATTERN = /(已经|帮你|改好|改到|写进|写到|删除|删掉|创建|保存|打开|执行|运行|查到了一?下)/
 const CJK_PATTERN = /[\u4e00-\u9fa5]/
 
+// 工具结局的成功词表只此一份：启发式规则与给模型的 payload 共用，抄两份就会
+// 出现「同一行在 TOOL_FAILED 里算失败、在 prompt 里算成功」的漂移。
+const TOOL_OK_OUTCOMES = new Set(['ok', 'completed', 'success'])
+// 用户打断不是工具失败：与 `audit-log.js` 的 `failedRecord`（cancelled 不算失败）同向。
+const TOOL_CANCELLED_OUTCOMES = new Set(['cancelled', 'canceled'])
+
+function normalizeOutcome(outcome) {
+  return typeof outcome === 'string' ? outcome.trim().toLowerCase() : ''
+}
+
+export function toolOutcomeOk(outcome) {
+  return TOOL_OK_OUTCOMES.has(normalizeOutcome(outcome))
+}
+
+export function toolOutcomeCancelled(outcome) {
+  return TOOL_CANCELLED_OUTCOMES.has(normalizeOutcome(outcome))
+}
+
 /** @typedef {{code: string, severity: 'error'|'warn', detail: string}} Finding */
 
 export function groupBySession(records) {
@@ -34,6 +52,8 @@ export function extractTurns(records) {
         assistantText: '',
         tools: [],
         synthesis: null,
+        // 原生出声（非 TTS 合成）的回合没有 synthesis 记录，但要算「说了话」。
+        audioOutput: false,
         errors: [],
       })
       order.push(key)
@@ -41,8 +61,10 @@ export function extractTurns(records) {
     const turn = turns.get(key)
     if (record.at && Number(record.at) > turn.at) turn.at = Number(record.at)
     if (record.kind === 'transcription') turn.userText += record.text || ''
-    else if (record.kind === 'response') turn.assistantText += record.text || ''
-    else if (record.kind === 'tool') {
+    else if (record.kind === 'response') {
+      turn.assistantText += record.text || ''
+      if (record.audioOutput === true) turn.audioOutput = true
+    } else if (record.kind === 'tool') {
       turn.tools.push({
         name: record.text || record.tool || 'unknown',
         outcome: record.outcome || record.status || 'unknown',
@@ -69,7 +91,7 @@ export function heuristicChecks(turn) {
   if (turn.errors.length) {
     findings.push({ code: 'SESSION_ERROR', severity: 'error', detail: turn.errors.join('; ').slice(0, 120) })
   }
-  const failed = turn.tools.filter(t => !['ok', 'completed'].includes(t.outcome))
+  const failed = turn.tools.filter(t => !toolOutcomeOk(t.outcome) && !toolOutcomeCancelled(t.outcome))
   for (const tool of failed) {
     findings.push({ code: 'TOOL_FAILED', severity: 'error', detail: `${tool.name} 返回 ${tool.outcome}` })
   }
@@ -86,7 +108,8 @@ export function heuristicChecks(turn) {
       detail: `声称执行了操作但本回合没有任何工具调用：${response.slice(0, 40)}`,
     })
   }
-  if (response && !turn.synthesis) {
+  // 原生出声的回合没有合成记录，但它确实说了话——只有「无合成且无原生音频」才是缺语音。
+  if (response && !turn.synthesis && !turn.audioOutput) {
     findings.push({ code: 'TTS_MISSING', severity: 'warn', detail: '有文字回复但没有合成记录' })
   }
   return findings
@@ -118,8 +141,8 @@ export function buildJudgePrompt({ turn, rubric = JUDGE_RUBRIC, scenario }) {
     user_said: turn.userText,
     assistant_replied: turn.assistantText,
     // 归一成布尔：不同 provider 的 outcome 词表（ok / completed / success）不一样，
-    // 让模型去猜"completed 算不算成功"会引出无谓的误判。
-    tools_called: turn.tools.map(t => ({ name: t.name, ok: ['ok', 'completed', 'success'].includes(t.outcome) })),
+    // 让模型去猜"completed 算不算成功"会引出无谓的误判。词表与启发式规则同一来源。
+    tools_called: turn.tools.map(t => ({ name: t.name, ok: toolOutcomeOk(t.outcome) })),
   }
   return [
     '你是语音助手的质量评审。根据下面的对话回合与评分标准，判断这次回复是否达标。',

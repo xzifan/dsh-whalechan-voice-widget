@@ -8,10 +8,19 @@ import {
   heuristicChecks,
   judgeTurns,
   parseJudgeResponse,
+  toolOutcomeCancelled,
+  toolOutcomeOk,
 } from '../src/core/conversation-judge.js'
 
 function record(overrides) {
   return { sessionId: 's1', turnId: 't1', at: 1, status: 'completed', ...overrides }
+}
+
+/** prompt 末尾就是 payload 的 JSON 正文，取出来好断言「模型看到的是什么」。 */
+function promptPayload(prompt) {
+  const start = prompt.indexOf('{\n  "scenario"')
+  assert.ok(start > 0, 'prompt 末尾应能找到 payload JSON')
+  return JSON.parse(prompt.slice(start))
 }
 
 test('按 session 分组并忽略没有 sessionId 的记录', () => {
@@ -70,6 +79,102 @@ test('工具失败 → error，且逐条列出', () => {
   const failed = findings.filter(f => f.code === 'TOOL_FAILED')
   assert.equal(failed.length, 1)
   assert.match(failed[0].detail, /edit/)
+})
+
+test('用户打断（cancelled）不算工具失败', () => {
+  const findings = heuristicChecks({
+    userText: '念一段吧',
+    assistantText: '好呀',
+    tools: [
+      { name: 'synth_tts', outcome: 'cancelled' },
+      { name: 'synth_tts', outcome: 'canceled' },
+    ],
+    errors: [],
+    synthesis: { voice: 'v' },
+  })
+  assert.ok(!findings.some(f => f.code === 'TOOL_FAILED'), '打断不是工具失败，不应产出 TOOL_FAILED')
+})
+
+test('success 与 ok/completed 一样算成功，真失败仍要逐条报', () => {
+  const allOk = heuristicChecks({
+    userText: '看一下',
+    assistantText: '看完了',
+    tools: [
+      { name: 'a', outcome: 'ok' },
+      { name: 'b', outcome: 'completed' },
+      { name: 'c', outcome: 'success' },
+    ],
+    errors: [],
+    synthesis: { voice: 'v' },
+  })
+  assert.ok(!allOk.some(f => f.code === 'TOOL_FAILED'))
+
+  const mixed = heuristicChecks({
+    userText: '改一下',
+    assistantText: '改完了',
+    tools: [
+      { name: 'edit', outcome: 'success' },
+      { name: 'bash', outcome: 'failed' },
+    ],
+    errors: [],
+    synthesis: { voice: 'v' },
+  })
+  const failed = mixed.filter(f => f.code === 'TOOL_FAILED')
+  assert.equal(failed.length, 1)
+  assert.match(failed[0].detail, /bash/)
+})
+
+test('原生出声（audioOutput）且无合成记录 → 不报 TTS_MISSING', () => {
+  const native = heuristicChecks({
+    userText: '在吗',
+    assistantText: '在的',
+    tools: [],
+    errors: [],
+    synthesis: null,
+    audioOutput: true,
+  })
+  assert.ok(!native.some(f => f.code === 'TTS_MISSING'), '原生音频已出声，不应报缺合成')
+
+  const silent = heuristicChecks({
+    userText: '在吗',
+    assistantText: '在的',
+    tools: [],
+    errors: [],
+    synthesis: null,
+    audioOutput: false,
+  })
+  assert.ok(silent.some(f => f.code === 'TTS_MISSING'), '既无合成也无原生音频，仍要报')
+})
+
+test('extractTurns 把 response 行的 audioOutput 汇总到回合上', () => {
+  const turns = extractTurns([
+    record({ turnId: 't1', kind: 'transcription', text: '在吗', at: 1 }),
+    record({ turnId: 't1', kind: 'response', text: '在的', audioOutput: true, at: 2 }),
+    record({ turnId: 't2', kind: 'response', text: '嗯', audioOutput: false, at: 3 }),
+  ])
+  assert.deepEqual(
+    turns.map(t => t.audioOutput),
+    [true, false],
+  )
+})
+
+test('启发式与 prompt 的成功判定来自同一份词表', () => {
+  const outcomes = ['ok', 'completed', 'success', 'failed', 'cancelled', 'canceled', 'unknown', undefined]
+  for (const outcome of outcomes) {
+    const prompt = buildJudgePrompt({ turn: { userText: 'x', assistantText: 'y', tools: [{ name: 't', outcome }] } })
+    const payload = promptPayload(prompt)
+    assert.equal(payload.tools_called[0].ok, toolOutcomeOk(outcome), `prompt ok 标志不符：${String(outcome)}`)
+
+    const findings = heuristicChecks({
+      userText: 'x',
+      assistantText: 'y',
+      tools: [{ name: 't', outcome }],
+      errors: [],
+      synthesis: { voice: 'v' },
+    })
+    const reported = findings.some(f => f.code === 'TOOL_FAILED')
+    assert.equal(reported, !toolOutcomeOk(outcome) && !toolOutcomeCancelled(outcome), `TOOL_FAILED 口径不符：${String(outcome)}`)
+  }
 })
 
 test('声称做完但没有任何工具调用 → warn（幻觉操作）', () => {

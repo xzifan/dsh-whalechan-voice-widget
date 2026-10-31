@@ -6,6 +6,8 @@
 
 ### 修复
 
+- 会话质检器不再把「用户打断」判成工具失败：`TOOL_FAILED` 此前只认 `ok|completed` 两张白名单，而实时链路写出的 outcome 是 `ok|error|cancelled`，于是用户每打断一次就多一条 error 级发现（本机 86 回合里 `TOOL_FAILED` 15 条，其中 2 条是 `synth_tts` 被打断），让 `npm run judge` 对健康会话直接 exit 1——与审计里「手动取消不算失败」的既定口径相反。现在成功词表（`ok|completed|success`）抽成单一导出，启发式规则与给模型的 payload 共用，`cancelled`/`canceled` 显式跳过；原生出声（`audioOutput`）的回合也不再因「没有合成记录」被报 `TTS_MISSING`（实时模式不走 TTS 合成，这条此前对每轮都成立）。findings 的 code 集合、severity 与 `judge-conversation.mjs` 的退出码契约均不变。
+
 - 连接层失败与 `/api/realtime/start` 的本地拒绝现在都会进审计：此前 `<ws>` 缺失 / 构造抛错 / 传输层 error / 握手被 401 拒 四条路径只发事件与横幅，`/start` 的 503（工具执行未接通）与 429（会话过多）只把错误抛给前端，审计里恒 0 行——用户报「点开始没反应 / 一说话就掉线」时，「只看失败」筛选、统计页「失败记录」与会话质检都查不到原因，唯一证据是关掉即消失的横幅。四条连接失败各补一条 `kind:error` 记录（码沿用既有 `connection` / `handshake_<状态码>`，文案与横幅逐字一致），429/503 各补一条（`session_limit` / `tools_unavailable`，同一额度的两次预检只记一处）；事件字段、状态码与响应形状不变。
 - 「更新日志」浮窗在真正的部署形态（DSH 侧栏里的插件 iframe）下恢复可用：`GET /api/changelog` 在 0.7.0 只接进了服务端路由表，iframe 侧的 `ENDPOINT_METHODS` 与宿主侧 `lib/client.js` 的转发白名单都漏了它——点开只得到「不支持的工作台操作」，而 `web/src/changelog-corner.jsx` 的失败态在同一次打开里不重试，用户只能反复开关也看不到日志。两张表各补一条 `['GET']`；宿主表里 `/api/models/check` 这条模型配置页下线后无人调用的幽灵条目一并删除（服务端路由保留），使两张表的键集合重新相等。新增 `test/routes-whitelist.test.js` 把「服务端实际注册的路由 / 两张白名单 / `web/src` 里真正发出的 `api()` 调用点」绑在一起（新增路由只接线一处会立刻打红），浏览器冒烟补一条浮窗断言。接口与响应形状不变。
 
