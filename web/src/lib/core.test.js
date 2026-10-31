@@ -46,6 +46,8 @@ test('realtime and config bridge routes stay narrowly method-scoped', () => {
   assert.deepEqual(ENDPOINT_METHODS['/api/config'], ['GET', 'PUT'])
   assert.deepEqual(ENDPOINT_METHODS['/api/config/check'], ['POST'])
   assert.deepEqual(ENDPOINT_METHODS['/api/catalog'], ['POST'])
+  // 更新日志浮窗走 api('changelog',{},'GET')；白名单缺这条时 iframe 立刻 reject「不支持的工作台操作」。
+  assert.deepEqual(ENDPOINT_METHODS['/api/changelog'], ['GET'])
 })
 
 test('iframe bridge validates origin/source/id and abort removes listeners and informs parent', async () => {

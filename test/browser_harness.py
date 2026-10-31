@@ -67,6 +67,12 @@ class Harness:
         if action == 'catalog':
             return {'tools': [{'name': 'read', 'description': '读取测试工作区文件'}, {'name': 'glob', 'description': '搜索文件路径'}],
                     'currentWorkspace': '/test/workspace', 'toolExecutionAvailable': True, 'interruption': {'manual': True, 'voice': False}}
+        if action == 'changelog':
+            # 服务端 payload 形状：{version, entries:[{version, date, sections:[{title, items}]}], total}。
+            # 版本号是假的（9.9.9），所以断言命中就证明浮窗渲染的是服务端数据而不是包内常量。
+            return {'version': '9.9.9', 'total': 1,
+                    'entries': [{'version': '9.9.8', 'date': '2026-01-01',
+                                 'sections': [{'title': '修复', 'items': ['更新日志浮窗在插件 iframe 里可用']}]}]}
         if action == 'filler/prepare':
             return {'phase': 'ready', 'completed': 1, 'total': 1, 'language': body.get('language', 'zh')}
         if action == 'filler':

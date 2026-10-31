@@ -22,6 +22,18 @@ async def main():
         page, calls, child = harness.page, harness.calls, harness.child
         await expect(frame.get_by_label('主导航')).to_be_visible()
         await expect(frame.get_by_role('button', name='开始对话', exact=True)).to_be_enabled()
+        # 更新日志浮窗：生产形态（DSH 侧栏 iframe）下唯一路径是 宿主 -> lib/client.js 桥 -> iframe
+        # -> /api/changelog。0.7.0 的两张转发白名单都没有这条，点开只得到「不支持的工作台操作」，
+        # 所以这条断言同时守着服务端路由与两张白名单（元测试见 test/routes-whitelist.test.js）。
+        dialog = frame.get_by_role('dialog', name='更新日志')
+        await frame.get_by_role('button', name='查看更新日志', exact=True).click()
+        await dialog.wait_for(timeout=5000)
+        await frame.get_by_text('v9.9.9', exact=True).wait_for()
+        await frame.get_by_role('button').filter(has_text='v9.9.8').click()
+        await frame.get_by_text('更新日志浮窗在插件 iframe 里可用', exact=True).wait_for()
+        assert any(call[0] == 'GET' and call[1] == 'changelog' for call in calls), '更新日志没有经桥发出 GET /api/changelog'
+        await frame.locator('body').press('Escape')
+        await expect(dialog).to_have_count(0)
         await harness.nav('设置')
         await expect(frame.get_by_role('tab', name='对话', exact=True)).to_be_visible()
         # 「设置页 tab 可见」只是首屏渲染，不是「表单已是服务端数据」：config GET 还没落地时

@@ -2,6 +2,31 @@
 
 本轮工作的技术记录：做了什么、怎么验证的、还欠什么。发布记录由 `scripts/release.sh` 自动追加。
 
+## 2026-10-31 21:35 · 实现：更新日志浮窗在 iframe 形态下不可用（两张转发白名单缺 `/api/changelog`）
+
+- 并发保护：开工前无 `.release.lock`，已建 `.work.lock`（21:17），提交前删除。HEAD = `53f7e5c`，工作区干净。基线 `npm test` **451 pass** / `npm run test:web` **110 pass**。
+- 取活：BACKLOG 顶部的 5 个 `- [ ]` 全是阻塞项（`:34` ⛔ 阻塞待决策、`:46` 需人拍板、`:58` `[arch]`、`:60` 需先定口径归属、`:61` 单独立项），第一个可做的就是 `:112`「更新日志浮窗在 iframe 形态下必然失败」——上一班 20:20 第 7 步取证入的，已写到行号级。本轮只做这一条，其余一律没碰。
+- 规划子代理（**只读**，禁止改/建/删文件与 git 写操作）：条目跨 2 个源码文件 + 1 个新测试 + 文档，先派它盘点。它纠正两处前提、也补了两处我不知道的事实：①`/api/models/check` 是**死条目**——`grep -rn models/check web/` 零命中、`git log -S models/check -- web/src` 为空（从未在前端存在过）、构建产物里也没有，它是模型配置页下线后宿主表里留下的幽灵；②`web/src` 里唯一的动态调用点是 `hooks/use-voice-presets.js:65` 的模板串，action 取值域由 `run(id,action)` 封闭为 generate/apply/greeting；③现有断言里 `test/adapter.test.js:19` 的 `routes.length===24` 是服务端契约，本次不动；④`test/` 里已有四个「接线元测试」范式（lint-config / coverage-config / browser-scripts / node-version-consistency）可直接照抄，它们的共同点是用解析后的整值比较而不是 `includes` 前缀、并且都带反空转自检。
+- 改动：`web/src/lib/core.js` 与 `lib/client.js` 各补 `'/api/changelog': ['GET']`；宿主表删掉 `'/api/models/check': ['POST']`；新增 `test/routes-whitelist.test.js`（156 行 / 2 条用例）；`web/src/lib/core.test.js` 补一条 `deepEqual`；`test/browser_harness.py` 补 `changelog` mock、`test/browser-smoke.py` 补浮窗断言（点开 → 版本号来自服务端 → 展开 → Esc 关闭）。
+- **一处方向选择（按证据，不按条目字面）**：条目写「两张表键集合相等」，读法有两种——给 `core.js` 补上 `models/check`，或把宿主表那条删掉。选了**删**：给 iframe 补一条前端从不调用的条目，等于把一条零测试的路由（`service.js:375`）放进认证转发面；反过来删只收紧、不动任何真实调用方。两张表的语义也本来就是「iframe 能要什么 ⊆ 宿主肯转发什么」，删掉幽灵后两者才真的同一份清单。
+- 元测试怎么写的：用真实 `apply()` + 假 ctx 注册路由（**不解析源码**，`src/index.js` 的排版变化打不红它），解析 `lib/client.js` 的 methods 表与 `web/src` 里所有 `api()` 调用点（括号配平取参数，才认得出第三参 `'GET'`）。断言五件事：两张表键集合与方法**整值**相等；表里每条都是真路由且方法一致；服务端多出的必须**恰为** `['/api/health','/api/models/check']`（新增路由被迫显式选「接线」或「登记例外」）；每个调用点的端点在两张表内且方法被允许；动态端点只能是那一处、action 由 hooks 源码反推。外加合成串自检 + 「≥20 条 / ≥12 处调用点」下限，防解析器失效后空集对空集「通过」。
+
+**验证**（真跑，不是推断）
+
+- **先 RED 后 GREEN**：旧代码上红在「iframe 白名单与宿主白名单的端点集合不同（`/api/models/check`）」；删掉死条目后继续红在「新增了前端未接线的服务端路由」（正是本条的 bug）；补两张表后 2/2 绿。
+- **端到端取证**（这条最有说服力）：**未重建** `dist/` 时用 `.tools/pw-venv` 跑浏览器探针，浮窗点开显示 `更新日志 | 不支持的工作台操作 | 共 0 个版本`，harness 只收到 `config`/`catalog` 两次调用、`changelog` **零请求**——与 BACKLOG 里写的失败形态逐字一致。`npm run build` 后同一脚本 PASS（浮窗显示 mock 的 `v9.9.9`、展开看到条目、Esc 关闭、`GET changelog` 进调用列表）。
+- **变异 6 条各恰红 1 条**（脚本 `~/.hermes/cache/scratch/mutate-routes.sh`，逐条改源码 → 跑单文件 → 从备份还原）：M1 iframe 表删 changelog、M2 宿主表删 changelog、M3 表里改成 `['POST']`、M4 只在宿主表加幽灵 `/api/ghost`、M5 两张表都加幽灵（此时只有「服务端没有注册」那条抓得住）、M6 在 `.jsx` 里新增一处 `api('ghost')`。恢复后 2/2 绿、`git status` 无残留。
+- 套件：`npm test` 451 → **453**、`npm run test:web` **110**、`npm run lint` 0 问题、`npm run format:check` 全仓通过、`npm run build` 成功。
+- 浏览器五个脚本实跑全 PASS：`browser-smoke`（含新浮窗断言）、`browser-pages`、`browser-breeze-voice`、`browser-voice-presets`、`browser-startup-initialization`。
+- `dist/` 按仓库惯例**未进提交**：`build` 后 `git checkout -- dist/` 还原 `index.html` 并删旧资产，新 hash 产物 `index-BCNzi94o.js` 移到仓库外。发版由 patch 作业的 `release.sh` 重建并提交。
+
+**下次可做**（本轮只做一条，其它一律没动）
+
+1. `changelog-corner.jsx:19` 的 `if(!open||data||busy||error)return` 让失败态在同一次打开里永不重试：白名单修好后它不再是主路径，但瞬时断网仍会卡住一行红字直到关掉重开（≈3 行 + 1 条用例）。
+2. `/api/models/check` 的服务端 handler（`src/core/service.js:375`）仍零测试——宿主侧转发条目删掉后它在 iframe 里不可达，但仍是公开 API。
+3. `src/core/changelog.js` 只认 `###` 分节，`CHANGELOG.md` 的 0.5.0 / 0.3.0 / 0.2.0 三段条目挂在 `##` 下会被整段丢弃，浮窗里少三个版本。
+4. 上一班 WORKLOG 列的 5 条候选（`cancelled` 不收尾、历史重复回复、百炼缺 `audioDurationSeconds`、带工具的回复无配音、`delete_voice` 聚合丢分类）原样待办。
+
 ## 2026-10-31 20:20 · 第 7 步取证：清单仍无可用条目，入 1 条（0.7.0 更新日志浮窗在 iframe 形态下不可用）
 
 - 并发保护：开工前无 `.release.lock`，已建 `.work.lock`（20:17），提交前删除。HEAD = `be1a05b`，工作区干净。

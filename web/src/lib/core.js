@@ -55,6 +55,8 @@ export const ENDPOINT_METHODS = {
   '/api/audit': ['POST'], '/api/statistics': ['POST'],
   '/api/credentials/status': ['POST'], '/api/credentials/save': ['POST'],
   '/api/config': ['GET', 'PUT'], '/api/config/check': ['POST'], '/api/catalog': ['POST'],
+  // 更新日志浮窗（懒加载，仅 GET）；服务端 src/index.js 的 changelog 路由必须与这里成对。
+  '/api/changelog': ['GET'],
   '/api/realtime/playback': ['POST'], '/api/realtime/start': ['POST'], '/api/realtime/audio': ['POST'], '/api/realtime/commit': ['POST'],
   '/api/realtime/response': ['POST'], '/api/realtime/cancel': ['POST'], '/api/realtime/end': ['POST'], '/api/realtime/events': ['POST'],
 }
