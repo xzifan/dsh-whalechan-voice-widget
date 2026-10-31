@@ -427,6 +427,104 @@ test('a completed tool call whose result failed is audited with outcome, exit co
   session.dispose()
 })
 
+test('工具被取消（499）按取消收尾：不记成失败，也不冒失败横幅', async () => {
+  const FakeSocket = makeFakeSocket(), emitted = []
+  const session = createRealtimeSession({
+    settings: { ...realtimeDefaults(), tools: [] }, nativeTools: [readSchema], key: 'k',
+    // service.js 会把「调用方的取消信号中止」映射成 499；这里直接照同一形态抛。
+    executeTool: async () => { throw Object.assign(new Error('语音请求已取消'), { name: 'VoiceNativeError', status: 499 }) },
+    emit: e => emitted.push(e), WebSocketCtor: FakeSocket,
+  })
+  session.connect()
+  const socket = FakeSocket.instances[0]
+  socket.emitRaw('response.output_item.done', { item: { type: 'function_call', call_id: 'call_c', name: 'read', arguments: '{}' } })
+  await new Promise(resolve => setImmediate(resolve))
+  const end = emitted.find(e => e.type === 'tool-end' && e.callId === 'call_c')
+  assert.equal(end.status, 'cancelled', '取消不得升级成 failed')
+  assert.equal(end.ok, false)
+  assert.equal(end.outcome, 'cancelled')
+  const record = emitted.find(e => e.type === 'audit' && e.record.kind === 'tool' && e.record.callId === 'call_c').record
+  assert.equal(record.status, 'cancelled')
+  assert.equal(record.outcome, 'cancelled')
+  assert.equal(emitted.some(e => e.type === 'error'), false, '取消不是失败，不该出现错误横幅')
+  // 模型仍收到一条 function_call_output，只是内容如实说明被取消。
+  const output = socket.sent.find(m => m.item?.type === 'function_call_output' && m.item.call_id === 'call_c')
+  assert.equal(JSON.parse(output.item.output).error, '语音请求已取消')
+  session.dispose()
+})
+
+// 打断（invalidate → controller.abort）必须真的停掉原生工具。旧实现只 abort 自己的 60 秒控制器，
+// 执行器收到的 signal 从没被中止——审计与时间线写「已取消」，bash/write 还能跑到自然结束，
+// 并把同一会话后续工具一起堵在 entry.chain 上。
+test('打断真的停掉原生工具：取消信号经桥接透传到执行器', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'whale-rt-cancel-signal'))
+  const keyFile = join(dir, 'test.env')
+  await writeFile(keyFile, 'DASHSCOPE_API_KEY=test-key')
+  const FakeSocket = makeFakeSocket(), runs = []
+  // 真实执行器会挂 abort 监听：signal 一停就 reject；没人 abort 就永远不结束。
+  const runTool = (name, args, options) => new Promise((resolve, reject) => {
+    runs.push({ name, signal: options.signal })
+    options.signal?.addEventListener('abort', () => reject(Object.assign(new Error('This operation was aborted'), { name: 'AbortError' })), { once: true })
+  })
+  const service = createService({ stateDir: dir }, {
+    realtimeWebSocket: FakeSocket,
+    resolveModelCredential: async provider => ({ key: 'test-key', source: 'provider', provider }),
+    catalog: async () => ({ tools: [readSchema], currentWorkspace: dir, toolExecutionAvailable: true }),
+    runTool,
+  })
+  t.after(async () => { await service.dispose(); await rm(dir, { recursive: true, force: true }) })
+  const initial = (await service.handle('GET', '/api/config')).body.settings
+  const settings = { ...initial, enabled_tools: ['read'], tools_configured: true, workspace: dir, realtime: { ...initial.realtime, key_file: keyFile, instructions: 'Test', use_tts_voice: false } }
+  await service.handle('PUT', '/api/config', { settings })
+  const sessionId = (await service.handle('POST', '/api/realtime/start', { settings })).body.sessionId
+  const socket = FakeSocket.instances[0]
+  socket.emitRaw('session.created', {})
+  socket.emitRaw('response.output_item.done', { item: { type: 'function_call', call_id: 'long-call', name: 'read', arguments: '{}' } })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(runs.length, 1)
+  assert.ok(runs[0].signal instanceof AbortSignal, '执行器必须收到可中止的 signal')
+  assert.equal(runs[0].signal.aborted, false)
+  await service.handle('POST', '/api/realtime/end', { sessionId })
+  assert.equal(runs[0].signal.aborted, true, '打断必须真的把执行器停掉，而不是等它自然结束')
+})
+
+test('原生工具 60 秒超时按失败收尾，文案写明 60 秒而不是裸 AbortError', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const dir = await mkdtemp(join(tmpdir(), 'whale-rt-timeout-case'))
+  const keyFile = join(dir, 'test.env')
+  await writeFile(keyFile, 'DASHSCOPE_API_KEY=test-key')
+  const FakeSocket = makeFakeSocket()
+  const runTool = (name, args, options) => new Promise((resolve, reject) => {
+    options.signal?.addEventListener('abort', () => reject(Object.assign(new Error('This operation was aborted'), { name: 'AbortError' })), { once: true })
+  })
+  const service = createService({ stateDir: dir }, {
+    realtimeWebSocket: FakeSocket,
+    resolveModelCredential: async provider => ({ key: 'test-key', source: 'provider', provider }),
+    catalog: async () => ({ tools: [readSchema], currentWorkspace: dir, toolExecutionAvailable: true }),
+    runTool,
+  })
+  const initial = (await service.handle('GET', '/api/config')).body.settings
+  const settings = { ...initial, enabled_tools: ['read'], tools_configured: true, workspace: dir, realtime: { ...initial.realtime, key_file: keyFile, instructions: 'Test', use_tts_voice: false } }
+  await service.handle('PUT', '/api/config', { settings })
+  const sessionId = (await service.handle('POST', '/api/realtime/start', { settings })).body.sessionId
+  const socket = FakeSocket.instances[0]
+  socket.emitRaw('session.created', {})
+  socket.emitRaw('response.output_item.done', { item: { type: 'function_call', call_id: 'hang', name: 'read', arguments: '{}' } })
+  await new Promise(resolve => setImmediate(resolve))
+  t.mock.timers.tick(60000)
+  await new Promise(resolve => setImmediate(resolve))
+  await new Promise(resolve => setImmediate(resolve))
+  const output = socket.sent.find(m => m.item?.type === 'function_call_output' && m.item.call_id === 'hang')
+  assert.match(JSON.parse(output.item.output).error, /60 秒/, '模型看到的必须是超时文案，不是英文 AbortError')
+  const events = (await service.handle('POST', '/api/realtime/events', { sessionId })).body.events
+  const end = events.find(e => e.type === 'tool-end' && e.callId === 'hang')
+  assert.equal(end.status, 'failed')
+  assert.equal(end.outcome, 'error')
+  t.mock.timers.reset()
+  await service.dispose()
+  await rm(dir, { recursive: true, force: true })
+})
+
 test('a successful tool call records an ok outcome with the first line of its output', async () => {
   const FakeSocket = makeFakeSocket(), emitted = []
   const session = createRealtimeSession({

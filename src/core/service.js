@@ -173,9 +173,22 @@ export function createService(config = {}, dependencies = {}) {
 
   async function runSingleTool(name, args, workspace, context = {}) {
     requireValue(typeof dependencies.runTool === 'function', '当前 DSH 尚未提供原生工具服务，可先关闭工具继续聊天。', 503)
-    const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 60000); timer.unref?.()
+    // 两种中止必须分开：本地 60 秒超时，与调用方（语音会话被打断）的取消信号。
+    // 只 abort 自己的 controller 会让打断后的 bash/write 继续跑到自然结束——审计与时间线写着
+    // 「已取消」，文件却还在被改，而且 entry.chain 串行会把同一会话后续工具一起堵住。
+    const controller = new AbortController()
+    let timedOut = false
+    const timer = setTimeout(() => { timedOut = true; controller.abort() }, 60000); timer.unref?.()
+    const signal = context.signal ? AbortSignal.any([controller.signal, context.signal]) : controller.signal
     // sessionKey 让同一场语音会话复用同一个 DSH 工具 agent，否则 read→edit 这类跨步骤组合会丢状态。
-    try { return await dependencies.runTool(name, args, { workspace, signal: controller.signal, sessionKey: context.sessionKey, allow: context.allow }) }
+    try { return await dependencies.runTool(name, args, { workspace, signal, sessionKey: context.sessionKey, allow: context.allow }) }
+    catch (error) {
+      // 取消走既有的 499 口径，超时是 504 且写明 60 秒：裸 AbortError 的英文原文既不 actionable，
+      // 也让「用户打断」和「跑太久」在模型与审计里长得一模一样。
+      if (context.signal?.aborted) throw new RequestError('语音请求已取消', 499)
+      if (timedOut) throw new RequestError('工具执行超过 60 秒，已中止', 504)
+      throw error
+    }
     finally { clearTimeout(timer) }
   }
 

@@ -221,7 +221,7 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
 
   async function runTool(call, rawArgs) {
     const { name, response } = call
-    let output, ok = true, speechText, errorText, evidence
+    let output, ok = true, cancelled = false, speechText, errorText, evidence
     try {
       if (!allowedTools.has(name) && !(call.automatic && (response.tts || ttsActive()) && name === 'synth_tts')) throw new Error('该工具未在本次会话中启用或已不可用。')
       const args = typeof rawArgs === 'string' ? (rawArgs.trim() ? JSON.parse(rawArgs) : {}) : (rawArgs || {})
@@ -275,8 +275,11 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
     } catch (error) {
       if (!live(response) || call.finished) return
       ok = false
+      // 打断（499）不是失败：执行器确实被中止了，时间线与审计必须与 invalidate() 同口径，
+      // 否则同一行在工具卡片里是「工具报错」、在别处是「已取消」。
+      cancelled = Number(error?.status) === 499
       errorText = redactError(error?.message || error)
-      evidence = { outcome: 'error' }
+      evidence = { outcome: cancelled ? 'cancelled' : 'error' }
       output = JSON.stringify({ error: errorText })
     }
     if (!live(response) || call.finished) return
@@ -289,13 +292,13 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
       const remaining = [...response.pending].map(id => calls.get(id)).find(other => other && other.name !== 'synth_tts' && !other.finished)
       if (remaining) fillers.schedule('tool-wait', { toolName: remaining.name })
     }
-    finishTool(call, ok ? 'completed' : 'failed', errorText || evidence?.summary,
-      ok ? evidence?.outcome : 'error', evidence?.exitCode)
+    finishTool(call, ok ? 'completed' : cancelled ? 'cancelled' : 'failed', errorText || evidence?.summary,
+      ok ? evidence?.outcome : cancelled ? 'cancelled' : 'error', evidence?.exitCode)
     if (ok && name === 'synth_tts') {
       if (!call.prelude) response.terminal = true
       if (speechText) finalizeResponseAudit(response, 'completed', speechText, call.context)
     }
-    if (!ok && name === 'synth_tts') {
+    if (!ok && !cancelled && name === 'synth_tts') {
       const message = redactError(JSON.parse(output)?.error || '语音合成失败，请检查语音设置后重试。')
       const code = call.automatic ? 'automatic_tts_failed' : 'tts_failed'
       emit({ type: 'error', ...call.context, code, message })

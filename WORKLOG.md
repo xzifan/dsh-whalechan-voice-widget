@@ -2,6 +2,19 @@
 
 本轮工作的技术记录：做了什么、怎么验证的、还欠什么。发布记录由 `scripts/release.sh` 自动追加。
 
+## 2026-10-31 13:45 · 原生工具接上会话取消信号（打断真的会停）
+
+- 条目：BACKLOG「原生工具丢掉会话取消信号」（上一班「下次可做」的第 ① 条，也是清单里第一个非阻塞项——另外 5 个 `- [ ]` 全是 `⛔ 阻塞待决策` / 需人拍板 / `[arch]` 架构决策 / 单独立项，按 J1 规则一条没动）。**未用规划子代理**——条目已精确到行号，改动是三处单点接线，无接口与事件字段变化。
+- 并发保护：开工前无 `.release.lock`，已建 `.work.lock`（13:17），提交前删除。HEAD = `657df34`，工作区干净。
+- 改动三处：①`src/core/voice-tool-bridge.js` 的 `dispatchRealtimeTool` 转发原生工具时条件透传 `signal`（`...(context?.signal ? { signal: context.signal } : {})`）；条件写法是必须的，恒写 `signal: undefined` 会把既有那条 options 深比对断言（条目点名的绊线）弄红。②`src/core/service.js` 的 `runSingleTool` 用 `AbortSignal.any([controller.signal, context.signal])` 把本地 60 秒超时与调用方取消合并后交给 `dependencies.runTool`，catch 里两种中止分开报：调用方取消走既有 499 口径「语音请求已取消」，超时走 504「工具执行超过 60 秒，已中止」，不再把裸 `AbortError` 的英文原文丢给模型与审计。③`src/core/realtime-service.js` 的 `runTool` catch 认 `error.status === 499` 为取消——`tool-end` 的 `status` 与 `outcome` 都是 `cancelled`、审计同步（与 `invalidate()` 同口径），并让自动 TTS 的失败横幅不再对取消触发（`!ok && !cancelled && name === 'synth_tts'`）。
+- 新增 4 条断言：桥接层信号透传（同一引用；无信号时**不出现** `signal` 键）、会话级 499 收尾为 `cancelled` 且无 `error` 事件（模型仍收到一条内容为「语音请求已取消」的 `function_call_output`）、服务级打断后执行器收到的 signal 真的 `aborted === true`、60 秒超时（用 `t.mock.timers` 推进，不真等一分钟）后模型收到含「60 秒」的 504 文案且工具行 `failed`。
+- **四条变异各恰红 1 条（改完都从备份还原）**：桥接去掉 signal → 桥接 + 服务级打断两条红；`service.js` 不合并信号（只传自己的 controller）→ 打断那条红；`realtime-service.js` 不认 499 → 取消那条红；超时文案去掉「60 秒」→ 超时那条红。
+- `npm test` → **447 pass / 0 fail**（443 → 447）；`npm run test:web` → **109 pass / 0 fail**；`npm run build` 成功（`dist/` 已 `git checkout`、新 hash 产物移出仓库）；`npm run lint` 0 问题、`npm run format:check` 通过。churn **147 行**（+139/−8：源码 26 / 测试 111 / CHANGELOG 2），未超 200。
+
+**欠**：无。
+
+**下次可做**：①被打断且已被 `invalidate()` 收尾的调用，模型侧收不到 `function_call_output`（现在只在 `live()` 且未 finished 时才补发）——改的是对模型的输入，属对外行为变化，宜单独立一条；②清单剩余 5 个阻塞项不动（husky + lint-staged、夜间冒烟接调度、事件分发表架构、首帧延迟锚点、真实停播时延）；③原有：启动期默认音色初始化把磁盘/凭据/配额失败压成「请检查声音配置后重试」；④原有：事件轮询缺口既不提示也不补偿；⑤原有：`audio_too_large` 每帧重复上报 + `audio_backlog_dropped` 零审计；⑥原有：审计列筛选 keys 未含 `code`。
+
 ## 2026-10-31 10:20 · 第 7 步取证：清单仍无可用条目，新入清单 1 条（`format:check` 在 HEAD 上就红）
 
 - 并发保护：开工前无 `.release.lock`，已建 `.work.lock`（10:17），提交前删除。HEAD = `880df7b`，工作区干净。

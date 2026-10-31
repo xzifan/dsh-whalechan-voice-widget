@@ -166,7 +166,9 @@ export function createVoiceToolBridge({ getSettings, persistSettings, credential
       }
     }
     requireValue(allowedTools.has(name), '该工具未在本次会话中启用。', 400)
-    return runSingleTool(name, args, workspace, { sessionKey: context?.sessionId, allow: [...allowedTools] })
+    // 取消信号必须跟着走：不传的话打断只让审计与界面写「已取消」，
+    // bash/edit/write 仍在工作区跑到自然结束（60 秒超时才停），并堵住同一会话后续工具。
+    return runSingleTool(name, args, workspace, { sessionKey: context?.sessionId, allow: [...allowedTools], ...(context?.signal ? { signal: context.signal } : {}) })
   }
 
   return { runVoiceTool, dispatchRealtimeTool }

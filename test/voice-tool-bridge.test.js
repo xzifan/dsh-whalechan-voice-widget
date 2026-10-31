@@ -103,6 +103,19 @@ test('dispatchRealtimeTool：语音工具直通，未启用的原生工具 400�
   assert.deepEqual(calls, [{ name: 'wait', args: { ms: 1 }, options: { workspace: '/w', sessionKey: 's-1', allow: ['wait'] } }])
 })
 
+// 打断后 bash/edit/write 必须真的停：上下文里有取消信号时必须透传给执行器，
+// 没有信号时不得凭空塞一个 `signal: undefined`（那会把既有 options 断言弄脏）。
+test('原生工具转发带上会话的取消信号，没有信号时不凭空塞字段', async () => {
+  const calls = []
+  const h = fixture({ runTool: async (name, args, workspace, options) => { calls.push({ workspace, ...options }); return { ok: true } } })
+  const rt = { use_tts_voice: true }
+  const controller = new AbortController()
+  await h.bridge.dispatchRealtimeTool('wait', { ms: 1 }, rt, new Set(['wait']), '/w', { sessionId: 's-1', signal: controller.signal }, emptyVoiceState())
+  assert.equal(calls[0].signal, controller.signal, '取消信号必须透传，否则打断后命令仍会跑到自然结束')
+  controller.abort()
+  assert.equal(calls[0].signal.aborted, true)
+})
+
 // --- delete_voice：删除失败必须如实返回，且不能提前丢掉候选 -------------------
 // 旧实现先 forget 再逐个 try/catch 空吞，失败后候选消失（无法重试）而模型仍收到
 // {deleted:true} +「已释放配额」——百炼音色配额是账号级真资源。
