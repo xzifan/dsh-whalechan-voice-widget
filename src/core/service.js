@@ -11,7 +11,7 @@ import { createRealtimeSession, realtimeDefaults } from './realtime-service.js'
 import { audioDurationSeconds } from './audio-duration.js'
 import { createAuditLog, sanitizeAuditRecord, numericUsage } from './audit-log.js'
 import { parseChangelog } from './changelog.js'
-import { designVoice, synthesizeTts, synthesisFailureText } from './voice-design.js'
+import { designVoice, synthesizeTts, synthesisFailureText, failureCode } from './voice-design.js'
 import { createVoiceToolBridge, breezeDisabled } from './voice-tool-bridge.js'
 import { createVoiceSynthesis } from './voice-synthesis.js'
 import { createVoiceInitialization } from './voice-initialization.js'
@@ -200,7 +200,7 @@ export function createService(config = {}, dependencies = {}) {
       } catch (error) {
         const cancelled = options.signal?.aborted || error.status === 499
         await audit.append({ ...record, status: cancelled ? 'cancelled' : 'failed', usage: null })
-        if (!cancelled) await audit.append({ ...metadata, kind: 'error', status: 'failed', text: synthesisFailureText(error), usage: null })
+        if (!cancelled) await audit.append({ ...metadata, kind: 'error', status: 'failed', text: synthesisFailureText(error), code: failureCode(error), usage: null })
         throw error
       }
     },

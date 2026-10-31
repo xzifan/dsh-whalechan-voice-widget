@@ -245,6 +245,7 @@ test('预设试听失败的审计文本带上分类与 code，与合成层同格
     const errors = (await f.query('audit')).records.filter(r => r.kind === 'error')
     assert.equal(errors.length, 1, '一次失败只落一条 error 审计')
     assert.match(errors[0].text, new RegExp(`^Speech synthesis failed \\(HTTP \\d+, [a-z-]+, ${code}\\)$`))
+    assert.equal(errors[0].code, code, 'code 也要作为字段落盘，审计页才能按码分组')
     assert.doesNotMatch(errors[0].text, new RegExp(upstream), '上游原文不得进审计')
   }
 })

@@ -2,6 +2,18 @@
 
 本轮工作的技术记录：做了什么、怎么验证的、还欠什么。发布记录由 `scripts/release.sh` 自动追加。
 
+## 2026-10-31 · 审计错误记录带上上游错误码
+
+- 条目：BACKLOG「审计的 `kind:error` 记录把上游错误码算出来又丢掉」（上一班第 7 步取证入清单的第一条可做项）。**未用规划子代理**——条目已精确到行号、改动是纯接线，无接口/数据结构变化。
+- `src/core/audit-log.js`：`sanitizeAuditRecord` 按 kind 收窄加 `code`（只在 `kind:'error'` 时收；`trim` 后必须整串匹配 `^[A-Za-z0-9_.-]{1,80}$`，**不合法直接丢弃**——字符剥离出来的码是另一个码），`searchableText` 加 `record.code`（全文检索可命中），`query` 的 JSDoc 补上「error code」。
+- `src/core/voice-design.js`：新增导出 `failureCode(error)`（复用既有 `knownCode`，`unknown` → 空串），避免在两个合成写入点各写一遍取码逻辑。
+- 五个写入点补码：`realtime-service.js:349` 复用 `:348` 已算好的 `safeCode(event.error?.code)`；`:301` 的 `tts_failed` / `automatic_tts_failed`（原来只有 emit 带码）；`voice-synthesis.js:81` 与 `service.js:203` 两条合成失败；`voice-tool-bridge.js:161,164` 的 design/delete 失败（条目里按「同类写入点」列出）。
+- 前端 `web/src/audit-view.jsx` 新增「错误码」一段，仅 `record.code` 存在时渲染——老记录与其它 kind 不显示空行。
+- 测试：`test/audit-log.test.js` +1（error 留码 / 非 error 行带码被丢 / 6 种非法码被丢 / 20k 长串不抛 / 检索命中 / 重启读回）、`test/voice-audit.test.js` +1 端到端（真 service + 真审计文件，假 socket 发 `Throttling.AllocationQuota` → `/api/audit` 的 `code` 正确、搜索命中、response 行不带码）、`realtime-tts` / `voice-synthesis` / `voice-presets` / `voice-tool-bridge` 各补字段断言。
+- 变异验证 3 条各恰好红 1 条：白名单正则改恒真 → `audit-log` 红；`voice-synthesis` 去掉 `code:` → 红；`realtime-service:349` 去掉 `code` → 端到端红。还原后 443/443。
+- 测试：后端 441 → **443**、前端 **109** 全绿，`lint` 0，`build` 成功（`dist/` 已 `git checkout`、新 hash 产物移出仓库）。churn 88 行。
+- 欠：`npm run format:check` 仍红在 `WORKLOG.md` / `docs/typescript-evaluation.md` / `scripts/judge-conversation.mjs`，三者本轮未改、最后改动都在 `48e9fad`，是上一班遗留，按「一次只做一条」没顺手修。列筛选 keys 也没加 `code`（要同步 `service.js:346` 与表头筛选 UI，属另一条交互改动）。
+
 ## 2026-10-29 · 控制台角落的更新日志
 
 - 后端新增 `GET /api/voice-workbench/changelog`：解析包内 `CHANGELOG.md`（`src/core/changelog.js`），按文件 mtime 缓存，返回 `{version, entries, total}`。GET 路由沿用 `requestBody: 'buffered'`——`streaming` 会让请求在到达插件前就 400。

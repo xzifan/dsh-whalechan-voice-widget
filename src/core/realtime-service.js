@@ -297,8 +297,9 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
     }
     if (!ok && name === 'synth_tts') {
       const message = redactError(JSON.parse(output)?.error || '语音合成失败，请检查语音设置后重试。')
-      emit({ type: 'error', ...call.context, code: call.automatic ? 'automatic_tts_failed' : 'tts_failed', message })
-      audit('error', call.context, 'failed', { text: message })
+      const code = call.automatic ? 'automatic_tts_failed' : 'tts_failed'
+      emit({ type: 'error', ...call.context, code, message })
+      audit('error', call.context, 'failed', { text: message, code })
     }
     deliverDone(response)
     if (call.automatic) {
@@ -345,8 +346,10 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
     else if (type === 'error') {
       fillers.cancel()
       const message = redactError(event.error?.message || '').slice(0, 200)
-      emit({ type: 'error', code: safeCode(event.error?.code), message })
-      audit('error', context(), 'failed', { text: message })
+      const code = safeCode(event.error?.code)
+      emit({ type: 'error', code, message })
+      // 码同时进审计字段：只写在文案里时，审计页分不清 401 凭据失效 / 429 配额耗尽 / 模型下架。
+      audit('error', context(), 'failed', { text: message, code })
     } else if (type === 'input_audio_buffer.speech_started') {
       const interrupted = mainPlaying || !!(activeResponse && live(activeResponse) && (!activeResponse.done || activeResponse.pending.size))
       userSpeaking = true

@@ -62,6 +62,15 @@ export function sanitizeAuditRecord(input = {}, secrets = []) {
   if (Number.isFinite(input.at) && input.at >= 0) record.at = input.at
   record.kind = input.kind
   if (typeof input.text === 'string') record.text = sanitizeAuditValue(input.text, secrets)
+  // The upstream error code is a machine-readable field, not just a substring of
+  // `text`: without it the audit page cannot tell a 401 key failure from a 429 quota
+  // or a retired model, and the same sentence appears under「只看失败」with no way to
+  // group. Narrowed to `error` rows on purpose, and malformed codes are dropped
+  // rather than character-stripped (a stripped code is a different code).
+  if (input.kind === 'error' && typeof input.code === 'string') {
+    const code = input.code.trim()
+    if (/^[A-Za-z0-9_.-]{1,80}$/.test(code)) record.code = code
+  }
   if (['zh', 'ja', 'en'].includes(input.language)) record.language = input.language
   if (input.voice !== undefined) {
     const voice = sanitizeAuditValue(input.voice, secrets)
@@ -128,7 +137,7 @@ function responseRecords(records) {
 /** Ordered, failure-isolated JSONL storage. `before` is an exclusive numeric seq cursor.
  * Queries sort newest first; total counts every retained record matching the filters,
  * before applying the cursor. `search` matches content fields only (text, identifiers,
- * role, provider, model, status, voice and usage) — never JSON keys or the kind name.
+ * role, provider, model, status, error code, voice and usage) — never JSON keys or the kind name.
  * `columnFilters` intersects field-specific substring matches (case insensitive),
  * except status which matches exactly; empty column filters are inactive.
  * `since`/`until` bound `at` in epoch milliseconds (both inclusive); `failed` keeps
@@ -149,7 +158,7 @@ export function createAuditLog({ path, maxRecords = 2000, maxBytes = 10 * 1024 *
   const failedRecord = record => record.kind === 'error' || failedStatuses.has(record.status) || record.outcome === 'error'
   const searchableText = record => [
     record.text, record.id, record.sessionId, record.messageId, record.turnId, record.responseId, record.callId, record.role, record.provider, record.model, record.status, record.requestId,
-    record.outcome, record.resultSummary, record.exitCode === undefined ? '' : String(record.exitCode),
+    record.outcome, record.code, record.resultSummary, record.exitCode === undefined ? '' : String(record.exitCode),
     record.voice === undefined ? '' : JSON.stringify(record.voice),
     record.usage == null ? '' : JSON.stringify(record.usage),
   ].filter(value => typeof value === 'string' && value).join('\n').toLowerCase()

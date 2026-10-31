@@ -601,6 +601,8 @@ for (const kind of ['too-long', 'throw', 'error-result', 'no-audio']) test(`auto
   assert.equal(s.events.find(e => e.type === 'tool-end').status, 'failed')
   const error = s.events.find(e => e.type === 'error')
   assert.equal(error.code, 'automatic_tts_failed')
+  // 码同时进审计字段：只留在事件里时，审计页看不出这是哪一类失败。
+  assert.equal(s.events.find(e => e.type === 'audit' && e.record.kind === 'error').record.code, 'automatic_tts_failed')
   assert.doesNotMatch(error.message, /secret/)
   if (kind === 'too-long') assert.match(error.message, /2000/)
   if (kind === 'error-result') assert.match(error.message, /unavailable/)

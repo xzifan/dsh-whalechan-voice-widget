@@ -85,6 +85,7 @@ test('非 qwen 提供方取预设返回三键空表；design_voice 失败只写�
   assert.equal(h.audit.length, 1)
   assert.equal(h.audit[0].kind, 'error')
   assert.match(h.audit[0].text, /^Voice design failed \(HTTP 500, upstream, NonJsonResponse\)$/)
+  assert.equal(h.audit[0].code, 'NonJsonResponse', '码要作为字段落盘')
   assert.equal(h.audit[0].sessionId, 's-1')
 })
 

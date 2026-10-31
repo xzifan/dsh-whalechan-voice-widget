@@ -223,3 +223,20 @@ test('JSON TTS providers preserve real usage only; Qwen missing usage remains nu
   const qwen = await synthesizeTts({ key: 'fake', text: 'Hello', fetcher: async (_, options) => options?.body ? Response.json({ output: { audio: { url: 'https://audio.example' } } }) : new Response(mp3) })
   assert.equal(qwen.usage, null); assert.equal(qwen.usageAvailable, false)
 })
+
+test('上游错误码落成审计字段：可按码检索，非 error 行不携带码', async t => {
+  const { service, socket } = await fixture(t)
+  socket.emit('error', { error: { code: 'Throttling.AllocationQuota', message: 'quota exhausted, retry later' } })
+  const records = (await service.handle('POST', '/api/audit', { kind: 'error' })).body.records
+  assert.equal(records.length, 1)
+  // 码此前只嵌在文案里：401 凭据、429 配额、模型下架在审计页长得一模一样。
+  assert.equal(records[0].code, 'Throttling.AllocationQuota')
+  assert.equal(records[0].text, 'quota exhausted, retry later')
+  assert.equal((await service.handle('POST', '/api/audit', { search: 'allocationquota' })).body.total, 1, '全文检索要能按码命中')
+  socket.emit('response.created', { response: { id: 'r1' } })
+  socket.emit('response.text.done', { response_id: 'r1', text: 'ok' })
+  socket.emit('response.done', { response: { id: 'r1', status: 'completed' } })
+  const responses = (await service.handle('POST', '/api/audit', { kind: 'response' })).body.records
+  assert.ok(responses.length >= 1)
+  assert.equal(responses.every(record => !('code' in record)), true, '白名单按 kind 收窄')
+})

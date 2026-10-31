@@ -46,6 +46,11 @@ function AuditRecord({record, onCopy}) {
           <dl className="grid min-w-0 gap-2 text-xs">{[['结果', auditOutcomeLabel(record) || '未上报'], ['退出码', record.exitCode ?? '未返回']].map(([label, value]) => <div key={label} className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-2"><dt className="text-muted-foreground">{label}</dt><dd className="break-all">{value}</dd></div>)}</dl>
           <p className="text-xs text-muted-foreground">「已完成」只表示工具调用结束，成败以上面的结果为准。</p>
         </section>}
+        {record.code && <section className="min-w-0 space-y-2">
+          <h3 className="text-sm font-medium">错误码</h3>
+          <p className="break-all rounded-md bg-muted/50 p-3 font-mono text-xs">{record.code}</p>
+          <p className="text-xs text-muted-foreground">上游返回的错误码；审计搜索与「只看失败」都按它分组，不必靠文案猜是哪一类失败。</p>
+        </section>}
         <section className="min-w-0 space-y-2">
           <h3 className="text-sm font-medium">模型与音色</h3>
           <dl className="grid min-w-0 gap-2 text-xs">{[['提供方', record.provider], ['模型', record.model], ['音色', record.voice]].map(([label, value]) => <div key={label} className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-2"><dt className="text-muted-foreground">{label}</dt><dd className="break-all">{typeof value === 'object' && value !== null ? JSON.stringify(value) : value || '未返回'}</dd></div>)}</dl>

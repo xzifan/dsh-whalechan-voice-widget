@@ -68,6 +68,10 @@ export function failureDetail(error) {
 export function synthesisFailureText(error) {
   return `Speech synthesis failed (${failureDetail(error)})`
 }
+/** Upstream code as its own audit field (`''` when the failure carried none). */
+export function failureCode(error) {
+  return knownCode(error?.safe?.code)
+}
 
 function problem(status, data) {
   const message = String(data?.message || data?.error?.message || '')

@@ -112,6 +112,7 @@ test('合成失败审计按分类写明原因，且不回显上游原文', async
     assert.equal(h.audit[1].kind, 'error')
     assert.equal(h.audit[1].text, `Speech synthesis failed (${detail})`)
     assert.equal(h.audit[1].text, synthesisFailureText(error))
+    assert.equal(h.audit[1].code, detail.split(', ').at(-1), '码不能只嵌在文案里')
     // 上游 message 只用于分类，绝不进审计文本（可能带账号与请求细节）。
     assert.doesNotMatch(h.audit[1].text, new RegExp(upstream))
   }

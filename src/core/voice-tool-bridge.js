@@ -3,7 +3,7 @@
 // 闭包变量，传值快照会打挂 voice-presets-cache 与 voice-settings-persistence；
 // 本模块自身零可变态、不缓存任何 settings 读取。
 import { BREEZE_PRESET_VOICES, BREEZE_ZH_VOICES, normalizeBreezeProfile } from './breeze-voices.js'
-import { designVoice, deleteBailianVoice, voiceAlreadyGone, failureDetail, VOICE_PRESETS, DEFAULT_VOICE_ID, MODEL_TTS } from './voice-design.js'
+import { designVoice, deleteBailianVoice, voiceAlreadyGone, failureDetail, failureCode, VOICE_PRESETS, DEFAULT_VOICE_ID, MODEL_TTS } from './voice-design.js'
 import { spokenText } from './voice-candidate.js'
 import { DEFAULT_TOOLS } from './realtime-protocol.js'
 
@@ -158,10 +158,10 @@ export function createVoiceToolBridge({ getSettings, persistSettings, credential
       try { return await runVoiceTool(name, args, rt, context, voiceState) } catch (error) {
         // The audit line must say *why* it failed: the model gets the same detail
         // in its output, and "only an HTTP code" is unactionable after the fact.
-        if (name === 'design_voice' && s().tts_voice_provider !== 'breeze') await audit.append({ ...context, kind: 'error', provider: 'bailian', model: 'voice-enrollment', status: 'failed', text: `Voice design failed (${failureDetail(error)})`, usage: null })
+        if (name === 'design_voice' && s().tts_voice_provider !== 'breeze') await audit.append({ ...context, kind: 'error', provider: 'bailian', model: 'voice-enrollment', status: 'failed', text: `Voice design failed (${failureDetail(error)})`, code: failureCode(error), usage: null })
         // Only upstream delete failures are audited: a local 400 (no such candidate)
         // is already visible as a failed tool call and is not a quota problem.
-        if (name === 'delete_voice' && error.upstream) await audit.append({ ...context, kind: 'error', provider: 'bailian', model: 'voice-enrollment', status: 'failed', text: `Voice delete failed (${failureDetail(error)})`, usage: null })
+        if (name === 'delete_voice' && error.upstream) await audit.append({ ...context, kind: 'error', provider: 'bailian', model: 'voice-enrollment', status: 'failed', text: `Voice delete failed (${failureDetail(error)})`, code: failureCode(error), usage: null })
         throw error
       }
     }

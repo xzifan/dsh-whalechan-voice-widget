@@ -257,3 +257,22 @@ test('timing fields survive the whitelist and a restart, invalid values are drop
   // 检索列只认既有标识/文本/用量：迟延数字混进去会造出假匹配
   assert.equal((await store.query({search: '900'})).total, 0)
 })
+
+test('error code is a first-class field: error rows only, malformed dropped, searchable, restart-stable', async t => {
+  const {store, path} = await fixture(t)
+  await store.append({kind: 'error', sessionId: 's', status: 'failed', text: 'boom', code: 'Throttling.AllocationQuota'})
+  await store.append({kind: 'response', sessionId: 's', status: 'completed', text: 'ok', code: 'MustNotLeak'})
+  const [response, error] = (await store.query()).records
+  assert.equal(error.code, 'Throttling.AllocationQuota')
+  // 白名单按 kind 收窄：非 error 行带 code 一律丢弃，不给清单外字段开口子
+  assert.equal('code' in response, false)
+  assert.equal((await store.query({search: 'allocationquota'})).total, 1, '全文检索要能按码命中')
+  assert.equal((await store.query({failed: true})).total, 1)
+  for (const code of ['has space', 'x'.repeat(81), 42, null, {code: 'y'}, ['y']]) {
+    assert.equal(sanitizeAuditRecord({kind: 'error', code}).code, undefined, `${JSON.stringify(code)} 应被丢弃`)
+  }
+  assert.doesNotThrow(() => sanitizeAuditRecord({kind: 'error', code: 'A'.repeat(20000)}))
+  assert.equal(sanitizeAuditRecord({kind: 'error', code: '  InvalidApiKey  '}).code, 'InvalidApiKey')
+  const reloaded = createAuditLog({path})
+  assert.equal((await reloaded.query({kind: 'error'})).records[0].code, 'Throttling.AllocationQuota', '重启后仍能读回')
+})
