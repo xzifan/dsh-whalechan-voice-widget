@@ -326,6 +326,10 @@ export function createAuditLog({ path, maxRecords = 2000, maxBytes = 10 * 1024 *
   }
   const clean = value => sanitizeAuditValue(value, secrets)
   const clip = (value, length) => Array.from(value).slice(0, length).join('')
+  // Spoken text is compared normalized: response rows keep the upstream trailing
+  // newlines while synthesis rows are trimmed, so the same sentence would render
+  // twice if the comparison demanded byte equality.
+  const sameSpeech = (a, b) => b.trim() === a.trim()
   function historyView(sessionId, rows) {
     const responses = rows.filter(row => row.kind === 'response' && row.text?.trim())
     const messages = []
@@ -334,7 +338,9 @@ export function createAuditLog({ path, maxRecords = 2000, maxBytes = 10 * 1024 *
       if (!['tool', 'error'].includes(row.kind) && !row.text?.trim()) continue
       // Only shared identity proves TTS duplicates a response; text alone must
       // never remove repeated speech, including legacy rows lacking identities.
-      if (row.kind === 'synthesis' && responses.some(response => response.text === row.text &&
+      // The text itself is compared normalized so trailing upstream whitespace
+      // cannot ship the same sentence as a second bubble.
+      if (row.kind === 'synthesis' && responses.some(response => sameSpeech(response.text, row.text) &&
         ((row.messageId && row.messageId === response.messageId) || (row.responseId && row.responseId === response.responseId)))) continue
       const kind = row.kind === 'transcription' ? 'user' : ['response', 'synthesis'].includes(row.kind) ? 'assistant' : row.kind
       const message = { id: clean(row.id), kind, role: kind === 'error' ? clean(row.role || 'system') : kind,

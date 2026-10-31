@@ -93,6 +93,30 @@ test('TTS dedup requires same session, matching identity and exact text; repeats
   assert.equal(other.messages[0].audioDurationSeconds, 1.5)
 })
 
+test('TTS dedup tolerates trailing whitespace but still demands shared identity', async t => {
+  const { log } = await fixture(t)
+  // Upstream response text keeps its trailing newlines while synthesis trims
+  // them; without normalization the same sentence renders as two bubbles.
+  const rows = [
+    { id: 'padded-response', kind: 'response', messageId: 'm1', responseId: 'r1', text: '你好，主人。\n\n' },
+    { id: 'trimmed-tts', kind: 'synthesis', messageId: 'm1', text: '你好，主人。' },
+    { id: 'padded-response-2', kind: 'response', messageId: 'm2', responseId: 'r2', text: '换句了\n' },
+    { id: 'trimmed-tts-2', kind: 'synthesis', responseId: 'r2', text: ' 换句了 ' },
+    // Same normalized text, different identity: repeated speech must survive.
+    { id: 'other-response', kind: 'response', messageId: 'm3', responseId: 'r3', text: '再说一遍\n' },
+    { id: 'other-tts', kind: 'synthesis', messageId: 'm4', responseId: 'r4', text: '再说一遍' },
+    // Legacy rows have no identity to prove duplication, whitespace included.
+    { id: 'legacy-padded', kind: 'synthesis', text: '老记录\n' },
+    { id: 'legacy-trimmed', kind: 'synthesis', text: '老记录' },
+  ]
+  for (const [i, row] of rows.entries()) await log.append({ ...row, sessionId: 'a', at: i })
+  const result = await log.historyMessages({ sessionId: 'a' })
+  assert.deepEqual(result.messages.map(m => m.id), ['padded-response', 'padded-response-2', 'other-response', 'other-tts', 'legacy-padded', 'legacy-trimmed'])
+  assert.equal(result.session.messageCount, 6)
+  // The response row is never rewritten: only the comparison side normalizes.
+  assert.equal(result.messages[0].text, '你好，主人。\n\n')
+})
+
 test('history preserves visibleRecords usage merging and handles missing legacy IDs and empty sessions', async t => {
   const { log } = await fixture(t)
   assert.deepEqual(await log.historySessions(), { sessions: [], total: 0 })

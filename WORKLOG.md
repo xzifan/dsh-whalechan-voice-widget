@@ -1785,3 +1785,16 @@
 2. 凭据解析失败被压成「未配置…凭据」：`src/model-credentials.js:43,64,93` 把真实原因装进 `error` 字段**返回**（不抛），`src/core/service.js:151-156` 的 `modelCredential` 只 `requireValue(result.key, …)`、`:165` 的 `credentialStatus` 也只拼固定文案，于是 `:147-149` 那条「请检查宿主凭据配置」的 catch 在生产路径上是死代码。改文案属对外行为（需产品口径），预计 ≈65 行。
 3. 百炼合成 **54/54 条缺 `audioDurationSeconds`**（breeze 46/46 有）：同一写入点 `src/core/voice-synthesis.js:75-76` 解析 WAV 失败即 `null`，百炼固定 `format:'wav'`，故只走 `src/core/audio-duration.js:4-19` 的 RIFF 分支、`:8` 任何 chunk 越界直接 `return null`。缺时长 → 语音气泡无秒数、统计页「输出语音时长」只等于 breeze 那 46 条。**先拿一条真实百炼 WAV** 才能定位到单行，预计 ≈40 行。
 4. 更新日志浮窗丢掉 3 个历史版本：`src/core/changelog.js:43-47/58` 只收有 `###` 分节的条目并 `filter(sections.length > 0)`，而 `CHANGELOG.md` 的 0.5.0 / 0.3.0 / 0.2.0 三段是裸 `- ` 条目；页脚「共 14 个版本」与可列 11 条对不上，默认 `limit=6` 又让测试（`test/changelog.test.js:93-95` 断言 `Math.min(6,total)`）正好躲过。预计 ≈25 行，不涉及产品决策。
+
+## 2026-11-01 03:25 · J1：修「会话记录把同一条回复显示两遍」
+
+- 并发保护：开工前无 `.release.lock`，已建 `.work.lock`（03:17），提交前删除。HEAD = `53a15af`，工作区干净。基线实测 `npm test` **460 pass** / `npm run test:web` **110 pass** / `format:check` 全仓通过。
+- 取活：清单顶部仍是 5 个阻塞项（`:34` ⛔ 阻塞待决策、`:46` 需人拍板、`:58` `[arch]`、`:60` 需先定口径归属、`:61` 单独立项），按 J1 规则一条都不碰、全部原样保留；取到的第一条可做项是上一班取证入条的「会话记录把同一条回复显示两遍」。**本轮只做这 1 条**。
+- 真数据复核（不采信条目里的数字，自写 `~/.hermes/cache/scratch/probe-history-dedup.mjs` 重算）：真审计 `~/.dsh/storages/voice-workbench-preview/voice-audit.jsonl` 535 行 / 38 会话，`kind:response` 文本带尾随空白 **26 行**；`kind:synthesis` 文本非空 **91 行**（条目写 100 是「有 text 字段」的口径，我按 `trim()` 非空过，剔掉了纯空白行），其中**逐字相等可去重 68 行、只有 trim 后相等 21 行、无身份匹配 2 行**。「21 行会被显示两遍」这个关键数字与条目完全对上。
+- 改动（churn **35 行**：源码 +11/−2 / 测试 +24 / `CHANGELOG.md` +2 / `BACKLOG.md` 本行 +1−1）：`src/core/audit-log.js` 的 `historyView` 里新增 `const sameSpeech = (a, b) => b.trim() === a.trim()`（紧挨 `clean`/`clip`，注释写明「回复行留尾随换行、合成行已 trim」的来路），去重判据由 `response.text === row.text` 换成 `sameSpeech(response.text, row.text)`；`messageId`/`responseId` 的 `some(...)` 身份条件**一字未动**，写入侧也**没有** trim `response.text`（审计正文与全文检索不变），所以已带尾随空白的历史行同样被修好。
+- 新用例 `test/history.test.js`（+24 行）造 8 行覆盖四态：`messageId` 相同只差尾随换行 → 并成 1 条；只有 `responseId` 相同且前后都有空白 → 并成 1 条；同归一文本但身份不同 → 两条都留；无身份的 legacy 两条只差换行 → 仍各留一条。另断言回复行文本没被改写（`messages[0].text` 仍是 3 字 + 两个换行）与 `messageCount === 6`，证明归一只发生在比较侧。
+- 变异验证 2 条（改源码 → `node --test test/history.test.js` → 从 `~/.hermes/cache/scratch/audit-log.mutbase.js` 还原）：①判据退回严格相等 → 恰好红 1 条（新用例，实际多出 `trimmed-tts`/`trimmed-tts-2`）；②去掉身份条件只比文本 → 新用例与既有 `tts-repeat`/`legacy-tts-repeat` 一起红 **2 条**，证明「身份必须相同」仍被锁住、既有绊线没被放松。
+- 验收：后端 460 → **461** / 前端 **110** 全绿、`lint` 0 问题、`format:check` 全仓通过、`build` 成功（`dist/` 已 `git checkout` 还原、新 hash 产物 `index-BCNzi94o.js` 移出仓库）。
+- 本轮未 bump 版本、未 `npm pack`、未 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未动 `~/.dsh/AGENTS.md`。
+
+**下次可做**：①`src/core/service.js:133` 的 `settingsLoad` 缺观测式 `catch`（`settings.json` 损坏时该 promise 在没人 `await` 前就拒绝，Node 20+ 直接升级成宿主进程级崩溃；照 `voice-presets.js:39` 补 ≈3 行源码 + 30 行测试，零对外变化）；②`src/core/model-credentials.js` 的 resolver 把失败原因装进 `error` 返回却被 `service.js:151-156` 压成「未配置…凭据」（改文案属对外行为）；③百炼合成 54/54 条缺 `audioDurationSeconds`（breeze 46/46 都有，需先拿一条真实百炼 WAV 定位 `src/core/audio-duration.js:8`）；④更新日志浮窗丢掉 0.5.0/0.3.0/0.2.0 三个无 `###` 分节的版本（≈25 行）；⑤`package.json` 的 `files` 白名单补元测试（删 `dist/web` 或 `CHANGELOG.md` 也全绿）；⑥`/api/audit` 反向时间区间补 400 校验（`service.js:348` 有、`:364` 没有）。
