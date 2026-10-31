@@ -1517,3 +1517,23 @@
 **欠**：无。`lint` CI job 从此不再一 push 就挂。
 
 **下次可做**：清单又只剩 5 个阻塞项，下一班按第 7 步重新取证；候选仍在：①可恢复的 `error` 被当成回合终止（`web/src/lib/realtime.js`，要同步改写 `realtime.test.js` 的冻结用例，风险面较大）；②`audio_too_large` 每帧重复上报 error + `audio_backlog_dropped` 零审计（≈60 行）；③审计列筛选 keys 未含 `code`（上一班刻意留下的交互改动，要连带改前端表头筛选 UI）。
+
+## 2026-10-31 12:30 · 第 7 步取证：清单只剩 5 个阻塞项，入 1 条新条目（原生工具丢取消信号）
+
+**做了什么**（0 条实现；本轮按第 7 步只取证、不写代码）
+
+- 并发保护：开工前无 `.release.lock`，已建 `.work.lock`（12:17），提交前删除。HEAD = `eb372ee`，工作区干净。
+- 取活：`grep '^- \[ \]' BACKLOG.md` 只剩 5 条，全部不可动——`:34` ⛔ 阻塞待决策（前置是 Prettier 大目录迁移要不要豁免 200 行）、`:46` 需人拍板（夜间冒烟调度）、`:58` `[arch]` 架构决策、`:60` 需先定口径归属（首帧延迟锚点）、`:61` 单独立项（打断真实停播时延）。按 J1 规则一条没碰，转第 7 步。
+- 派只读规划子代理从四类证据取证（TODO/空 catch/静默失败、测试缺口与弱断言、CHANGELOG 与代码不符、本机 `voice-audit.jsonl` 高频失败类型），拿到 3 个候选；**主代理逐条实读源码复核后才采信**，子代理自述不算证据。
+- 选定并追加进 BACKLOG 底部：**原生工具丢掉会话取消信号**。复核与子代理陈述一致：`voice-tool-bridge.js:169` 转发原生工具时确无 `signal`（同文件 `:25`/`:96`/`:110`/`:130` 的语音工具路径都有）、`grep 'context.signal' src/core/service.js` 确为 0 命中、`agent-conversation.js:120` 的 `runTool` 确实把 `signal` 透传给 `entry.tools.execute`、`test/voice-tool-bridge.test.js:103` 的 deepEqual 确实是「不传信号」的绊线。
+- 另外核到两点子代理没提的，都写进了条目：①`499` + `语音请求已取消` 已是全仓既有口径（`tts-http.js:50`、`voice-design.js:92`、`voice-synthesis.js:80`、`service.js:201`），所以「取消」不引入新概念；②`runSingleTool` 全仓只有 `voice-tool-bridge.js:169` 一个调用方（`service.js:244` 是注入点），改动面不会外溢到别的工具入口。
+- 未选的另两条连同原有三条候选一起写进下方「下次可做」。
+
+**验证**（本轮零源码改动，只核基线）
+
+- `npm test` → **443 pass / 0 fail**；`npm run test:web` → **109 pass / 0 fail**。
+- `npm run format:check` → 通过（新条目按现有长行风格写，`proseWrap` 为 preserve，未触发重排）；`git status` 提交前只有 `BACKLOG.md` + `WORKLOG.md`。
+
+**欠**：该条仍是 `- [ ]`，下一班可直接实现（≈60 行 / 3 文件，无接口变化、不需产品决策）。
+
+**下次可做**：①新入的这条（原生工具接取消信号，源码 ≈15 / 测试 ≈45）；②启动期默认音色初始化把磁盘/凭据/配额失败全压成「请检查声音配置后重试」（`voice-initialization.js:45-46` 只留 `status`，`failureAdvice` 0 命中，≈48 行，含补启动失败审计）；③事件轮询缺口既不提示也不补偿（`service.js:410` 的 `events.shift()` 无缺口信号 + `main.jsx:121` 先整批推进游标再逐条处理，循环里 `rtEnqueue` 抛错会永久丢该批剩余事件，≈60 行）；④原有：可恢复的 `error` 被当成回合终止；⑤原有：`audio_too_large` 每帧重复上报 + `audio_backlog_dropped` 零审计；⑥原有：审计列筛选 keys 未含 `code`。
