@@ -1798,3 +1798,21 @@
 - 本轮未 bump 版本、未 `npm pack`、未 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未动 `~/.dsh/AGENTS.md`。
 
 **下次可做**：①`src/core/service.js:133` 的 `settingsLoad` 缺观测式 `catch`（`settings.json` 损坏时该 promise 在没人 `await` 前就拒绝，Node 20+ 直接升级成宿主进程级崩溃；照 `voice-presets.js:39` 补 ≈3 行源码 + 30 行测试，零对外变化）；②`src/core/model-credentials.js` 的 resolver 把失败原因装进 `error` 返回却被 `service.js:151-156` 压成「未配置…凭据」（改文案属对外行为）；③百炼合成 54/54 条缺 `audioDurationSeconds`（breeze 46/46 都有，需先拿一条真实百炼 WAV 定位 `src/core/audio-duration.js:8`）；④更新日志浮窗丢掉 0.5.0/0.3.0/0.2.0 三个无 `###` 分节的版本（≈25 行）；⑤`package.json` 的 `files` 白名单补元测试（删 `dist/web` 或 `CHANGELOG.md` 也全绿）；⑥`/api/audit` 反向时间区间补 400 校验（`service.js:348` 有、`:364` 没有）。
+
+## 2026-11-01 04:17 · 第 7 步取证：清单仍无可做条目，入 1 条（百炼合成缺 `audioDurationSeconds`）
+
+- 并发保护：开工前无 `.release.lock`，已建 `.work.lock`（04:17），提交前删除。HEAD = `cdb7903`，工作区干净。基线实测 `npm test` **461 pass** / `npm run test:web` **110 pass**。
+- 取活：BACKLOG 里仅剩的 5 个 `- [ ]` **全是阻塞项**（`:34` ⛔ 阻塞待决策、`:46` 需人拍板、`:58` `[arch]` 架构决策、`:60` 需先定口径归属、`:61` 单独立项），按 J1 规则一条都不许碰、全部原样保留。本轮按第 7 步执行：只取证入条，不实现。
+- 取证：派 1 个**只读**子代理（禁止改/建/删文件、禁止 git 写操作、禁止 `npm install` 或重启任何服务），从 TODO、CHANGELOG 未落地项、本机真实审计日志与测试缺口的交叉面提 3 个候选。全仓 `grep TODO/FIXME/XXX` 为空，候选全部来自真实日志与「已宣称未落地」的缺口。
+- **主代理复核（不采信子代理自称，逐条实读 + 自己跑命令）**：①`src/core/audio-duration.js:6-18` 的 RIFF 解析对任何 chunk 越界直接 `return null`，没有「占位尺寸」这个概念；`xxd -l 48 artifacts/anime-soft-voice/tts-check.wav` 实读 `RIFF size=0x7fffffbf` / `data size=0x7fffff9b`（2,147,483,547）而文件只有 441,644 字节，同目录 `preview.wav` 的尺寸是真实值、解析正常。②审计 `grep -c` 复算：`kind:synthesis` 100 条 = bailian 54 + breeze 46，带 `audioDurationSeconds` 的 bailian **0** / breeze **46**——正是上一班「下次可做」③悬着的那条，当时缺一份真实百炼 WAV，这次在 `artifacts/` 里找到了，根因落到单行。③`src/core/changelog.js:42-47,58` 与 `test/changelog.test.js:88-96` 实读确认「只收挂在 `###` 下的条目 + `filter(sections.length>0)`」，`grep -c '^## '` / `grep -c '^### '` 于 `CHANGELOG.md` 得 14/22，无 `###` 的恰是 0.5.0/0.3.0/0.2.0。④`src/core/service.js:133` 的 `settingsLoad` 确实没有观测式 catch，同仓对照 `src/core/voice-presets.js:38-39` 有 `ready.catch(() => {})`。
+- 选入 BACKLOG 的是「百炼合成缺 `audioDurationSeconds`」：唯一同时满足「本机真实数据双向可证（54 缺 / 46 有）」「根因定位到单行」「≈35 行」「只补既有字段的值、不动接口与响应形状」「无产品决策」，且改完能在本机当场验收（重跑一次合成看审计行）。
+- 改动：`BACKLOG.md` 新增 1 条 `- [ ]`（放在可执行清单末尾、决策列表之前，保持 J1 的取活顺序）；`WORKLOG.md` 追加本节。**零源码改动、零测试改动**。
+- 验收：`npm test` **461** / `npm run test:web` **110** 全绿、`format:check` 全仓通过（Markdown 现在也在 Prettier 门禁里，新增的长行必须过）。**本轮未跑 `npm run build`**：零源码改动，构建只会重写被跟踪的 `dist/`，那正是 `release.sh` 干净树前置条件会拦下的脏路径。
+- 本轮未 bump 版本、未 `npm pack`、未 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未动 `~/.dsh/AGENTS.md`。
+
+**下次可做**（本轮复核过、未入选的候选）：
+
+1. 更新日志浮窗丢掉 0.5.0 / 0.3.0 / 0.2.0：`src/core/changelog.js:42-47` 只收挂在 `###` 分节下的条目、`:58` 又 `filter(sections.length > 0)`，三段裸 `- ` 条目共 17 条永久不可见，而页脚仍按 `total` 写「共 14 个版本」；`test/changelog.test.js:92-94` 的 `Math.min(6,total)` 等式恒成立，正好盖住它。修法是在 `itemMatch && !section` 时惰性建一个「变更」分节（约 4 行源码 + 25 行测试，≈30 行），不改接口形状、无产品决策。
+2. `src/core/service.js:133` 的 `settingsLoad` 缺观测式 `catch`：`settings.json` 损坏时该 promise 在被任何请求 `await`（唯一消费点 `:261`）之前就拒绝，全仓无 `unhandledRejection` 兜底，宿主 `installFailLoud`（`dsh-app-boot`）会当 `fatal load failure` 直接 `exit(1)`。后果最重但本机 `~/.dsh/logs` 里该串实测 **0** 次，缺「真实发生」证据，故排在后面。
+3. `/api/audit` 反向时间区间静默返回 0 条：`src/core/service.js:364` 只校验非负整数，而同形 `/api/statistics` 在 `:348` 有 `since <= until` 的 400 校验（≈31 行、零产品决策，但本机审计里没有「区间写反」的痕迹可复算）。
+4. `package.json` 的 `files` 白名单仍无元测试：删掉 `dist/web` 或 `CHANGELOG.md` 也不会红（与 `coverage-config` / `browser-scripts` 那类接线元测试同族）。
