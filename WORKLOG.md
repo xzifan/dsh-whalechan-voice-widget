@@ -1626,3 +1626,24 @@
 - **未做**：`beginUserTurn` 里 `next.closed = false` 的既有语义没动（所以 error 之后 `closed` 是 `undefined` 而不是 `false`，用例按此断言）、`playbackError` 与 `realtime-view.jsx` 的横幅样式没碰。
 
 **下次可做**：①`audio_too_large` 超限后 `audioTotal` 不清零导致每帧重复 emit `error` 并挤爆 256 条事件环（`realtime-service.js:464-468`，≈30 行）；②`audio_backlog_dropped` 只 emit 不落审计（同文件入队逻辑，≈20 行）；③启动期音色设计失败补审计 + `preset-store-failed` 不再被误导成「检查声音配置」（要动 `createVoiceInitialization` 注入表与 `service.js` 接线，≈50 行）；④事件流缺口（`service.js:423` 环形淘汰无 dropped 信号 + `main.jsx:121` 先推游标后逐条处理）——要动响应形状，按第 3 条应标 `[plan]`；⑤审计列筛选 keys 未含 `code`（后端 `service.js:359` 与前端 `audit-view.jsx:95` 都要改）。
+
+## 2026-10-31 18:20 · 第 7 步取证：清单只剩 5 个阻塞项，入 1 条新条目（audio_too_large 超限后不锁存、不真停）
+
+**做了什么**（本轮 0 条实现，按第 7 步只取证）
+
+- 并发保护：开工前无 `.release.lock`，已建 `.work.lock`（18:17），提交前删除。HEAD = `33e41b0`，工作区干净。
+- 取活：`grep '^- \[ \]' BACKLOG.md` 只剩 5 条且全部不可动——`:34` ⛔ 阻塞待决策（Prettier 大目录迁移是否豁免 200 行）、`:46` 需人拍板（夜间冒烟调度）、`:58` `[arch]` 架构决策（`createRealtimeSession` 剩余抽取）、`:60` 需先定口径归属（首帧延迟锚点）、`:61` 单独立项（打断真实停播时延）。一条没碰，转第 7 步。
+- 派两个只读子代理（只读、禁 git 写、禁 `npm test` 这类写盘命令）：一个核实时链路的 `audio_too_large` 超限与 `audio_backlog_dropped` 两条，一个核审计列筛选缺 `code` 与启动期设计失败零审计两条。**每条都回主代理逐行实读源码复核后才采信**，子代理自述不作为证据。
+- 选定并追加进 BACKLOG（放在最后一条 `[x]` 之后、文末待决策列表之前，而不是文件最末——否则下一班又会把它当「需要产品决策」跳过）：**`audio_too_large` 超限后既不锁存也不真停**。
+- 复核后修正子代理两处过度陈述，条目里按修正版写：①「事件环必被冲掉」不成立为无条件结论——50 条/秒 对 256 条环约 5 秒缓冲，而前端 180 ms 轮询正常时每轮都取走，只有轮询停摆超过 5 秒（后台标签页节流、断网重连、`/api/realtime/events` 变慢）才会真丢 delta/done，条目已写明这个前提；②「需先拍板是否发 `response.cancel`」判定**不构成产品决策**——文案已经承诺「已停止」，让它成真是修谎报（与 `delete_voice` 谎报成功、预设页「请重试」同一条判据），故条目要求首选真发 cancel，另一选项（改文案为「本段已截断」）只作为退路写明。
+- 未选三条的取舍写进条目尾注：启动期/预设页设计失败零审计（付费调用无留痕，价值同级，列「下次可做」首项）、审计列筛选缺 `code`（搜索已能按码命中，低一档）、`audio_backlog_dropped` 单补审计（可并入本轮条目的 ⑤ 一起做）。
+
+**验证**（本轮零源码改动，只核基线）
+
+- 主代理实读过的行：`realtime-service.js:70-91`（`queueOutbound` 与 `backlogNotified` 一次会话只报一次）、`:448-470`（`audioTotal` 累加、超限分支、`:455` 只在 response.done 且非 cancelled 清零）、`:546`（全仓唯一发 `response.cancel` 处）、`src/core/service.js:359`（列筛选白名单六个键，无 `code`）、`:195-222`（`design` 接缝无 try/catch，紧邻的 `synthesize` 已有 completed/failed + `kind:error` 审计，是对照组）、`:423`（`events.length > 256` → `shift()`）、`src/core/realtime-protocol.js:9`（`MAX_AUDIO_BYTES = 24 * 1024 * 1024`）、`web/src/main.jsx:161`（180 ms 轮询）、`test/test-realtime.test.js:259`（积压用例只断 error 计数、无 audit 断言）。
+- 基线复测：`npm test` → **450 pass / 0 fail**；`npm run test:web` → **110 pass / 0 fail**，与上一班一致（本轮无源码改动）。
+- `npm run format:check` → `All matched files use Prettier code style!`（本轮只改 `BACKLOG.md` + 本文件）。
+
+**欠**：新条目仍是 `- [ ]`，下一班可直接实现（≈55 行 / 3 文件：`realtime-service.js` + `test/test-realtime.test.js` + `CHANGELOG.md`，只加可选事件字段与一个可选工厂参数、不改接口形状，不需产品决策、不需再派规划子代理）。
+
+**下次可做**：①启动期/预设页自动设计音色失败零审计（付费调用无留痕）：单接缝在 `src/core/service.js:203` 的 `design: options => designVoice({ ...options, fetcher })`，包 try/catch 后 `audit.append({ kind:'error', provider:'bailian', model:'voice-enrollment', status:'failed', text:`Voice design failed (${failureDetail(error)})`, code: failureCode(error), usage:null })` 再 rethrow，一次覆盖启动期（`voice-initialization.js:46`）与预设页 generate（`voice-presets.js:156`）两条路径；注意初始化发生在 `sessionId = randomUUID()` 之前，补记不会自带会话归属（≈60 行，零接口变化）；②审计列筛选 keys 补 `code`（`service.js:359` 白名单 + `web/src/audit-view.jsx:95` 的 `fieldLabels` 与表头筛选控件，漏改 fieldLabels 会渲染成「undefined：<code>」；`test/voice-audit.test.js:120,129` 是白名单镜像，要同步，≈14 行）；③`audio_backlog_dropped` 单补审计（≈12 行，若下一班做 ① 之外的条目可顺手并进上一条待办）；④事件流缺口（`service.js:423` 环形淘汰无 dropped 信号 + `main.jsx:121` 先推游标整批推进再逐条处理，需动响应形状，应标 `[plan]`）；⑤`appendAudio` 对 >3 MiB 单帧的静默 return 同样零痕迹（`realtime-service.js:529`，与本轮条目不同触发面，别混做）。
