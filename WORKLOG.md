@@ -1589,3 +1589,7 @@
 **欠**：启动期付费设计失败仍零审计（`voice-audit.jsonl` 里不留行），需另一条改注入表 + `service.js` 接线。
 
 **下次可做**：①启动期设计失败补审计（把 `audit` 注入 `createVoiceInitialization`，照 `service.js` 合成路径写 completed/failed 两条，≈40 行）；②原有：可恢复的 `error` 被当成回合终止（`web/src/lib/realtime.js`，要同步改写 `realtime.test.js` 的冻结用例）；③原有：`audio_too_large` 每帧重复上报 error + `audio_backlog_dropped` 零审计（≈60 行）；④原有：审计列筛选 keys 未含 `code`（要连带改前端表头筛选 UI）；⑤原有：事件轮询缺口既不提示也不补偿（`service.js:410` 的 `events.shift()` 无缺口信号 + `main.jsx:121` 先整批推进游标再逐条处理）。
+
+## 2026-10-31 16:02 · minor 发布 0.7.0
+
+- 2026-10-31 / 0.7.0 / minor 发布成功（全量回归 → `dsh plugin add` → 重启 → health `version=0.7.0` → commit/tag/push → GitHub Release）/ 本周自 v0.6.6 起 27 个 commit（含 2 个功能、11 处修复、1 处格式回归）。
