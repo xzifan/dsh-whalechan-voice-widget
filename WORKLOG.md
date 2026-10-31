@@ -2,6 +2,30 @@
 
 本轮工作的技术记录：做了什么、怎么验证的、还欠什么。发布记录由 `scripts/release.sh` 自动追加。
 
+## 2026-10-31 20:20 · 第 7 步取证：清单仍无可用条目，入 1 条（0.7.0 更新日志浮窗在 iframe 形态下不可用）
+
+- 并发保护：开工前无 `.release.lock`，已建 `.work.lock`（20:17），提交前删除。HEAD = `be1a05b`，工作区干净。
+- 取活结果：`grep '^- \[ \]' BACKLOG.md` 只剩 5 条，全部不可动——`:34` ⛔ 阻塞待决策（husky + lint-staged，前置是 Prettier 大目录迁移要不要豁免 200 行）、`:46` 需人拍板（夜间冒烟接调度）、`:58` `[arch]` 架构决策（事件分发表 + 三层状态机）、`:60` 需先定口径归属（首帧延迟锚点）、`:61` 单独立项（真实停播时延）。按 J1 规则一条没动，转第 7 步。
+- 派 **2 个只读子代理**（禁止改/建/删文件、禁止 git 写操作）：一个从源码找「承诺与实现不符」（静默吞错、谎报成功、分类丢失、CHANGELOG 宣称未落地），一个从本机 `voice-audit.jsonl`（535 行 / 38 会话）与 `test/` 缺口做分布取证。共 6 个候选，**每条都回源码/日志亲手复核过才采信**（子代理自述不算证据）。
+- 入清单的是「0.7.0 的『更新日志』浮窗在生产形态下必然失败」。复核链（自己实读，不是转述）：`src/index.js:25` 确实注册了 `['changelog',['GET']]`、`:26` 的 buffered 分支也含它；`web/src/changelog-corner.jsx:21` 调 `api('changelog',{},'GET')`，组件在 `web/src/companion-view.jsx:21` 已挂载；`web/src/lib/core.js:96` 在 iframe 里必走桥，而 `:51-60` 的 `ENDPOINT_METHODS`（21 条）没有 `/api/changelog`，`:63` 直接 reject「不支持的工作台操作」；即使补了它，`lib/client.js:14-37` 的宿主 `methods`（22 条）也没有，`:59-60` 对不匹配的请求连响应都不回（失败形态变成 180 秒超时）；宿主是按 `msg.path` 拼 `api/voice-workbench/<suffix>` 再 fetch（`lib/client.js:78`），所以补白名单就能通。`test/adapter.test.js:35-41` 只验了服务端那条路由存在且能返回 `entries`，`grep -rn changelog web/src/lib lib test/*.py` 零命中——没有任何用例把三张表对起来，这正是缺口。选它的理由：已发布版本的主打新功能在唯一生产形态下 100% 失败（不是概率性问题），改动两行 + 一条守护测试，顺带把「服务端路由 ↔ 两张转发白名单」这条从没被覆盖过的接缝纳入门禁。
+- **未选**（证据都硬，全部列进下方「下次可做」）：①`audio_too_large` 主动 `response.cancel` 之后上游回的 `response.done{status:'cancelled'}` 被 `src/core/realtime-service.js:445` 的 `if (!cancelled)` 整段跳过，不发 `done`，前端停在「正在回应」——上一班刚加的这条 cancel 把它从「上游会 completed」变成「永远没有收尾」，但修法要区分「用户打断造成的 cancelled」（本来就不该发 `done`）与「因错误主动取消」（该发），属时序语义，宜带 `[plan]` 单独立条；②会话历史里同一条回复出现两次：本机 89 组 response/synthesis 配对里 21 组文本只差行尾空白，而 `src/core/audit-log.js:337` 去重是严格 `===`，两个写入点 `voice-tool-bridge.js:77`（trim 过）与 `realtime-response-bookkeeping.js:64`（没 trim）口径不同；③百炼（默认提供方）合成的 `audioDurationSeconds` 恒为空（本机 54/54 条），统计页「输出语音时长」只等于 breeze 那 46 条；④文本在工具启动后才定稿的回复永久没有音频（本机 5/94 条，`realtime-service.js:319` 的 `(!prelude && response.hasTools)` 挡掉收尾）；⑤`delete_voice` 聚合失败把 `safe.category` 写死成 `upstream`（`voice-tool-bridge.js:141-144`），401/429 在那里又变回「上游错误」，与 0.6.6 的分类宣称不一致。
+- 顺带核实到一条没入清单的：`src/core/changelog.js` 只认 `###` 分节，而 `CHANGELOG.md` 的 0.5.0 / 0.3.0 / 0.2.0 三段条目直接挂在 `##` 下，会被 `entries.filter(entry => entry.sections.length > 0)` 整段丢弃；浮窗仍显示「共 N 个版本」。同属这条浮窗，但改解析器是独立的行为变化，留给下一班判断，不塞进本条。
+
+**验证**（本轮零源码改动，只核基线）
+
+- `npm test` → **451 pass / 0 fail**；`npm run test:web` → **110 pass / 0 fail**；`npm run format:check` → `All matched files use Prettier code style!`（全仓，新条目写进 BACKLOG/WORKLOG 后仍绿）。
+- `git status` 提交前应当只有 `BACKLOG.md` + `WORKLOG.md`。
+
+**下次可做**（本条候选池，证据均已复核，按价值排序）
+
+1. `response.done{status:'cancelled'}` 不收尾：`response.cancel`（audio_too_large）与 `cancel()` 之后的 cancelled 都拿不到 `done`，气泡停在「正在回应」。修法需区分打断与错误取消，建议 `[plan]`。
+2. 会话历史重复回复：`audit-log.js:337` 的严格文本比对改成两侧 trim 后比较（约 2 行 + 1 条用例），本机 21/89 组会命中。
+3. 百炼合成缺 `audioDurationSeconds`：`voice-synthesis.js:75` 解析失败即 `null`、白名单又只收 number，统计「输出语音时长」系统性少报；可先补 `audioBytes` 让「没音频」与「解析不出」可区分。
+4. 带工具的回复文本晚到就没有配音（5/94）：`realtime-service.js:319` 的 `(!prelude && response.hasTools)`。
+5. `delete_voice` 聚合失败丢分类：`voice-tool-bridge.js:141-144` 把 `safe.category` 写死 `upstream`。
+
+**欠**：新条目仍是 `- [ ]`，下一班可直接实现（≈60 行 / 2 个源码文件 + 1 个测试文件，不需产品决策）。
+
 ## 2026-10-31 14:20 · 第 7 步取证：清单仍无可用条目，入 1 条（启动期音色初始化吞掉失败分类）
 
 - 并发保护：开工前无 `.release.lock`，已建 `.work.lock`（14:17），提交前删除。HEAD = `4482b86`，工作区干净。
