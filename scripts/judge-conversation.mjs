@@ -46,7 +46,14 @@ async function readKey() {
   if (!existsSync(envFile)) return null
   const text = await readFile(envFile, 'utf8')
   const line = text.split('\n').find(l => l.trim().startsWith('DASHSCOPE_API_KEY='))
-  return line ? line.split('=').slice(1).join('=').trim().replace(/^["']|["']$/g, '') : null
+  return line
+    ? line
+        .split('=')
+        .slice(1)
+        .join('=')
+        .trim()
+        .replace(/^["']|["']$/g, '')
+    : null
 }
 
 function makeJudge(key) {
@@ -68,7 +75,9 @@ function makeJudge(key) {
 
 function render({ turns, heuristics, judged }) {
   const lines = []
-  lines.push(`回合 ${heuristics.summary.turns} 个 | error ${heuristics.summary.errors} | warn ${heuristics.summary.warns}`)
+  lines.push(
+    `回合 ${heuristics.summary.turns} 个 | error ${heuristics.summary.errors} | warn ${heuristics.summary.warns}`,
+  )
   const byTurn = new Map()
   for (const finding of heuristics.findings) {
     if (!byTurn.has(finding.turnId)) byTurn.set(finding.turnId, [])
@@ -77,7 +86,8 @@ function render({ turns, heuristics, judged }) {
   for (const turn of turns.slice(-10)) {
     const mark = (byTurn.get(turn.turnId) || []).some(f => f.severity === 'error') ? '✖' : '✓'
     lines.push(`${mark} ${turn.userText.slice(0, 30) || '(空)'} → ${turn.assistantText.slice(0, 40) || '(无回复)'}`)
-    for (const finding of byTurn.get(turn.turnId) || []) lines.push(`    [${finding.severity}] ${finding.code}: ${finding.detail}`)
+    for (const finding of byTurn.get(turn.turnId) || [])
+      lines.push(`    [${finding.severity}] ${finding.code}: ${finding.detail}`)
   }
   if (judged?.length) {
     const pass = judged.filter(j => j.pass === true).length
@@ -92,7 +102,9 @@ function render({ turns, heuristics, judged }) {
 async function main() {
   const args = parseArgs(process.argv.slice(2))
   if (args.help) {
-    console.log('用法: node scripts/judge-conversation.mjs [--audit file] [--since 24h] [--limit 10] [--llm] [--out report.json]')
+    console.log(
+      '用法: node scripts/judge-conversation.mjs [--audit file] [--since 24h] [--limit 10] [--llm] [--out report.json]',
+    )
     return 0
   }
   if (!existsSync(args.audit)) {

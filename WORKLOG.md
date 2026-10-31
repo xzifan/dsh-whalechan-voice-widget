@@ -39,6 +39,7 @@
 ## 2026-10-29 · 断句策略层 + 会话质量评估（SDK 前置）
 
 **断句策略（`src/core/endpoint/`）**
+
 - 注册表 + 降级链：`registerEndpointStrategy` / `resolveEndpointChain` / `createEndpointChain`。
 - 内置两个零依赖策略：`passthrough`（provider 自带语义断句时不插嘴）、`energy-vad`（能量 VAD，链尾兜底）。
 - 降级语义：策略抛错或超时（默认 120ms）→ 禁用该策略并落到下一级，`decision.fallbackFrom` 记录原因；被禁用的策略本回合不再调用。
@@ -46,6 +47,7 @@
 - **尚未接进主链路**：现有 Realtime 走 provider 侧 `smart_turn`（passthrough），本地策略只在未来的级联模式下才有意义，接入点已留好。
 
 **会话质量评估（`src/core/conversation-judge.js` + `scripts/judge-conversation.mjs`）**
+
 - 确定性规则（入退出码）：空回复、工具失败、会话错误、语言漂移、声称操作但无工具调用、有文字无合成。6 类 14 条测试。
 - LLM 复核（`--llm`，默认不计入退出码）：把回合还原成 payload 喂 qwen-plus，按 rubric 判 pass/score/reasons。
 - 真机跑出结果：7 天内 86 个回合，error 28 个——全部是修复前那批 `edit: file has not been read`。
@@ -53,6 +55,7 @@
 - 误报修复：`read` 工具原样念出的 `QXVB` 曾触发"语言漂移"，改为需出现 ≥3 个英文单词才判。
 
 **TypeScript 评估（`docs/typescript-evaluation.md`）**
+
 - 实测 `tsc --allowJs --checkJs`：`src/core` 37 个类型错，`src/**` 62 个，不是"从零上类型"。
 - 结论：不改写；用 JSDoc + `tsc --noEmit` 拿收益，发 SDK 时 `--emitDeclarationOnly` 出 `.d.ts`。
 
@@ -1494,3 +1497,23 @@
 **欠**：本轮按规则不实现任何代码，新入清单那条留给下一班；②③ 已记入下方「下次可做」。另**顺手发现一处既存门禁红**：`npm run format:check` 在 HEAD（`d385704`）上就报 3 个文件——`WORKLOG.md`（`:5`/`:12`/`:19` 三个粗体标题后缺空行，共 3 行）、`docs/typescript-evaluation.md`、`scripts/judge-conversation.mjs`。用 `git show HEAD:` 导出这三个 blob 单独 `prettier --check` 复核后确认**全部在 HEAD 就已不合规，与本轮改动无关**（本轮新增的 WORKLOG 段经 `prettier --write` 比对零 diff）。按「一次提交只做一条」的规矩没顺手修，留给下一班单独立一条。
 
 **下次可做**：清单仍是 5 个阻塞项 + 本班新入的 1 条（审计 error 丢 code，下一班可直接做）；候选仍在：①可恢复 `error` 被当成回合终止（`web/src/lib/realtime.js:363-366` / `:410-412`，需同步改写 `realtime.test.js:176-193`）；②`audio_too_large` 每帧重复上报 + `audio_backlog_dropped` 零审计（≈60 行）；③`test/audit-log.test.js:258` 的 `search:'900'` 与 `randomUUID` 相撞（约 0.5% 假红，10-15 行，纯测试卫生）。
+
+## 2026-10-31 11:20 · Prettier 门禁回绿：HEAD 遗留的 3 个不合规文件重排（零语义改动）
+
+**做了什么**（1 条；未用规划子代理——纯格式化，无需拆解）
+
+- 并发保护：开工前无 `.release.lock`，已建 `.work.lock`（11:17），提交前删除。HEAD = `07d56ad`，工作区干净。
+- 取活：清单里前 5 个 `- [ ]` 全是阻塞项（`:34` ⛔ 阻塞待决策、`:46` 需人拍板、`:58` `[arch]` 架构决策、`:60` 需先定口径归属、`:61` 单独立项），按 J1 规则一条没动；第一个可做的是这条 `format:check` 红，本班只做它。
+- **先 dry-run 再动真文件**：把 `WORKLOG.md` 复制到仓库外跑 `prettier --write` 后 `diff`，实测只有 3 处「粗体小标题后补空行」、**没有 glob 被改写成 `tts-_`**，确认安全才动手（条目要点①的「先包反引号」前置本轮用不上——`test/lint-config.test.js` 第 7 条元测试在 HEAD 本来就是绿的，说明正文当前没有裸 glob；前提仍成立，只是这次不触发）。
+- `npx prettier --write WORKLOG.md docs/typescript-evaluation.md scripts/judge-conversation.mjs`，`git diff` 逐行复核：全是空白、表格列宽对齐、4 处超 `printWidth:120` 的长行换行，零文案改动、零代码语义改动。
+- `BACKLOG.md` 该条改 `- [x]` 并追加完成说明。
+
+**验证**（全部实跑）
+
+- `npm run format:check` → `All matched files use Prettier code style!`（全仓口径；改前是 3 个 `[warn]`）。
+- 后端 **443** / 前端 **109** 全绿（0 fail）、`npm run lint` 0 问题（重排后的 `.mjs` 也没新告警）、`npm run build` 成功（`dist/` 已 `git checkout`，新 hash 产物 `index-D0M93vQL.js` 移出仓库）。
+- churn **45 行**（+30/−15：`WORKLOG.md` 3 / `docs/typescript-evaluation.md` 22 / `scripts/judge-conversation.mjs` 20），与条目估的 ≈45 对得上。
+
+**欠**：无。`lint` CI job 从此不再一 push 就挂。
+
+**下次可做**：清单又只剩 5 个阻塞项，下一班按第 7 步重新取证；候选仍在：①可恢复的 `error` 被当成回合终止（`web/src/lib/realtime.js`，要同步改写 `realtime.test.js` 的冻结用例，风险面较大）；②`audio_too_large` 每帧重复上报 error + `audio_backlog_dropped` 零审计（≈60 行）；③审计列筛选 keys 未含 `code`（上一班刻意留下的交互改动，要连带改前端表头筛选 UI）。
