@@ -1647,3 +1647,20 @@
 **欠**：新条目仍是 `- [ ]`，下一班可直接实现（≈55 行 / 3 文件：`realtime-service.js` + `test/test-realtime.test.js` + `CHANGELOG.md`，只加可选事件字段与一个可选工厂参数、不改接口形状，不需产品决策、不需再派规划子代理）。
 
 **下次可做**：①启动期/预设页自动设计音色失败零审计（付费调用无留痕）：单接缝在 `src/core/service.js:203` 的 `design: options => designVoice({ ...options, fetcher })`，包 try/catch 后 `audit.append({ kind:'error', provider:'bailian', model:'voice-enrollment', status:'failed', text:`Voice design failed (${failureDetail(error)})`, code: failureCode(error), usage:null })` 再 rethrow，一次覆盖启动期（`voice-initialization.js:46`）与预设页 generate（`voice-presets.js:156`）两条路径；注意初始化发生在 `sessionId = randomUUID()` 之前，补记不会自带会话归属（≈60 行，零接口变化）；②审计列筛选 keys 补 `code`（`service.js:359` 白名单 + `web/src/audit-view.jsx:95` 的 `fieldLabels` 与表头筛选控件，漏改 fieldLabels 会渲染成「undefined：<code>」；`test/voice-audit.test.js:120,129` 是白名单镜像，要同步，≈14 行）；③`audio_backlog_dropped` 单补审计（≈12 行，若下一班做 ① 之外的条目可顺手并进上一条待办）；④事件流缺口（`service.js:423` 环形淘汰无 dropped 信号 + `main.jsx:121` 先推游标整批推进再逐条处理，需动响应形状，应标 `[plan]`）；⑤`appendAudio` 对 >3 MiB 单帧的静默 return 同样零痕迹（`realtime-service.js:529`，与本轮条目不同触发面，别混做）。
+
+## 2026-10-31 19:20 · `audio_too_large` 超限只报一次、真向上游取消、并留下带码的审计行
+
+- 并发保护：开工前无 `.release.lock`；已建 `.work.lock`（19:17），提交前删除。HEAD = `933e1d7`，工作区干净。
+- 取活：`grep '^- \[ \]' BACKLOG.md` 共 6 条，前 5 条仍是阻塞项（`:34` ⛔ 阻塞待决策、`:46` 需人拍板、`:58` `[arch]` 架构决策、`:60` 需先定口径归属、`:61` 单独立项），按 J1 规则一条没碰；真正可做的第一条是 `:110` 的 `audio_too_large`。**本轮只做这一条**。
+- 未派规划子代理：条目已精确到行号与改法，改动集中在 `response.audio.delta` 一个分支 + 一个可选工厂参数，不跨模块、不改接口形状，不满足第 3 条的分级判据。
+- 落法：`if (response.audioOverflow) return` 放在 `audioTotal += bytes` **之前**；首次超限只做三件事——emit 一条 `audio_too_large`（文案一字未改）、`audit('error', ctx, 'failed', { text, code: 'audio_too_large' })`、`send({ type: 'response.cancel' })`，收尾走上游 `response.done status=cancelled` 的既有路径（不改写 `cancel()`）；`responseFor()` 的新 response 字面量加 `audioOverflow: false`（锁存天然 per-response）；`createRealtimeSession` 加可选 `maxAudioBytes = MAX_AUDIO_BYTES`；`queueOutbound` 的 `audio_backlog_dropped` 同步补审计行。
+- **一处按证据偏离条目原文**：条目写「`audioTotal` 的清零逻辑一律不动」，但 `:455` 的 `audioTotal = 0` 只在 `!cancelled` 分支，而这里触发的恰是 cancelled → 清零永不发生，下一轮第一帧就再撞阈值、整场对话从此哑掉。所以归零放在锁存处，并用「新 response 的音频必须照常投递」这条断言锁死（变异 M3 即此）。
+
+**验证**
+
+- 变异 5 条各恰红 1 条（探针 `~/.hermes/cache/scratch/mutate-audio.mjs` / `mutate-backlog.mjs`：改源码 → 跑 `node --test test/test-realtime.test.js` → 还原 → 报计数）：M1 去掉锁存、M2 不向上游 cancel、M3 锁存处不归零、M4 不写 `kind:error` 审计、M5 删掉 backlog 审计；还原后 31/31 绿。
+- `npm test` → **451 pass / 0 fail**（450 → 451）；`npm run test:web` → **110 pass / 0 fail**。
+- `npm run lint` 0 问题；`npm run format:check` → `All matched files use Prettier code style!`；`npm run build` 成功，`dist/` 已 `git checkout`、新 hash 产物 `index-BoDnHC47.js` 移出仓库（未进提交）。
+- **未跑** `test:browser*`：本轮改动全在服务端事件分支，浏览器脚本对这些事件是 mock，构造上覆盖不到；且构建产物已按仓库惯例还原，跑它需要重新构建并再次还原。
+
+**下次可做**：①启动期/预设页自动设计音色失败零审计（付费调用无留痕，单接缝在 `src/core/service.js:203` 的 `design` 包装，≈60 行）；②审计列筛选 keys 补 `code`（`service.js:359` 白名单 + `web/src/audit-view.jsx` 的 `fieldLabels`，≈14 行）——本轮新增的 `audio_too_large` / `audio_backlog_dropped` 现在只能靠全文搜索命中；③`appendAudio` 对 >3 MiB 单帧的静默 return 零痕迹（`realtime-service.js:529`）；④事件流缺口（`service.js:423` 环形淘汰无 dropped 信号 + `main.jsx:121` 先推游标整批推进再逐条处理，需动响应形状，应标 `[plan]`）。

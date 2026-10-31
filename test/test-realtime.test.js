@@ -259,6 +259,10 @@ test('握手期音频积压超上限时丢最旧帧，只报一条 error，commi
   const drops = emitted.filter(e => e.type === 'error' && e.code === 'audio_backlog_dropped')
   assert.equal(drops.length, 1, '丢帧必须报出来，且一次积压只报一条（不能每帧刷一条）')
   assert.ok(drops[0].message, '丢帧告警要有可读文案，不能只给 code')
+  // 本地码也要落审计：只 emit 的话按码统计恒 0 行（事后无法回答「这类故障发生过几次」）。
+  const dropAudits = emitted.filter(e => e.type === 'audit' && e.record.kind === 'error').map(e => e.record)
+  assert.equal(dropAudits.length, 1, '丢帧必须留一条 kind:error 审计行')
+  assert.equal(dropAudits[0].code, 'audio_backlog_dropped')
 
   socket.emitRaw('session.created')
   const appends = socket.sent.filter(m => m.type === 'input_audio_buffer.append')
@@ -266,6 +270,49 @@ test('握手期音频积压超上限时丢最旧帧，只报一条 error，commi
   assert.equal(appends[0].audio, frame(16), '丢的是最旧的帧，不是最新的')
   assert.equal(appends.at(-1).audio, frame(25))
   assert.equal(socket.sent.at(-1).type, 'input_audio_buffer.commit', 'commit 体积极小，不许跟着音频一起被淘汰')
+  session.dispose()
+})
+
+test('音频超出上限时只报一次、真向上游取消，下一轮音频照常播放', () => {
+  const FakeSocket = makeFakeSocket(), emitted = []
+  const session = createRealtimeSession({ settings: { ...realtimeDefaults(), use_tts_voice: false }, key: 'k', executeTool: async () => ({}), emit: e => emitted.push(e), maxAudioBytes: 1000, WebSocketCtor: FakeSocket })
+  session.connect()
+  const socket = FakeSocket.instances[0]
+  const frame = () => Buffer.alloc(600).toString('base64') // 每帧 600 字节
+  const errors = () => emitted.filter(e => e.type === 'error' && e.code === 'audio_too_large')
+  const audioCount = () => emitted.filter(e => e.type === 'audio').length
+  const errorAudits = () => emitted.filter(e => e.type === 'audit' && e.record.kind === 'error' && e.record.code === 'audio_too_large').map(e => e.record)
+  const cancels = () => socket.sent.filter(m => m.type === 'response.cancel')
+
+  socket.emitRaw('response.created', { response: { id: 'a' } })
+  socket.emitRaw('response.audio.delta', { response_id: 'a', delta: frame() }) // 600，未超
+  assert.equal(audioCount(), 1)
+  socket.emitRaw('response.audio.delta', { response_id: 'a', delta: frame() }) // 1200 > 1000
+  assert.equal(errors().length, 1, '超限只报一条 error')
+  assert.equal(cancels().length, 1, '文案写「已停止」就必须真发 response.cancel，而不是只在自己这边丢帧')
+  assert.equal(errorAudits().length, 1, '本地错误必须留一条带码的审计行')
+  assert.equal(errorAudits()[0].status, 'failed')
+  assert.match(errorAudits()[0].text, /1000 字节上限/)
+
+  // 同一 response 的后续帧不得再投递音频、再报错、再取消：事件环只有 256 条，逐帧刷会把转写与工具事件挤掉。
+  const before = audioCount()
+  for (let i = 0; i < 20; i++) socket.emitRaw('response.audio.delta', { response_id: 'a', delta: frame() })
+  assert.equal(audioCount(), before, '超限后同一 response 不得再投递音频')
+  assert.equal(errors().length, 1, '不得逐帧重复报同一条 error')
+  assert.equal(cancels().length, 1, '不得逐帧重复取消')
+
+  // cancelled 的 response.done 不清 audioTotal，归零只能发生在锁存处——否则下一轮第一帧就再撞阈值，整场对话从此哑掉。
+  socket.emitRaw('response.done', { response: { id: 'a', status: 'cancelled' } })
+  socket.emitRaw('response.created', { response: { id: 'b' } })
+  socket.emitRaw('response.audio.delta', { response_id: 'b', delta: frame() })
+  assert.equal(audioCount(), before + 1, '新 response 的音频必须照常投递')
+  assert.equal(errors().length, 1, '新 response 未超限就不该再报错')
+
+  // 锁存是 per-response 的：新 response 自己超限时仍要报一次。
+  socket.emitRaw('response.audio.delta', { response_id: 'b', delta: frame() })
+  assert.equal(errors().length, 2, '新 response 仍可重新触发一次')
+  assert.equal(errorAudits().length, 2)
+  assert.equal(cancels().length, 2)
   session.dispose()
 })
 

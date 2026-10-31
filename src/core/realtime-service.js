@@ -33,7 +33,7 @@ const VOICE_SIDE_EFFECT_TOOLS = new Set(['design_voice', 'delete_voice', 'apply_
  * `emit(event)` pushes sanitized events to the frontend buffer; `executeTool` runs DSH tools.
  * `WebSocketCtor` is injectable for tests.
  */
-export function createRealtimeSession({ settings, key, executeTool, emit, nativeTools = [], voiceState, generateFiller, synthesizeFiller, fillerOptions, confirmationTimeoutMs = 1500, WebSocketCtor = WebSocket }) {
+export function createRealtimeSession({ settings, key, executeTool, emit, nativeTools = [], voiceState, generateFiller, synthesizeFiller, fillerOptions, confirmationTimeoutMs = 1500, maxAudioBytes = MAX_AUDIO_BYTES, WebSocketCtor = WebSocket }) {
   let socket, disposed = false, generation = 0, blocked = false
   // 握手期出站队列：session.created 之前的 append/commit/response.create 暂存于此，见 outbound()/flushPending()。
   const pending = []
@@ -85,7 +85,10 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
       // 丢帧不静默：一次积压只报一次，避免每帧刷一条 error。
       if (!backlogNotified) {
         backlogNotified = true
-        emit({ type: 'error', code: 'audio_backlog_dropped', message: '通话建立前的录音积压过多，开头一小段已丢弃' })
+        const text = '通话建立前的录音积压过多，开头一小段已丢弃'
+        emit({ type: 'error', code: 'audio_backlog_dropped', message: text })
+        // 本地码也要落审计：只 emit 的话按码统计恒 0 行，事后无法回答「这类故障发生过几次」。
+        audit('error', context(), 'failed', { text, code: 'audio_backlog_dropped' })
       }
     }
   }
@@ -112,7 +115,7 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
     let response = (id && responses.get(id)) || (itemId && items.get(itemId)?.response)
     if (!response && !id) response = activeResponse
     if (!response) {
-      response = { tts: requestedOutputModes.shift() ?? ttsActive(), requestedAt: requestedAtQueue.shift() ?? Date.now(), firstTextAt: 0, firstAudioAt: 0, id: id || null, turn: currentTurn(), pending: new Set(), done: false, continued: false, terminal: false, cancelled: blocked, text: '', finalized: false }
+      response = { tts: requestedOutputModes.shift() ?? ttsActive(), requestedAt: requestedAtQueue.shift() ?? Date.now(), firstTextAt: 0, firstAudioAt: 0, id: id || null, turn: currentTurn(), pending: new Set(), done: false, continued: false, terminal: false, cancelled: blocked, text: '', finalized: false, audioOverflow: false }
       if (id) responses.set(id, response)
       activeResponse = response
     }
@@ -464,8 +467,24 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
         if (response.tts || ttsActive() || response.suppressNative || response.done || response.auditFinalized) return
         const delta = event.delta || ''
         const bytes = Buffer.from(delta, 'base64').length
+        // 超限只处理一次：锁在 response 上（新 response 由 responseFor() 新建即复位）。不锁的话每 20 ms
+        // 一帧都会重发同一条 error，256 条的事件环约 5 秒就被冲空，同一次 response 的转写 delta、
+        // tool-start 与 done 会被永久挤掉；前端 shouldStopPlayback 也会逐帧再停一次播。
+        // 锁存后连字节都不再计（否则被丢弃的帧仍会把累计值顶到阈值以上，下一轮一开口就再撞）。
+        if (response.audioOverflow) return
         audioTotal += bytes
-        if (audioTotal > MAX_AUDIO_BYTES) { emit({ type: 'error', code: 'audio_too_large', message: '语音输出过大，已停止。' }); return }
+        if (audioTotal > maxAudioBytes) {
+          response.audioOverflow = true
+          // 文案写「已停止」就必须真停：发 response.cancel 让上游停下（走既有 cancelled 收尾），
+          // 而不是只在自己这边丢帧、上游继续生成继续计费。
+          emit({ type: 'error', code: 'audio_too_large', message: '语音输出过大，已停止。' })
+          audit('error', ctx, 'failed', { text: `语音输出超过 ${maxAudioBytes} 字节上限，已请求上游停止`, code: 'audio_too_large' })
+          send({ type: 'response.cancel' })
+          // 阈值是「单次 response」的：不在这里归零，被取消的 response.done 不清 audioTotal
+          // （只在 completed/failed 清），下一轮的第一帧就会立刻再撞阈值，整场对话从此哑掉。
+          audioTotal = 0
+          return
+        }
         if (!firstAudioAt) firstAudioAt = Date.now()
         response.firstAudioAt ||= firstAudioAt
         audioBytes += bytes
