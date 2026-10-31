@@ -1766,3 +1766,22 @@
 - churn **144 行**（+137/−7：源码 +29/−6 / 测试 +105 / CHANGELOG 2 / BACKLOG +1−1），未超 200 上限。本轮未 bump 版本、未 `npm pack`、未 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未动 `~/.dsh/AGENTS.md`。
 
 **下次可做**：①`buildJudgePrompt` 里 `cancelled` 工具仍以 `ok:false` 交给模型，rubric 的失败条件 B（「tools_called 全部不是成功状态」）会据此判失败——要改的是 LLM 复核口径（要么把 cancelled 单列一档、要么在 rubric 里写明打断不算失败），属语义决策；②`package.json` 的 `files` 白名单补一条元测试（删 `dist/web` 或 `CHANGELOG.md` 也全绿，装到 profile 才白屏；≈90 行纯测试）；③`/api/audit` 反向时间区间补与 `/api/statistics` 同形的 400 校验（`service.js:348` 有、`:364` 没有；≈31 行）；④`web/src/main.jsx:66` 首次加载 catalog 的空 `catch` 吞掉失败，设置页据此断言「当前没有可用的工具执行服务」（≈40 行）；⑤`changelog-corner.jsx:19` 的 `error` 一旦置位永不清除、关掉重开也不再请求（≈115 行，取数策略需先下沉到 `web/src/lib/`）；⑥README 的 Breeze 中文音色行仍是已废弃的 `voc_47j4uzfyuxqc`（≈25 行）。
+
+## 2026-11-01 02:23 · 第 7 步取证：清单仍无可用条目，入 1 条（会话记录把同一条回复显示两遍）
+
+- 并发保护：开工前无 `.release.lock`，已建 `.work.lock`（02:17），提交前删除。HEAD = `672333b`，工作区干净。基线实测 `npm test` **460 pass** / `npm run test:web` **110 pass** / `npm run format:check` 全仓通过。
+- 取活：BACKLOG 顶部的 5 个 `- [ ]` **全是阻塞项**（`:34` ⛔ 阻塞待决策、`:46` 需人拍板、`:58` `[arch]` 架构决策、`:60` 需先定口径归属、`:61` 单独立项），按 J1 规则一条都不许碰，全部原样保留。本轮按第 7 步执行：只取证入条，不实现。
+- 取证：派 2 个**只读**子代理（禁止改/建/删文件、禁止任何 git 写操作）。A 路扫代码缺口（失败/谎报类、状态泄漏类、门禁接线缺口、CHANGELOG 未落地项），B 路扫运行时证据（真实审计日志、`~/.dsh/logs`、TODO、上一轮「下次可做」）。两路独立产出 6 个候选。
+- **主代理复核（不采信子代理自称，逐条实读 + 自写探针重算）**：子代理的数字我全部自己复算了一遍——写 `~/.hermes/cache/scratch/probe-candidates.mjs` 对真实审计 `~/.dsh/storages/voice-workbench-preview/voice-audit.jsonl`（535 行）逐行比对，得：`kind:synthesis` 文本非空 100 行中 68 行逐字相等可去重、**21 行（21%）只有 `trim()` 后才相等**、11 行无身份匹配；`kind:response` 文本非空 102 行里 **26 行带尾随空白**；`kind:synthesis` 按 provider 拆：`bailian` **54/54 缺 `audioDurationSeconds`**（但 54/54 有 `requestId` 与 `usage`），`breeze` **46/46 有**。
+- 只读复核的代码事实（都亲手读过）：①`src/core/audit-log.js:337` 去重判据是严格 `response.text === row.text`；②`src/core/realtime-response-bookkeeping.js:64-65` 的 `finalizeText` 只 `spokenText(text)`、**不 trim**，上游尾随 `\n\n` 进 `response.text`；合成侧 `src/core/voice-tool-bridge.js:77` 是 `spokenText(args?.text).trim()`，所以两侧差一行尾随空白就整条去重失效；③`src/core/service.js:133` 的 `settingsLoad` 没有任何观测式 `catch`，而同类 eager promise 在 `src/core/voice-presets.js:39` 有 `ready.catch(() => {})`——这是同仓内自己给出的对照证据，不是我的推测；`grep -rn unhandledRejection src/ test/ scripts/` 为空，全仓无兜底；④`src/core/service.js:78` 的 `void dependencies.releaseToolSession?.(sid)` 与 `:446` 的 `await` 形成第二组对照。
+- 选入 BACKLOG 的是「会话记录把同一条回复显示两遍」：唯一同时满足「有本机真实数据（21/100 行会重复显示）」「≈25 行」「不动对外文案与响应形状」「不涉及产品决策」。另外 4 个候选全部写进 BACKLOG 该条的「未选」段与下方「下次可做」，一条都没丢。
+- 改动：`BACKLOG.md` 新增 1 条 `- [ ]`（放在可执行清单末尾、决策列表之前，保持 J1 的取活顺序）；`WORKLOG.md` 追加本节。**零源码改动、零测试改动**。
+- 验收：`npm test` **460** / `npm run test:web` **110** 全绿、`npm run format:check` 全仓通过。**本轮未跑 `npm run build`**：零源码改动，构建只会重写被跟踪的 `dist/`（`dist/web/index.html` + 新 hash 产物），而那正是 `release.sh` 的干净树前置条件会拦下的脏路径——为一次纯文档改动去弄脏工作区没有收益。
+- 本轮未 bump 版本、未 `npm pack`、未 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未动 `~/.dsh/AGENTS.md`。
+
+**下次可做**（本轮复核过、未入选的候选，都带行号与实测数字，下一班可直接取）：
+
+1. `src/core/service.js:133` 的 `settingsLoad` 缺观测式 `catch`：`settings.json` 损坏/旧 schema 时该 promise 在被任何请求 `await` 之前就已拒绝（唯一消费点是 `:261` 的 `Promise.all`），全仓无 `unhandledRejection` 兜底 → Node 20+ 升级成宿主进程级崩溃，而代码里准备好的「工作台配置无法读取」只在下一个请求才可能出现。修法与 `voice-presets.js:39` 同款（≈3 行源码 + 30 行测试），**零对外行为变化**。
+2. 凭据解析失败被压成「未配置…凭据」：`src/model-credentials.js:43,64,93` 把真实原因装进 `error` 字段**返回**（不抛），`src/core/service.js:151-156` 的 `modelCredential` 只 `requireValue(result.key, …)`、`:165` 的 `credentialStatus` 也只拼固定文案，于是 `:147-149` 那条「请检查宿主凭据配置」的 catch 在生产路径上是死代码。改文案属对外行为（需产品口径），预计 ≈65 行。
+3. 百炼合成 **54/54 条缺 `audioDurationSeconds`**（breeze 46/46 有）：同一写入点 `src/core/voice-synthesis.js:75-76` 解析 WAV 失败即 `null`，百炼固定 `format:'wav'`，故只走 `src/core/audio-duration.js:4-19` 的 RIFF 分支、`:8` 任何 chunk 越界直接 `return null`。缺时长 → 语音气泡无秒数、统计页「输出语音时长」只等于 breeze 那 46 条。**先拿一条真实百炼 WAV** 才能定位到单行，预计 ≈40 行。
+4. 更新日志浮窗丢掉 3 个历史版本：`src/core/changelog.js:43-47/58` 只收有 `###` 分节的条目并 `filter(sections.length > 0)`，而 `CHANGELOG.md` 的 0.5.0 / 0.3.0 / 0.2.0 三段是裸 `- ` 条目；页脚「共 14 个版本」与可列 11 条对不上，默认 `limit=6` 又让测试（`test/changelog.test.js:93-95` 断言 `Math.min(6,total)`）正好躲过。预计 ≈25 行，不涉及产品决策。
