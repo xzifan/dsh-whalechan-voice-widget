@@ -1725,3 +1725,16 @@
 - 本轮**未改任何源码与测试**：未 bump 版本、未 `npm pack`、未 tag/push、未 `dsh plugin add`、未重启 `dsh web`。
 
 **下次可做**：①`src/core/conversation-judge.js:72` 把 `cancelled` 判成 `TOOL_FAILED` 硬错误、`:89` 在原生出声模式恒报 `TTS_MISSING`，与 `src/core/audit-log.js:156-158` 的「cancelled 不算失败」口径自相矛盾（实跑 86 回合 28 error、进程 exit 1；≈30 行）；②`web/src/changelog-corner.jsx:19` 的 `error` 一旦置位就永不清除、关掉重开也不再请求（CHANGELOG 已宣称该症状修复，实际只修了白名单入口；≈110 行，取数策略要下沉到 `web/src/lib/` 才测得到）；③qwen 合成的 `audioDurationSeconds` 54/54 全 null 而 Breeze 46/46 正常（`src/core/voice-synthesis.js:75` 解析失败即 null；先用一次真实响应确认 DashScope 返回的 WAV 布局再定改法）；④`README.md:71-75` 的 Breeze 音色表仍写已废弃的 `voc_47j4uzfyuxqc`，且无元测试钉住（≈55 行）；⑤`package.json` 的 `files` 白名单零守卫——删掉 `dist` 或 `CHANGELOG.md` 时 `npm test` 与 `test:web` 全绿，装完才表现为插件页 404 / 浮窗「没有记录」（≈90 行元测试）。
+
+## 2026-10-31 23:20 · 连接层失败与 `/start` 的 429/503 拒绝补上审计
+
+- 并发保护：开工前无 `.release.lock`；已建 `.work.lock`（23:17），收尾前删除。HEAD = `854db0b`，工作区干净。
+- 取活：`grep '^- \[ \]' BACKLOG.md` 命中 6 条，前 5 条全是阻塞项（`⛔ 阻塞待决策` / `需人拍板` / `[arch]` 架构决策 / `需先定口径归属` / `单独立项`）按 J1 规则一条没碰；取第一个可做的「连接层失败与 `/api/realtime/start` 的 429/503 拒绝零审计」。条目已精确到行号、纯接线、无接口变化，**未派规划子代理**。
+- 基线：`npm test` **453** / `npm run test:web` **110**（与上一班记录一致）。
+- 改动：`src/core/realtime-service.js` 三条连接层路径各补一条 `kind:error` 审计（`connectionFailed` 在 emit error 与 emit closed 之间、`socket.on('error')` 同形但不发 closed、`unexpected-response` 由 `const status` 共用 `'handshake_' + status`）；`src/core/service.js` 的 `/start` 新增局部 `refuse(text, code, status)`，503 记 `tools_unavailable`、首次 429 预检记 `session_limit`（第二次预检刻意不记，已在注释写明理由）。`error` 事件字段、状态码与响应形状一律未动。
+- 断言：`assertSettles` 三条「连不上」路径各断言「恰 1 条 `code=connection` + `sessionId` 正确 + `text` 与横幅逐字相等 + `status=failed`」；握手用例补 `handshake_401`、403 连撞 5 次后**恰好 5 条**；新增 `/start` 429/503 用例与「传输层 error 落审计但不发 closed」会话级用例；源码守卫扩成三条路径都必须出现 `audit('error', context(), 'failed'`。
+- **两处既有断言按设计更新，不是放宽**：两条会话级用例的 `emitted.map(...)` 改成先滤掉 `type:'audit'` 再比——审计事件现在合法地插在 error 与 closed 之间，error/closed 的严格顺序原样保留；另有 `connect()` 里最初写的 `if (disposed) return` 会撞「只允许三条 return」的守卫，改回与 `unexpected-response` 同款的 `if (!disposed) …` 两行而不是去放宽守卫。
+- 验收：后端 453 → **455** / 前端 **110** 全绿、`lint` 0、`format:check` 通过、`build` 成功（`dist/` 已 `git checkout` 还原、新 hash 产物移出仓库）。churn **113 行**（源码 21 / 测试 91 / CHANGELOG 1）。
+- 本轮未 bump 版本、未 `npm pack`、未 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未动 `~/.dsh/AGENTS.md`。
+
+**下次可做**：①`src/core/conversation-judge.js:72` 把 `cancelled` 判成 `TOOL_FAILED` 硬错误、`:89` 在原生出声模式恒报 `TTS_MISSING`，与 `audit-log.js` 的「cancelled 不算失败」口径矛盾（≈30 行）；②`web/src/changelog-corner.jsx:19` 的 `error` 一旦置位就永不清除、关掉重开也不再请求（≈110 行，取数策略要下沉到 `web/src/lib/` 才测得到）；③qwen 合成的 `audioDurationSeconds` 54/54 全 null 而 Breeze 46/46 正常（先用真实响应确认 WAV 布局）；④`README.md:71-75` 的 Breeze 音色表仍写已废弃的 `voc_47j4uzfyuxqc`；⑤`package.json` 的 `files` 白名单零守卫（删掉 `dist` 或 `CHANGELOG.md` 时测试仍全绿）；⑥`/api/realtime/start` 第二次额度预检（并发中途挤入）的留痕，本轮按条目要求只记一处，可单独立条。

@@ -518,6 +518,8 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
   // 走到这里的两条失败路径（没有 WebSocketCtor、构造抛错）都不可能有 socket，所以都走同一个出口。
   function connectionFailed(message) {
     emit({ type: 'error', code: 'connection', message })
+    // 连接层失败也要落审计：只 emit 的话审计里恒 0 行，事后分不清「从没连上」和「连上没说话」。
+    audit('error', context(), 'failed', { text: message, code: 'connection' })
     emit({ type: 'closed' })
   }
   function connect() {
@@ -527,14 +529,21 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
       socket = new WebSocketCtor(url, { headers: { Authorization: `Bearer ${key}` }, handshakeTimeout: 20000 })
     } catch { return connectionFailed('实时语音连接失败') }
     socket.on('message', onMessage)
-    socket.on('error', () => { if (!disposed) emit({ type: 'error', code: 'connection', message: '实时语音连接失败' }) })
+    // 传输层 error 同样要留痕；收尾仍只由随后的 close 负责，这里不发 closed。
+    socket.on('error', () => {
+      if (!disposed) emit({ type: 'error', code: 'connection', message: '实时语音连接失败' })
+      if (!disposed) audit('error', context(), 'failed', { text: '实时语音连接失败', code: 'connection' })
+    })
     // 握手被拒（401/403、模型或地址写错）不会自己收尾：ws 8.22 只要注册了 unexpected-response 监听，
     // websocket.js:943 的 `!websocket.emit('unexpected-response', …)` 即为假，abortHandshake 被跳过，
     // readyState 永远停在 CONNECTING、close 事件不触发（握手超时也只有 socket 空闲时才轮到）。
     // 所以这里既排空响应体、又主动 destroy 请求，并补发 closed —— 否则服务端把这具死会话当活会话占额度。
     socket.on('unexpected-response', (req, res) => {
       res?.resume?.()
-      if (!disposed) emit({ type: 'error', code: 'handshake_' + (res?.statusCode || 'error'), message: '实时语音鉴权或握手失败' })
+      const status = res?.statusCode || 'error'
+      if (!disposed) emit({ type: 'error', code: 'handshake_' + status, message: '实时语音鉴权或握手失败' })
+      // 握手被拒是最需要机器可读的一条失败（401 凭据 / 403 权限 / 404 地址），码已算好就顺手落审计。
+      if (!disposed) audit('error', context(), 'failed', { text: '实时语音鉴权或握手失败', code: 'handshake_' + status })
       if (!disposed) emit({ type: 'closed' })
       req?.destroy?.()
     })

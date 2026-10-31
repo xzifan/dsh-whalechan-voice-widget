@@ -381,18 +381,20 @@ export function createService(config = {}, dependencies = {}) {
     if (path === '/api/catalog') return { body: await catalog() }
     if (path === '/api/realtime/start') {
       requireValue(method === 'POST', '不支持的请求方法', 405)
+      // 429/503 拒绝也要落审计：只把错误抛给前端时，用户事后只能说「点开始没反应」，审计里 0 行。
+      const refuse = async (text, code, status) => { await audit.append({ kind: 'error', status: 'failed', text, code }); throw new RequestError(text, status) }
       const sessionSettings = validateSettings({ ...settings, ...(body.settings || {}) })
       const rt = { ...realtimeSettings(sessionSettings), tts_provider: sessionSettings.tts_voice_provider || 'qwen' }
       const selected = new Set(sessionSettings.enabled_tools)
       let nativeTools = []
       if (selected.size) {
         const available = await catalog()
-        requireValue(available.toolExecutionAvailable, '当前模型环境未接通工具执行', 503)
+        if (!available.toolExecutionAvailable) await refuse('当前模型环境未接通工具执行', 'tools_unavailable', 503)
         nativeTools = available.tools.filter(tool => selected.has(tool.name))
         requireValue(nativeTools.length === selected.size && nativeTools.every(tool => tool.parameters), '包含不可用的工具或工具参数，请刷新工具列表重新选择', 400)
       }
       const workspace = sessionSettings.workspace
-      requireValue(liveRealtimeSessionCount() < 4, '实时语音会话过多，请稍后重试', 429)
+      if (!(liveRealtimeSessionCount() < 4)) await refuse('实时语音会话过多，请稍后重试', 'session_limit', 429)
       const { key } = await bailianCredential(rt)
       const voiceSettingsPatch = await initializeSessionVoice(sessionSettings, externalSignal)
       externalSignal?.throwIfAborted()
@@ -406,6 +408,8 @@ export function createService(config = {}, dependencies = {}) {
       if (rt.tts_provider === 'breeze' && rt.use_tts_voice !== false) rt.instructions += '\n当前出声提供方为 Breeze，按回复文字的中文、日语、英语自动使用固定预设。Breeze 暂不支持提示词生成或复刻，不调用 design_voice、apply_voice、delete_voice；需要时用 list_voice_presets 查看三语音色。'
       externalSignal?.throwIfAborted()
       requireValue(!disposed, '工作台已关闭', 503)
+      // 同一额度的二次预检：命中说明并发是在上面预检之后才挤进来的，属另一类情形，
+      // 这里刻意不再写审计——否则同一次拒绝会被算两次（session_limit 只在第一次预检记一处）。
       requireValue(liveRealtimeSessionCount() < 4, '实时语音会话过多，请稍后重试', 429)
       audit.addSecret(key)
       const sessionId = randomUUID()

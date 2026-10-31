@@ -726,6 +726,13 @@ async function assertSettles(t, service, settings, released) {
   assert.equal(polled.done, true, 'connect 从未建立也必须标记结束，否则前端轮询永远空转、UI 停在「我在听，主人」')
   const signals = polled.events.filter(event => event.type === 'error' || event.type === 'closed').map(event => (event.type === 'error' ? `error:${event.code}` : 'closed'))
   assert.deepEqual(signals, ['error:connection', 'closed'], 'error 只是提示，closed 必须紧随其后——服务端收尾与前端停麦都只认 closed')
+  // 连接层失败必须落审计：只 emit 的话 audit 里恒 0 行，用户报「一直转圈」时排障只能靠复现。
+  const banner = polled.events.find(event => event.type === 'error').message
+  const conn = (await service.handle('POST', '/api/audit', { kind: 'error' })).body.records.filter(record => record.code === 'connection')
+  assert.equal(conn.length, 1, 'connection 失败必须恰好留一条审计（重复记会让「这类失败发生过几次」失真）')
+  assert.equal(conn[0].sessionId, sessionId)
+  assert.equal(conn[0].text, banner, '审计文案必须与用户看到的横幅一致')
+  assert.equal(conn[0].status, 'failed')
   assert.deepEqual(released, [sessionId], '工具 agent 必须释放，且只释放一次')
   await assert.rejects(service.handle('POST', '/api/realtime/audio', { sessionId, audio: 'AAAA' }), error => error.status === 404)
   assert.equal((await service.handle('POST', '/api/realtime/end', { sessionId })).body.ok, true, '客户端收尾时的 /end 仍须幂等成功（墓碑上也不例外）')
@@ -780,6 +787,10 @@ test('握手被拒（401）时 /start 的会话同样收尾，不占并发额度
   assert.equal(polled.done, true, '握手失败也必须标记结束，否则前端轮询空转、UI 停在「我在听，主人」')
   const signals = polled.events.filter(event => event.type === 'error' || event.type === 'closed').map(event => (event.type === 'error' ? `error:${event.code}` : 'closed'))
   assert.deepEqual(signals, ['error:handshake_401', 'closed'], 'error 说明是握手被拒，closed 才是收尾信号')
+  const handshake = (await service.handle('POST', '/api/audit', { kind: 'error' })).body.records.filter(record => record.code === 'handshake_401')
+  assert.equal(handshake.length, 1, '握手被拒的码已算好，必须进审计——否则审计页分不清 401 凭据 / 403 权限 / 404 地址')
+  assert.equal(handshake[0].sessionId, sessionId)
+  assert.equal(handshake[0].text, '实时语音鉴权或握手失败')
   assert.deepEqual(released, [sessionId], '工具 agent 必须释放，且只释放一次')
   await assert.rejects(service.handle('POST', '/api/realtime/audio', { sessionId, audio: 'AAAA' }), error => error.status === 404)
   assert.equal((await service.handle('POST', '/api/realtime/end', { sessionId })).body.ok, true, '客户端收尾时的 /end 仍须幂等成功')
@@ -789,13 +800,60 @@ test('握手被拒（401）时 /start 的会话同样收尾，不占并发额度
     HandshakeSocket.last.reject(403)
   }
   assert.equal((await service.handle('GET', '/api/health')).body.realtime.activeSessions, 0)
+  const forbidden = (await service.handle('POST', '/api/audit', { kind: 'error' })).body.records.filter(record => record.code === 'handshake_403')
+  assert.equal(forbidden.length, 5, '每一次握手被拒都要留痕，不能只留第一条')
+})
+
+// 429 与 503 是「本地判定就失败」的两种拒绝：只把错误抛给前端时审计里 0 行，
+// 用户报「点开始没反应」事后完全查不到原因（对照 :308 等五处 audit('error') 的既有口径）。
+test('/api/realtime/start 的 429 与 503 拒绝同样落审计', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'whale-rt-refuse-'))
+  const keyFile = join(dir, 'test.env')
+  await writeFile(keyFile, 'DASHSCOPE_API_KEY=test-key')
+  const FakeSocket = makeFakeSocket()
+  const service = createService({ stateDir: dir }, {
+    realtimeWebSocket: FakeSocket,
+    resolveModelCredential: async provider => ({ key: 'test-key', source: 'provider', provider }),
+    // 工具执行未接通：选中任何原生工具都会在 /start 被 503 拒掉
+    catalog: async () => ({ tools: [readSchema], currentWorkspace: process.cwd(), toolExecutionAvailable: false }),
+    runTool: async () => ({ ok: true }),
+    releaseToolSession: async () => {},
+  })
+  t.after(async () => {
+    await service.dispose()
+    await rm(dir, { recursive: true, force: true })
+  })
+  const initial = (await service.handle('GET', '/api/config')).body.settings
+  const settings = { ...initial, tts_voice_provider: 'qwen', tts_profiles: { ...initial.tts_profiles, qwen: { ...initial.tts_profiles?.qwen, voice: 'longanhuan_v3.1' } }, enabled_tools: [], tools_configured: true, workspace: dir, realtime: { ...initial.realtime, key_file: keyFile, instructions: 'Test' } }
+  await service.handle('PUT', '/api/config', { settings })
+
+  await assert.rejects(service.handle('POST', '/api/realtime/start', { settings: { ...settings, enabled_tools: ['read'] } }), error => error.status === 503)
+  // 4 个活会话占满额度（FakeSocket 恒 OPEN，不会自己收尾），第 5 次必然 429
+  for (let i = 0; i < 4; i++) assert.ok((await service.handle('POST', '/api/realtime/start', { settings })).body.sessionId)
+  await assert.rejects(service.handle('POST', '/api/realtime/start', { settings }), error => error.status === 429)
+
+  const errors = (await service.handle('POST', '/api/audit', { kind: 'error' })).body.records
+  const codes = errors.map(record => record.code)
+  assert.equal(codes.filter(code => code === 'tools_unavailable').length, 1, '503 必须留一条审计，且只一条')
+  assert.equal(codes.filter(code => code === 'session_limit').length, 1, '两次额度预检只许记一处，否则同一拒绝被算两次')
+  const unavailable = errors.find(record => record.code === 'tools_unavailable')
+  assert.equal(unavailable.text, '当前模型环境未接通工具执行')
+  assert.equal(unavailable.status, 'failed')
+  assert.equal(unavailable.sessionId, undefined, '会话还没建起来，拒绝记录不该伪造 sessionId')
+  assert.equal(errors.find(record => record.code === 'session_limit').text, '实时语音会话过多，请稍后重试')
+  // 拒绝不得消耗额度，活会话仍是 4
+  assert.equal((await service.handle('GET', '/api/health')).body.realtime.activeSessions, 4)
 })
 
 test('会话级：缺组件时自行发 error→closed，dispose 之后 connect 不再发事件', () => {
   const emitted = []
   const session = createRealtimeSession({ settings: realtimeDefaults(), key: 'k', executeTool: async () => ({}), emit: event => emitted.push(event), WebSocketCtor: null })
   session.connect()
-  assert.deepEqual(emitted.map(event => (event.type === 'error' ? `error:${event.code}` : event.type)), ['error:connection', 'closed'])
+  // audit 事件是簿记，不是用户可见信号——这里只锁 error/closed 的顺序。
+  // 连接层失败必须留一条审计（只 emit 时审计里恒 0 行），所以序列里会出现一条 audit。
+  const signals = emitted.filter(event => event.type !== 'audit').map(event => (event.type === 'error' ? `error:${event.code}` : event.type))
+  assert.deepEqual(signals, ['error:connection', 'closed'])
+  assert.equal(emitted.filter(event => event.type === 'audit' && event.record.kind === 'error' && event.record.code === 'connection').length, 1, '缺组件也必须落一条 connection 审计')
   assert.ok(emitted[0].message, '缺组件要有可读文案，不能只给 code')
   session.dispose()
   const settled = emitted.length
@@ -820,13 +878,31 @@ test('会话级：握手被拒时自行 abort 请求并补发 closed，不等 cl
   socket.handlers['unexpected-response'](req, res)
   assert.equal(res.resumed, true, '必须排空响应体')
   assert.equal(req.destroyed, true, '必须真的 abort——ws 注册了该监听就不再 abortHandshake')
-  assert.deepEqual(emitted.map(event => (event.type === 'error' ? `error:${event.code}` : event.type)), ['error:handshake_401', 'closed'])
+  assert.deepEqual(emitted.filter(event => event.type !== 'audit').map(event => (event.type === 'error' ? `error:${event.code}` : event.type)), ['error:handshake_401', 'closed'])
+  assert.equal(emitted.filter(event => event.type === 'audit' && event.record.code === 'handshake_401').length, 1, '握手被拒的码必须进审计')
   assert.ok(emitted[0].message, '握手失败要有可读文案，不能只给 code')
   // 迟到的重入（socket 随后才真正 close）不得再发事件
   session.dispose()
   const settled = emitted.length
   socket.handlers['unexpected-response'](req, res)
   assert.equal(emitted.length, settled, 'dispose 之后不得再发 error/closed')
+})
+
+test('会话级：socket 传输层 error 也落审计，但不发 closed（收尾仍只归 close）', () => {
+  const FakeSocket = makeFakeSocket(), emitted = []
+  const session = createRealtimeSession({ settings: realtimeDefaults(), key: 'k', executeTool: async () => ({}), emit: event => emitted.push(event), WebSocketCtor: FakeSocket })
+  session.connect()
+  const socket = FakeSocket.instances[0]
+  socket.handlers.error(new Error('boom'))
+  const audits = emitted.filter(event => event.type === 'audit')
+  assert.equal(audits.length, 1, '传输层 error 也必须留痕')
+  assert.equal(audits[0].record.kind, 'error')
+  assert.equal(audits[0].record.code, 'connection')
+  assert.equal(audits[0].record.text, '实时语音连接失败')
+  assert.equal(emitted.filter(event => event.type === 'closed').length, 0, 'error 不是终止信号，收尾仍只归 close')
+  session.dispose()
+  socket.handlers.error(new Error('boom'))
+  assert.equal(emitted.filter(event => event.type === 'audit').length, 1, 'dispose 之后不得再记审计')
 })
 
 test('源码守卫：connect() 的两条失败路径都必须经 connectionFailed 同时发 error 与 closed', () => {
@@ -858,4 +934,15 @@ test('源码守卫：connect() 的两条失败路径都必须经 connectionFaile
   assert.match(rejected, /emit\(\{ type: 'closed' \}\)/, '握手被拒也必须发 closed——只发 error 正是本 bug 的形态')
   assert.match(rejected, /req\?\.destroy\?\.\(\)/, '必须主动 abort 请求：只发事件会让 readyState 永远停在 CONNECTING')
   assert.ok(rejected.indexOf("type: 'error'") < rejected.indexOf("type: 'closed'"), 'error 必须先于 closed（closed 会同步触发 settle/dispose）')
+
+  // 三条连接层失败路径都必须落审计：只 emit 时审计里恒 0 行，事后分不清「从没连上」和「连上没说话」。
+  const transportAt = connect.indexOf("socket.on('error'")
+  assert.ok(transportAt > 0, "找不到 socket.on('error') 监听")
+  const transport = connect.slice(transportAt, rejectedAt)
+  for (const [label, block] of [['connectionFailed', failed], ["socket.on('error')", transport], ['unexpected-response', rejected]]) {
+    assert.match(block, /audit\('error', context\(\), 'failed'/, `${label} 的失败必须写审计（含 code），否则「只看失败」与统计永远看不到连接层故障`)
+  }
+  assert.match(failed, /code: 'connection'/, 'connectionFailed 的审计要带 machine-readable code')
+  assert.match(transport, /code: 'connection'/, "socket.on('error') 的审计要带 machine-readable code")
+  assert.match(rejected, /code: 'handshake_' \+/, '握手被拒的审计要带上游状态码，而不是笼统的 connection')
 })
