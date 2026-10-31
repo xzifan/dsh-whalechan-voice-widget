@@ -2,6 +2,19 @@
 
 本轮工作的技术记录：做了什么、怎么验证的、还欠什么。发布记录由 `scripts/release.sh` 自动追加。
 
+## 2026-10-31 10:20 · 第 7 步取证：清单仍无可用条目，新入清单 1 条（`format:check` 在 HEAD 上就红）
+
+- 并发保护：开工前无 `.release.lock`，已建 `.work.lock`（10:17），提交前删除。HEAD = `880df7b`，工作区干净。
+- 取活结果：`BACKLOG.md` 的 5 个 `- [ ]` 全是阻塞项，按 J1 规则一条没动——`⛔ 阻塞待决策`（husky + lint-staged，前置是 Prettier 大目录豁免）、需人拍板（夜间冒烟接调度）、`[arch]` 架构决策（事件分发表 + 三层状态机）、需先定口径归属（首帧延迟锚点）、单独立项（真实停播时延）。上一班新入的「审计 error 丢 code」已在 `880df7b` 落地。
+- 派 **1 个只读规划子代理**（禁写、禁 git 写操作；它自己核对过审计日志全部产生于 10-28、不能当字段级证据，只用于失败频次）从证据提 3 个候选：① 实时上游 error 不带 `code` 时，审计把字面量 `unknown` 当成错误码写入；② 前端与服务端两份手写的配置校验（服务端 `config-validation.js` 零直测，`configSection` 是死代码）；③ 新加的 `code` 字段没接进列筛选与会话记录接口，而详情文案已承诺「按它分组」。
+- **候选①的源码我自己逐处重读才采信**：`src/core/realtime-protocol.js:11`（`safeCode = value => String(value || 'unknown')…`）、`src/core/realtime-service.js:348-352`（`const code = safeCode(event.error?.code)` 同值既进 `emit` 又进 `audit(…, { text: message, code })`）、`src/core/voice-design.js:36,72`（`knownCode` 把 `unknown` 归一成空串——同一字段两套相反约定）、`src/core/audit-log.js:70-74`（白名单正则 `/^[A-Za-z0-9_.-]{1,80}$/` 正好收下 `unknown`）、`web/src/audit-view.jsx:49-51`（有 `record.code` 就渲染「上游返回的错误码」）、`web/src/lib/realtime.js:365`（`event.message || event.code` → 上游未带 message 时横幅直接显示英文 `unknown`）；`test/voice-audit.test.js:229` 是全仓唯一带码的 error 用例，「上游没给码」分支零覆盖。
+- **入清单的是第四条（`format:check` 红）**，它不在子代理的三条里，是上一班明确「留给下一班单独立一条」的欠账：`npm run format:check` 实测 3 个文件不合规——`WORKLOG.md` 3 行（`2026-10-29` 段三个粗体小标题后缺空行）、`docs/typescript-evaluation.md` 22 行（两张表列宽对齐）、`scripts/judge-conversation.mjs` 20 行（4 处长行换行）；用 `git show HEAD:<path>` 导出 blob 单独复核 + `git show 880df7b`/`48e9fad` 对照，确认是 HEAD 既有状态、与最近两轮无关。取舍：它是仓库当前唯一处于红状态的门禁（`lint` CI job 每次 push 都挂），改动纯格式、≈45 行、零行为风险，且已经有两轮在它上面白标注一次。**未选①**：它更值钱（刚上线的 `code` 字段会被 `unknown` 污染），但同一批文件相邻线路，`format:check` 不绿时每个 commit 的验收都要额外解释一遍；证据已完整写进下面「下次可做」，下一班可直接实现。
+- 本轮基线（实跑，未改任何代码）：后端 **443** / 前端 **109** 全绿；`format:check` 红 3 个文件（如上，已入清单）。
+
+**欠**：本轮按规则不实现任何代码，新入清单那条留给下一班；子代理候选②③留在「下次可做」。
+
+**下次可做**：清单 5 个阻塞项 + 本班新入 1 条（`format:check` 红，下一班可直接做）；候选：①实时 error 无码时审计写 `unknown`（`realtime-service.js:348` 走 `safeCode`，与 `voice-design.js:72` 的 `knownCode` 相反；≈26 行 / 2 文件，字段取值语义变、需 CHANGELOG，无测试绊线——`realtime-protocol.test.js` 固化的是 `safeCode` 事件层契约，不动它）；②`code` 未接进列筛选（`service.js:346` 白名单）与 `historyView` 键表（≈30 行 / 4 文件）；③配置校验双实现 + `configSection` 死代码（≈116 行，纯测试投入）。
+
 ## 2026-10-31 · 审计错误记录带上上游错误码
 
 - 条目：BACKLOG「审计的 `kind:error` 记录把上游错误码算出来又丢掉」（上一班第 7 步取证入清单的第一条可做项）。**未用规划子代理**——条目已精确到行号、改动是纯接线，无接口/数据结构变化。
