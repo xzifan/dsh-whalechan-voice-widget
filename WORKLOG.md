@@ -1444,3 +1444,19 @@
 **欠**：写盘失败时那份试听只存在内存，重启后仍需重新合成——要跨重启保住，得有一个「写不进去时也能落到别处」的落点，属另一件事；`ready` 读取失败的文案没动。
 
 **下次可做**：清单只剩 5 个阻塞项，下一班按第 7 步重新取证；候选仍在：①`audio_too_large` 每帧重复上报 error 并挤爆 256 条事件环（≈55 行）；②`test/audit-log.test.js:258` 的 `search:'900'` 与 `randomUUID` 相撞（约 0.73% 假红，10-15 行）；③审计 `kind:error` 记录丢掉上游 `code`（本机 10 条此类记录零 code）。
+
+## 2026-10-31 08:20 · 第 7 步取证：清单仍无可用条目，新入清单 1 条（审计 error 记录丢 code）
+
+**做了什么**（0 条代码改动，按任务书第 7 步只补候选）
+
+- 并发保护：开工前无 `.release.lock`；已建 `.work.lock`（08:17），提交前删除。`git status` 干净，HEAD = `d385704`。
+- 取活结果：`BACKLOG.md` 的 5 个 `- [ ]` 全是阻塞项，按 J1 规则一条都没动——`:34` `⛔ 阻塞待决策`（husky + lint-staged，前置是 Prettier 大目录豁免）、`:46` 需人拍板（夜间冒烟接调度）、`:58` `[arch]` 架构决策（事件分发表 + 三层状态机）、`:60` 需先定口径归属（首帧延迟锚点）、`:61` 单独立项（真实停播时延）。
+- 派 **1 个只读规划子代理**从证据提 3 个候选：①审计 `kind:error` 丢掉上游 `code`；②可恢复的 `error` 事件被前端当成回合终止（回复裂成两段、正在跑的工具显示已取消、播放被掐断）；③`audio_too_large` 每帧重发一次 error 且两条本地错误零审计。
+- **三条都自己复读过源码才采信**：`src/core/audit-log.js:56-95`（白名单 11 个字符串键，无 `code`）、`:150-155`（`searchableText` 无 `code`）、`src/core/realtime-service.js:348-349`（码只进 emit，审计只写 `text`）、`:300-301`（`tts_failed` 同形）、`src/core/service.js:315-335`（列筛选 keys 无 `code`）、`src/core/realtime-protocol.js:11`（`safeCode` 口径：只留 `A-Za-z0-9_.-`、≤80）。运行时证据用 `jq` 复算本机 `voice-audit.jsonl`：`kind:error` **10 条，带 `code` 的 0 条**，文案 4×180 秒超时 / 3×`Voice design failed (HTTP 400)` / 3×no messages，与子代理一致。
+- **选①入清单**（取舍写在条目里）：唯一 100% 可复现（本机数据直接证明）、纯增量（加一个可选字段，不动响应与事件形状）、≈65 行；更关键它是②③的**前置**——`tts_failed` 发生过几次、`audio_too_large` 是不是某次发布引入的，都要等审计能按码统计才验收得了。
+- **未选②**：用户可见度更高（与同文件 `:414-419` 的注释「error 不代表结束」直接矛盾），但要改写 `web/src/lib/realtime.test.js:176-193` 那条冻结旧行为的用例，且改的是终止语义、风险面更大，适合单独一班做。**未选③**：触发门槛要单个 response 超 24 MiB（≈8.7 分钟音频），机理最脏但概率最低；且与②同一条数据链路，先做②再做③返工最小。
+- 本轮基线（实跑，含本轮 md 改动）：后端 **434** / 前端 **109** 全绿（`npm test` / `npm run test:web`，0 fail）。注：上一班 WORKLOG 记的 409 是 `d385704`（端点策略链 + 会话质量评估）之前的数，HEAD 已是 434。
+
+**欠**：本轮按规则不实现任何代码，新入清单那条留给下一班；②③ 已记入下方「下次可做」。另**顺手发现一处既存门禁红**：`npm run format:check` 在 HEAD（`d385704`）上就报 3 个文件——`WORKLOG.md`（`:5`/`:12`/`:19` 三个粗体标题后缺空行，共 3 行）、`docs/typescript-evaluation.md`、`scripts/judge-conversation.mjs`。用 `git show HEAD:` 导出这三个 blob 单独 `prettier --check` 复核后确认**全部在 HEAD 就已不合规，与本轮改动无关**（本轮新增的 WORKLOG 段经 `prettier --write` 比对零 diff）。按「一次提交只做一条」的规矩没顺手修，留给下一班单独立一条。
+
+**下次可做**：清单仍是 5 个阻塞项 + 本班新入的 1 条（审计 error 丢 code，下一班可直接做）；候选仍在：①可恢复 `error` 被当成回合终止（`web/src/lib/realtime.js:363-366` / `:410-412`，需同步改写 `realtime.test.js:176-193`）；②`audio_too_large` 每帧重复上报 + `audio_backlog_dropped` 零审计（≈60 行）；③`test/audit-log.test.js:258` 的 `search:'900'` 与 `randomUUID` 相撞（约 0.5% 假红，10-15 行，纯测试卫生）。
