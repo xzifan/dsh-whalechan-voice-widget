@@ -245,14 +245,19 @@ export function applyRealtimeEvent(state, event) {
   }
   switch (event.type) {
     case 'user-transcript-delta':
-    case 'user-transcript-done':
+    case 'user-transcript-done': {
       // Push-to-talk and some providers omit speech-started.
+      // A recoverable `error` no longer finalizes the turn, so the previous user bubble stays
+      // active; the next utterance after that error is still a new turn (and clears its banner).
+      const settledUser = next.messages.some(message => message.id === next.activeUserMessageId && message.status !== 'streaming')
       if ((event.type === 'user-transcript-delta' && (next.activeAssistantMessageId || next.assistantText)) ||
+          (next.error && settledUser) ||
           (!next.activeUserMessageId && (next.done || next.activeAssistantMessageId || next.assistantText))) beginUserTurn()
       write('user', event.text, event.type === 'user-transcript-done')
       if (event.type === 'user-transcript-done') finish('user', 'complete', false)
       else next.listening = true
       break
+    }
     case 'transcript-delta':
     case 'transcript-done':
       if (event.type === 'transcript-done') {
@@ -361,7 +366,11 @@ export function applyRealtimeEvent(state, event) {
       next.pendingVoiceSwitch = true
       break
     case 'error':
-      next = finalizeRealtimeMessages(next)
+      // A recoverable error (`audio_too_large`, `tts_failed`, upstream chatter) is a banner,
+      // not the end of the turn: the server keeps the session, tools keep running and a later
+      // `done`/`closed` settles it. Finalizing here flipped streaming bubbles to 「已打断」 and
+      // running tools to 「已取消」 while the command was still executing, and cleared the active
+      // ids so a continuation without `messageId` opened a brand-new bubble.
       next.error = event.message || event.code || '实时对话出错'
       break
     case 'closed':

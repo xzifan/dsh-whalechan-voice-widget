@@ -1613,3 +1613,16 @@
 **欠**：新条目仍是 `- [ ]`，下一班可直接实现（≈40 行 / 2 文件，无接口变化、不需产品决策）。
 
 **下次可做**：①新入的这条（error 只写横幅，收尾交给 closed/done）；②启动期音色设计失败补审计 + `preset-store-failed` 不再被误导成「检查声音配置」（`voice-presets.js:216` 的 `await store()` 抛 `STORE_FAILURE` 而 `voice-initialization.js` 未透传，`generate` 路径 `:171` 已有该判据；同时给 `createVoiceInitialization` 注入 `audit`）；③事件流缺口（`src/core/service.js:423` 的 `events.shift()` 无 dropped 信号 + `web/src/main.jsx:121` 先 `advanceCursor` 整批推进再逐条处理，任一帧处理抛错就永久丢该批剩余事件）——需先出 `[plan]`；④`audio_too_large` 超限后 `audioTotal` 不清零导致每帧重复 emit（`realtime-service.js:464-468`）；⑤审计列筛选 keys 未含 `code`（`service.js:359` 仍无 code，后端白名单 `audit-log.js:70-72` 与搜索文本已收，前端 `audit-view.jsx:95` 的 fieldLabels 与筛选器缺）。
+
+## 2026-10-31 17:45 · 可恢复的实时 error 不再当成回合终止
+
+- 条目：BACKLOG「可恢复的 `error` 被当成回合终止」（上一班第 7 步入的 `- [ ]`，也是清单里唯一可动的实现项——其余 5 条仍是 ⛔ 阻塞待决策 / 需人拍板 / `[arch]` 架构决策 / 需先定口径归属 / 单独立项，按 J1 规则一条没碰）。**未用规划子代理**：条目已精确到行号，改动集中在 `applyRealtimeEvent` 一个函数，无接口与事件字段变化。
+- 并发保护：开工前无 `.release.lock`，已建 `.work.lock`（17:17），提交前删除。HEAD = `a6c51ea`，工作区干净。
+- 改动：`web/src/lib/realtime.js` 的 `case 'error'` 删掉 `next = finalizeRealtimeMessages(next)`，只写 `next.error`；messages / toolCalls / `active*` / `speaking` / `listening` 一律不碰。终止仍由 `closed`（握手拒绝、上游断连、`ws` 缺失、构造抛错四条路径前几轮都已补发）与 `done` 负责；`shouldStopPlayback` 保留 `error`——停播是对的、收尾不是。
+- **条目没预料到的一处连带（实测才发现）**：error 不再清 `activeUserMessageId` 后，push-to-talk 入口（`user-transcript-done`）的 `beginUserTurn` 不再触发（它的条件是 `!next.activeUserMessageId`），上一班「横幅跨轮清掉」那条用例当场红在 `realtime.test.js:646`；顺着往下查还有一个更实的后果——新一轮用户文本会走 `write` 的 `replace` 分支覆盖上一句气泡。没有回退成 `finalize`，而是在 user-transcript 分支加了一条窄条件 `(next.error && settledUser)`：上一轮已报 error 且用户气泡已 `complete` 说明上一句已经说完，新一句仍是新回合（顺带清横幅）；同一句的累积终稿修正、`speech-started` 两条既有路径行为一字未变。
+- 测试：改写两条绊线（`:181` 把 error 移出终态并列、改为单独断言「仍是 streaming」；`:390` 的 error 不再取消 running 工具），新增 1 条用例 4 段断言——工具 running 时 error 不收尾（`tool.active` 仍 true、`toolCalls[0].status === 'running'`）、active id 保留、`shouldSettleRealtime` 仍 false、无 `messageId` 的续写不劈气泡、之后 `closed` 仍收尾且保留横幅作为结束原因。
+- **变异 2 条各恰红**（改完都从备份还原）：把 `finalize` 加回 error 分支 → 红 3 条（两条绊线 + 新用例）；去掉 `(next.error && settledUser)` → 红 1 条（上一班的横幅用例）。
+- 验收：`npm test` → **450 pass / 0 fail**；`npm run test:web` → **110 pass / 0 fail**（109 → 110）；`npm run lint` 0 问题；`npm run format:check` → `All matched files use Prettier code style!`；`npm run build` 成功（`dist/` 已 `git checkout`、新 hash 产物 `index-BoDnHC47.js` 移出仓库）；`test/browser-smoke.py` 在**新构建产物**上实跑 PASS（宿主 iframe 挂载、设置保存回环、实时回合与工具时间线、麦克风释放、110/390px 无溢出）。churn **71 行**（源码 +11/−2 / 测试 +48/−3 / BACKLOG 1 / CHANGELOG 2 / 本文件另计）。
+- **未做**：`beginUserTurn` 里 `next.closed = false` 的既有语义没动（所以 error 之后 `closed` 是 `undefined` 而不是 `false`，用例按此断言）、`playbackError` 与 `realtime-view.jsx` 的横幅样式没碰。
+
+**下次可做**：①`audio_too_large` 超限后 `audioTotal` 不清零导致每帧重复 emit `error` 并挤爆 256 条事件环（`realtime-service.js:464-468`，≈30 行）；②`audio_backlog_dropped` 只 emit 不落审计（同文件入队逻辑，≈20 行）；③启动期音色设计失败补审计 + `preset-store-failed` 不再被误导成「检查声音配置」（要动 `createVoiceInitialization` 注入表与 `service.js` 接线，≈50 行）；④事件流缺口（`service.js:423` 环形淘汰无 dropped 信号 + `main.jsx:121` 先推游标后逐条处理）——要动响应形状，按第 3 条应标 `[plan]`；⑤审计列筛选 keys 未含 `code`（后端 `service.js:359` 与前端 `audit-view.jsx:95` 都要改）。

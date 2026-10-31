@@ -173,23 +173,64 @@ test('turns without speech-started reset legacy fields after done', () => {
   assert.equal(state.assistantText, 'second')
 })
 
-test('stop, close, errors and cancelled responses retain partial messages', () => {
+test('stop, close and cancelled responses retain partial messages; error only adds a banner', () => {
   const active = reduceEvents([
     { type: 'user-transcript-done', text: 'hello' },
     { type: 'transcript-delta', text: 'partial' },
   ])
-  for (const event of [{ type: 'closed' }, { type: 'error', message: 'lost connection' }, { type: 'done', status: 'cancelled' }, { type: 'interruption' }]) {
+  for (const event of [{ type: 'closed' }, { type: 'done', status: 'cancelled' }, { type: 'interruption' }]) {
     const result = applyRealtimeEvent(active, event)
     assert.equal(result.messages.length, 2)
     assert.equal(result.messages[1].status, 'interrupted')
     assert.equal(result.messages[1].text, 'partial')
     assert.equal(result.speaking, false)
   }
+  // `error` is not a terminal event: the bubble keeps streaming and the banner explains why.
+  const errored = applyRealtimeEvent(active, { type: 'error', message: 'lost connection' })
+  assert.equal(errored.messages.length, 2)
+  assert.equal(errored.messages[1].status, 'streaming')
+  assert.equal(errored.messages[1].text, 'partial')
+  assert.equal(errored.error, 'lost connection')
+  assert.equal(errored.activeAssistantMessageId, active.activeAssistantMessageId)
   const stopped = finalizeRealtimeMessages(active)
   assert.equal(stopped.messages[0].status, 'complete')
   assert.equal(stopped.messages[1].status, 'interrupted')
   assert.equal(stopped.activeAssistantMessageId, null)
   assert.equal(active.messages[1].status, 'streaming')
+})
+
+test('a recoverable error keeps the turn alive and does not split the reply', () => {
+  let state = reduceEvents([
+    { type: 'user-transcript-done', text: 'hello' },
+    { type: 'tool-start', callId: 'a', name: 'bash' },
+    { type: 'transcript-delta', text: 'running' },
+  ])
+  const before = state
+  state = applyRealtimeEvent(state, { type: 'error', code: 'audio_too_large', message: '音频过大' })
+  assert.equal(state.error, '音频过大')
+  // Neither the turn nor the running tool is over: the server keeps both.
+  assert.equal(state.messages.at(-1).status, 'streaming')
+  assert.equal(state.toolCalls[0].status, 'running')
+  assert.equal(state.tool.active, true)
+  assert.equal(state.activeUserMessageId, before.activeUserMessageId)
+  assert.notEqual(state.activeAssistantMessageId, null)
+  assert.equal(state.listening, before.listening)
+  assert.equal(state.speaking, before.speaking)
+  assert.equal(shouldSettleRealtime({ done: false }, [{ type: 'error', code: 'audio_too_large' }]), false)
+  // Audio playback still stops — the banner is not a licence to keep playing stale speech.
+  assert.equal(shouldStopPlayback({ type: 'error' }), true)
+  // The continuation (no messageId) joins the same bubble instead of opening a new one.
+  state = applyRealtimeEvent(state, { type: 'transcript-delta', text: ' fine' })
+  assert.equal(state.messages.length, 2)
+  assert.equal(state.messages.at(-1).status, 'streaming')
+  assert.equal(state.messages.at(-1).text, 'running fine')
+  // A later `closed` still settles the turn and keeps the banner as the reason.
+  state = applyRealtimeEvent(state, { type: 'closed' })
+  assert.equal(state.closed, true)
+  assert.equal(state.messages.at(-1).status, 'interrupted')
+  assert.equal(state.toolCalls[0].status, 'cancelled')
+  assert.equal(state.error, '音频过大')
+  assert.equal(shouldSettleRealtime({ done: false }, [{ type: 'closed' }]), true)
 })
 
 test('synth_tts text joins assistant history and unrelated tools add no bubbles', () => {
@@ -387,10 +428,14 @@ test('backend tool failure is sanitized and stop cancels only running records', 
   assert.match(state.toolCalls[0].errorSummary, /执行失败/)
   assert.equal(state.toolCalls[3].errorSummary, undefined)
   assert.ok(!JSON.stringify(state.toolCalls).includes('secret'))
-  for (const stopped of [finalizeRealtimeMessages(state), applyRealtimeEvent(state, { type: 'closed' }), applyRealtimeEvent(state, { type: 'error', message: 'connection lost' })]) {
+  for (const stopped of [finalizeRealtimeMessages(state), applyRealtimeEvent(state, { type: 'closed' })]) {
     assert.deepEqual(stopped.toolCalls.map(t => t.status), ['failed', 'cancelled', 'cancelled', 'failed'])
     assert.equal(stopped.toolCalls[1].id, state.toolCalls[1].id)
   }
+  // A recoverable error must not cancel a tool that the server is still running.
+  const errored = applyRealtimeEvent(state, { type: 'error', message: 'connection lost' })
+  assert.deepEqual(errored.toolCalls.map(t => t.status), ['failed', 'running', 'cancelled', 'failed'])
+  assert.equal(errored.tool.active, true)
   assert.equal(state.toolCalls[1].status, 'running')
 })
 
