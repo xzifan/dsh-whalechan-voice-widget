@@ -1713,3 +1713,15 @@
 - **未跑** `test:browser*`：本轮改动全在服务端事件分支，浏览器脚本对这些事件是 mock，构造上覆盖不到；且构建产物已按仓库惯例还原，跑它需要重新构建并再次还原。
 
 **下次可做**：①启动期/预设页自动设计音色失败零审计（付费调用无留痕，单接缝在 `src/core/service.js:203` 的 `design` 包装，≈60 行）；②审计列筛选 keys 补 `code`（`service.js:359` 白名单 + `web/src/audit-view.jsx` 的 `fieldLabels`，≈14 行）——本轮新增的 `audio_too_large` / `audio_backlog_dropped` 现在只能靠全文搜索命中；③`appendAudio` 对 >3 MiB 单帧的静默 return 零痕迹（`realtime-service.js:529`）；④事件流缺口（`service.js:423` 环形淘汰无 dropped 信号 + `main.jsx:121` 先推游标整批推进再逐条处理，需动响应形状，应标 `[plan]`）。
+
+## 2026-10-31 22:25 · BACKLOG 无可做条目：第 7 步取证，入条「连接层失败零审计」
+
+- 并发保护：开工前无 `.release.lock`；已建 `.work.lock`（22:17），收尾前删除。HEAD = `35e7a7a`，工作区干净。
+- 取活：`grep '^- \[ \]' BACKLOG.md` 共 **5** 条，全部是阻塞项（`:34` ⛔ 阻塞待决策、`:46` 需人拍板、`:58` `[arch]` 架构决策、`:60` 需先定口径归属、`:61` 单独立项），按 J1 规则一条没碰 → 走第 7 步（取证 + 入条，不实现）。
+- 基线复测（本轮无源码改动）：`npm test` → **453 pass / 0 fail**；`npm run test:web` → **110 pass / 0 fail**。
+- 候选来源：2 个只读子代理并行产出 6 条——一路读本机审计日志 + 运行时契约，一路比对 CHANGELOG 宣称与实现 + 找门禁零守卫。主代理逐条实读复核（`realtime-service.js:512-545`、`service.js:384-415`、`audit-log.js:8/156-158`、`conversation-judge.js:61-92`、`changelog-corner.jsx:18-25`、`voice-synthesis.js:75`、`audio-duration.js:1-68` 均亲手读过，审计统计用 `grep -c` / `grep -o` 复算），从中选 1 条。
+- 入条：`BACKLOG.md` 的 `需要产品决策` 小节之前新增 1 条 `- [ ]`「连接层失败与 `/api/realtime/start` 的 429/503 拒绝审计零留痕」——≈45 行 / 2 个源码文件，不改事件字段与接口形状，不涉及产品决策。
+- 取舍：选它是因为①它是「同一类失败在一条路径留痕、另一条不留」的**最后一个缺口**（其余五处 `audit('error', …)` 都已补，补完即可断言「每个本地判定的 error 都有一条审计行」）；②有本机证据（session `787a6d43` 整场只有 1 行、连接层在 `kind` 直方图上恒 0 行）而不是推测；③改动最小、单轮可收口。未选的 5 条见该条目末尾，另摘 3 条进下方「下次可做」。
+- 本轮**未改任何源码与测试**：未 bump 版本、未 `npm pack`、未 tag/push、未 `dsh plugin add`、未重启 `dsh web`。
+
+**下次可做**：①`src/core/conversation-judge.js:72` 把 `cancelled` 判成 `TOOL_FAILED` 硬错误、`:89` 在原生出声模式恒报 `TTS_MISSING`，与 `src/core/audit-log.js:156-158` 的「cancelled 不算失败」口径自相矛盾（实跑 86 回合 28 error、进程 exit 1；≈30 行）；②`web/src/changelog-corner.jsx:19` 的 `error` 一旦置位就永不清除、关掉重开也不再请求（CHANGELOG 已宣称该症状修复，实际只修了白名单入口；≈110 行，取数策略要下沉到 `web/src/lib/` 才测得到）；③qwen 合成的 `audioDurationSeconds` 54/54 全 null 而 Breeze 46/46 正常（`src/core/voice-synthesis.js:75` 解析失败即 null；先用一次真实响应确认 DashScope 返回的 WAV 布局再定改法）；④`README.md:71-75` 的 Breeze 音色表仍写已废弃的 `voc_47j4uzfyuxqc`，且无元测试钉住（≈55 行）；⑤`package.json` 的 `files` 白名单零守卫——删掉 `dist` 或 `CHANGELOG.md` 时 `npm test` 与 `test:web` 全绿，装完才表现为插件页 404 / 浮窗「没有记录」（≈90 行元测试）。
