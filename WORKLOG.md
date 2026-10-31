@@ -1568,3 +1568,24 @@
 **欠**：该条仍是 `- [ ]`，下一班可直接实现（≈60 行 / 3 文件，无接口变化、不需产品决策）。
 
 **下次可做**：①新入的这条（原生工具接取消信号，源码 ≈15 / 测试 ≈45）；②启动期默认音色初始化把磁盘/凭据/配额失败全压成「请检查声音配置后重试」（`voice-initialization.js:45-46` 只留 `status`，`failureAdvice` 0 命中，≈48 行，含补启动失败审计）；③事件轮询缺口既不提示也不补偿（`service.js:410` 的 `events.shift()` 无缺口信号 + `main.jsx:121` 先整批推进游标再逐条处理，循环里 `rtEnqueue` 抛错会永久丢该批剩余事件，≈60 行）；④原有：可恢复的 `error` 被当成回合终止；⑤原有：`audio_too_large` 每帧重复上报 + `audio_backlog_dropped` 零审计；⑥原有：审计列筛选 keys 未含 `code`。
+
+## 2026-10-31 15:45 · 启动期自动设计音色失败不再把已分类的原因吞成「请检查声音配置后重试」
+
+**做了什么**
+
+- 并发保护：开工前无 `.release.lock`，已建 `.work.lock`（15:17），提交前删除。HEAD = `7bb2d92`，工作区干净。
+- 取活：清单里 5 条阻塞项（`:34` / `:46` / `:58` / `:60` / `:61`）照旧不碰，本轮做第 6 条（启动期音色初始化吞掉失败分类），条目本身已精确到行号，**未用规划子代理**。
+- `src/core/voice-initialization.js`：引入 `voice-design.js` 现成的 `failureAdvice`（与 `voice-presets.js` 同一条判据），`initializeSessionVoice` 的 `catch` 收下 `error` 后先算 advice——非空就 `默认音色初始化失败：<advice>`，为空保留原文案一字不动。状态码映射（`error.status === 409 ? 409 : 502`）与 409 语义未动；上游 message 仍只用于分类、不回显。
+- 效果：402 / 429 变成「配额或余额不足，请检查百炼账户额度与余额（重试无效，Throttling.AllocationQuota）」、401 变成「凭据无效或无权限，请检查百炼 API Key」、模型下架提示改用可用模型——首次开始对话时这三类失败不再把用户引向「检查声音配置后重试」这个确定性死循环。
+- **按条目要求没做**启动期审计：要改 `createVoiceInitialization` 注入表与 `service.js` 接线，属另一条（下面「下次可做」）。
+
+**验证**（全部实跑）
+
+- `test/voice-initialization.test.js` 的 `fixture` 扩成支持 `fail:{status,body}`（`true` 仍是原来的裸 500），新增 3 条：402 配额（含「重试无效」+ code、不含「请检查声音配置后重试」、不含上游原文）、401 凭据（指向 API Key）、工厂路径「无分类→原文案 / 带分类→模型不可用短语」。
+- **变异验证**：`git stash push src/core/voice-initialization.js` 回退源码 → 恰好红 3 条（新增三条全红、原 18 条全绿），`git stash pop` 后 21/21。
+- 后端 **450** / 前端 **109** 全绿（0 fail）、`npm run lint` 0 问题、`npm run format:check` 通过、`npm run build` 成功（`dist/` 已 `git checkout`，新 hash 产物 `index-D0M93vQL.js` 移出仓库）。
+- churn **51 行**（+47/−4：源码 +10/−1 / 测试 +45/−4），另 CHANGELOG 2 行、BACKLOG 1 条打勾 + 尾注。
+
+**欠**：启动期付费设计失败仍零审计（`voice-audit.jsonl` 里不留行），需另一条改注入表 + `service.js` 接线。
+
+**下次可做**：①启动期设计失败补审计（把 `audit` 注入 `createVoiceInitialization`，照 `service.js` 合成路径写 completed/failed 两条，≈40 行）；②原有：可恢复的 `error` 被当成回合终止（`web/src/lib/realtime.js`，要同步改写 `realtime.test.js` 的冻结用例）；③原有：`audio_too_large` 每帧重复上报 error + `audio_backlog_dropped` 零审计（≈60 行）；④原有：审计列筛选 keys 未含 `code`（要连带改前端表头筛选 UI）；⑤原有：事件轮询缺口既不提示也不补偿（`service.js:410` 的 `events.shift()` 无缺口信号 + `main.jsx:121` 先整批推进游标再逐条处理）。

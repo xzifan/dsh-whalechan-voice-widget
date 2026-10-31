@@ -9,13 +9,16 @@ import {readFileSync} from 'node:fs'
 import {BREEZE_PRESET_VOICES} from '../src/core/breeze-voices.js'
 import {MODEL_TTS,VOICE_PRESETS} from '../src/core/voice-design.js'
 
+// fail 支持两种形态：`true`（恒 500 的裸失败）或 `{status, body}`（模拟上游带分类的错误体）。
+const normalizeFailure = value => (!value ? null : value === true ? { status: 500, body: { code: 'TestFailure' } } : { status: value.status || 500, body: value.body || {} })
+
 async function fixture(t,{gate,fail=false}={}){
  const dir=await mkdtemp(join(tmpdir(),'voice-init-')),requests=[],sockets=[]
- let completed=false,shouldFail=fail
+ let completed=false,failure=normalizeFailure(fail)
  class Socket{constructor(){assert.equal(completed||requests.length===0,true,'socket must open after design');this.readyState=1;this.handlers={};sockets.push(this)}on(name,fn){this.handlers[name]=fn}send(){}close(){}}
  const dependencies={realtimeWebSocket:Socket,resolveBailianProvider:async()=>({key:'test-key',source:'provider'}),fetch:async(url,options)=>{
   const body=JSON.parse(options.body);requests.push(body);if(gate)await gate
-  if(shouldFail)return {ok:false,status:500,json:async()=>({code:'TestFailure'})}
+  if(failure)return {ok:false,status:failure.status,json:async()=>failure.body}
   completed=true
   return {ok:true,json:async()=>({output:{voice_id:'initialized-voice',preview_audio:{data:'preview'}}})}
  }}
@@ -23,7 +26,7 @@ async function fixture(t,{gate,fail=false}={}){
  t.after(async()=>{await service.dispose();await rm(dir,{recursive:true,force:true})})
  const config=async()=>(await service.handle('GET','/api/config')).body.settings
  const start=(settings)=>(service.handle('POST','/api/realtime/start',settings?{settings}:{}))
- return {requests,sockets,config,start,get service(){return service},setFail(value){shouldFail=value},async reload(){await service.dispose();service=createService({stateDir:dir},dependencies)}}
+ return {requests,sockets,config,start,get service(){return service},setFail(value){failure=normalizeFailure(value)},async reload(){await service.dispose();service=createService({stateDir:dir},dependencies)}}
 }
 
 test('first start designs exact default and saves before opening socket; restart and stale drafts reuse it',async t=>{
@@ -72,6 +75,42 @@ test('failed initialization opens no socket and retries without pretending a voi
  await assert.rejects(s.start(),/默认音色初始化失败/)
  assert.equal(s.sockets.length,0);assert.equal((await s.config()).tts_profiles.qwen,undefined)
  s.setFail(false);await s.start();assert.equal(s.requests.length,2);assert.equal(s.sockets.length,1)
+})
+
+test('启动期设计失败的配额类错误指向额度与余额，不再建议「检查声音配置后重试」',async t=>{
+ const s=await fixture(t,{fail:{status:402,body:{code:'Throttling.AllocationQuota',message:'insufficient quota for this account'}}})
+ const error=await s.start().then(()=>null,e=>e)
+ assert.ok(error,'设计失败必须拒绝，不得假装音色已就绪')
+ assert.equal(error.status,502) // 状态码映射不变：非 409 一律 502
+ assert.match(error.message,/^默认音色初始化失败：配额或余额不足/)
+ assert.match(error.message,/重试无效/)
+ assert.match(error.message,/Throttling\.AllocationQuota/)
+ assert.equal(error.message.includes('请检查声音配置后重试'),false)
+ assert.equal(error.message.includes('insufficient quota'),false)
+ assert.equal(s.sockets.length,0);assert.equal(s.requests.length,1)
+})
+
+test('启动期设计失败的凭据类错误指向 API Key 而不是重试',async t=>{
+ const s=await fixture(t,{fail:{status:401,body:{code:'InvalidApiKey',message:'Invalid API-key provided.'}}})
+ const error=await s.start().then(()=>null,e=>e)
+ assert.equal(error.status,502)
+ assert.match(error.message,/默认音色初始化失败：凭据无效或无权限/)
+ assert.match(error.message,/请检查百炼 API Key/)
+ assert.match(error.message,/InvalidApiKey/)
+ assert.equal(error.message.includes('请检查声音配置后重试'),false)
+ assert.equal(s.sockets.length,0)
+})
+
+test('工厂：无分类的意外失败仍回落可重试文案，带分类的失败改用可执行短语',async()=>{
+ const plain=factory(base(),()=>{throw new Error('boom')})
+ const fallback=await plain.init.initializeSessionVoice(base()).then(()=>null,e=>e)
+ assert.equal(fallback.message,'默认音色初始化失败，请检查声音配置后重试（HTTP 502）')
+ const classified=factory(base(),()=>{throw Object.assign(new Error('upstream detail'),{safe:{category:'model-unavailable',code:'ModelNotFound'}})})
+ const error=await classified.init.initializeSessionVoice(base()).then(()=>null,e=>e)
+ assert.match(error.message,/默认音色初始化失败：音色模型不可用/)
+ assert.match(error.message,/ModelNotFound/)
+ assert.equal(error.message.includes('请检查声音配置后重试'),false)
+ assert.equal(error.message.includes('upstream detail'),false)
 })
 
 test('settings edit during design is not overwritten; paid design remains cached for retry',async t=>{

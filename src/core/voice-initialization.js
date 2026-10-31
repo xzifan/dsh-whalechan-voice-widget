@@ -1,5 +1,6 @@
 import { normalizeBreezeProfile } from './breeze-voices.js'
 import { getTtsProfile } from './tts-config.js'
+import { failureAdvice } from './voice-design.js'
 
 /**
  * 会话启动时的音色初始化（由 `/api/realtime/start` 调用）。
@@ -43,7 +44,14 @@ export function createVoiceInitialization({ getSettings, mutate, commitSettings,
     const before = marker()
     let candidate
     try { candidate = await voicePresets.initialize(input) }
-    catch (error) { throw new RequestError(`默认音色初始化失败，请检查声音配置后重试（HTTP ${Number.isInteger(error.status) ? error.status : 502}）`, error.status === 409 ? 409 : 502) }
+    catch (error) {
+      // 启动期自动设计音色是一次付费调用，而配额/凭据/模型下架这三类失败只有改账号
+      // 配置才可能成功——提示「请检查声音配置后重试」会把用户送进确定性死循环（与已修
+      // 的预设页同族）。有分类时改用 failureAdvice 的可执行短语；上游 message 仍不回显，
+      // 无分类时保留原文案一字不动，HTTP 码与 409 语义也不变。
+      const advice = failureAdvice(error)
+      throw new RequestError(advice ? `默认音色初始化失败：${advice}` : `默认音色初始化失败，请检查声音配置后重试（HTTP ${Number.isInteger(error.status) ? error.status : 502}）`, error.status === 409 ? 409 : 502)
+    }
     signal?.throwIfAborted()
     return mutate(async () => {
       signal?.throwIfAborted()
