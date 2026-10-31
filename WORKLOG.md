@@ -1854,3 +1854,24 @@
 2. `src/core/service.js:133` 的 `settingsLoad` 缺观测式 `catch`：`settings.json` 损坏时该 promise 在任何请求 `await`（唯一消费点 `:261`）之前就已 rejected，全仓 `grep -rn unhandledRejection src test scripts` = 0，Node 默认行为是抛成进程级未处理拒绝；同仓 `src/core/voice-presets.js:38-39` 有现成范本 `ready.catch(() => {})`。改法 1-2 行 + 约 25 行测试。**没选它是因为缺「真实发生」证据**：`grep -rn '工作台配置无法读取' ~/.dsh/logs/` = 0，`~/.dsh/logs` 20 个文件全是 197–527 字节的启动行；而且子代理核实「宿主 `installFailLoud` 会把 `unhandledRejection` 当 fatal `exit(1)`」这一环时 `grep -rl installFailLoud node_modules` = 0，本仓没有宿主启动代码，崩溃只是 Node 默认行为的推论、不是观测。
 3. `package.json` 的 `files` 白名单仍无元测试：删掉 `dist/web` 或 `CHANGELOG.md` 也不会红（与 `coverage-config` / `browser-scripts` 那类接线元测试同族，纯测试、无产品决策）。
 4. 统计页 `audioMissing` 不会回填：本机审计里 54 条百炼历史行本来就缺 `audioDurationSeconds`（上一班只修「以后的记录」），要清掉得重跑合成或做一次历史数据迁移——涉及已落盘数据改写，须人拍板。
+
+## 2026-11-01 07:25 · J1：修「更新日志解析器丢 3 个无 `###` 分节的历史版本」
+
+- 并发保护：开工前无 `.release.lock`，已建 `.work.lock`（07:17:42），提交前删除。HEAD = `a42cb9b`，工作区干净。基线实测 `npm test` **463 pass** / `npm run test:web` **110 pass** / `format:check` 全仓通过。
+- 取活：清单顶部仍是 5 个阻塞项（`:34` ⛔ 阻塞待决策、`:46` 需人拍板、`:58` `[arch]` 架构决策、`:60` 需先定口径归属、`:61` 单独立项），按 J1 规则一条都不碰、全部原样保留；取到的第一条可做项是上一班 06:21 取证入条的「更新日志解析器把 3 个无 `###` 分节版本的 17 条条目永久丢弃」。**本轮只做这 1 条**。
+- **未用规划子代理**：条目已精确到行号、2 个文件、单点判定改动、无接口与响应形状变化（任务书第 3 条只对 `[plan]` 或跨 3+ 文件要求派）。
+- 先复核条目数字（自跑，不采信）：`grep -c '^## ' / '^### ' / '^- ' CHANGELOG.md` = **14 / 22 / 94**；`awk` 逐版本计数 0.5.0 **7** / 0.3.0 **6** / 0.2.0 **4**，三段 `###` 均为 0（合计 17）。与条目完全一致。
+- 改动（churn **66 行**：源码 +9/−2 / 测试 +52 / `BACKLOG.md` +1−1）：`src/core/changelog.js` 的 `if (itemMatch && section)` 去掉 `&& section`，进条目前 `if (!section)` 惰性建 `{ title: '变更', items: [] }` 并 push 进 `current.sections`（注释写明三个历史版本没有 `###` 分节、以及不建分节就会被 `closeItem()` 丢掉）；`:58` 的 `entries.filter(sections.length > 0)` **保留**并补注释收窄语义（只有标题没内容的版本仍不下发；`total` 记真实标题数，所以文件里存在空版本时两者不相等）。`service.js` 的 `limit = 6`、响应字段形状、`web/src/changelog-corner.jsx` 页脚文案、`CHANGELOG.md` **全部一行未动**。
+- **零用户可见变化是当场证出来的，不是推断**：自写 `~/.hermes/cache/scratch/changelog-api-probe2.mjs`（内含旧实现的等价复现，含 `maxItemChars` 截断与 `date` 字段），对真 `CHANGELOG.md` 跑 `limit: 6`，新旧 `entries` 的 `JSON.stringify` **逐字节相等**（Unreleased/0.7.0/0.6.6/0.6.5/0.6.4/0.6.3，`total` 都是 14）。修复的可见效果只在 `limit: 50` 这类全量调用：`entries` 11 → **14**、0.5.0/0.3.0/0.2.0 各带 7/6/4 条并挂「变更」分节。因此**没写 `CHANGELOG.md`**（写「用户能看到历史版本了」是谎报，UI 仍然只下发 6 个版本）。
+- 测试 `test/changelog.test.js`（+52 行两条，均**直接测 `parseChangelog`**，不走 `readChangelog`——后者缓存键只有 mtime、不含 limit）：①合成样本 = `## [1.1.0]` 两条裸条目（含一条续行）+ `## [1.0.0]` 只有标题 + `## [0.9.0]` 正常 `###`，断言 `total === 3`、`entries` 恰 `['1.1.0','0.9.0']`、`1.1.0` 的分节恰 `['变更']`、条目恰 `['裸条目一 续行','裸条目二']`；②真 `CHANGELOG.md` + `limit: 50`，**期望版本数从文件里的 `## ` 标题算**（不硬编码 14，否则每发一版都要改断言），断言 `total === entries.length === 标题数`、版本顺序逐项一致、三个历史版本分节恰 `['变更']` 且条目数恰 7/6/4。
+- 变异验证 2 条（cp 备份 → `patch` 改 → `node --test test/changelog.test.js` → cp 还原，没用 `-e` 内联）：①`:42` 改回 `&& section` → 恰红 **2** 条（两条新用例；既有那条 `entries.length === Math.min(6,total)` **仍绿**，正好实证条目所说「这条等式恒真、盖住丢弃」）；②删掉 `:58` 的 `filter` → 恰红 **1** 条（新用例里「空版本不下发」那条断言）。还原后 9/9 绿。
+- 验收：后端 463 → **465** / 前端 **110** 不变全绿、`lint` 0 问题、`format:check` 全仓通过、`build` 成功（`dist/` 已 `git checkout` 还原、新 hash 产物 `index-BCNzi94o.js` 移出仓库）。
+- 本轮未 bump 版本、未 `npm pack`、未 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未动 `~/.dsh/AGENTS.md`。
+
+**下次可做**（本轮复核过、未入选的候选，按可行性排序）：
+
+1. `src/core/service.js:133` 的 `settingsLoad` 缺观测式 `catch`：`settings.json` 损坏时该 promise 在任何请求 `await`（唯一消费点 `:261`）之前就已 rejected，全仓 `grep -rn unhandledRejection src test scripts` = 0；同仓 `src/core/voice-presets.js:38-39` 有现成范本 `ready.catch(() => {})`。改法 1-2 行 + 约 25 行测试。**仍缺「真实发生」证据**：`~/.dsh/logs` 里相关串实测 0 次，崩溃只是 Node 默认行为的推论。
+2. `readChangelog` 的缓存键只有 mtime、不含 `limit`：`src/core/service.js:43` 的 `changelogCache = { at, value }` 命中即返回整份切片，所以「先按 limit=6 调一次、再按 limit=50 调」会拿回 6 条——本轮测试因此直接测 `parseChangelog` 绕开了它。当前只有 `/api/changelog` 一个固定 `limit = 6` 的调用点，属潜在坑而非现行 bug；修法是缓存整份解析结果（不切片）再在入口 `.slice(0, limit)`，≈6 行 + 1 条断言。
+3. `package.json` 的 `files` 白名单仍无元测试：删掉 `dist/web` 或 `CHANGELOG.md` 也不会红（与 `coverage-config` / `browser-scripts` 那类接线元测试同族，纯测试、无产品决策）。
+4. `/api/audit` 反向时间区间静默返回 0 条：`src/core/service.js:364` 只校验「非负整数」，而同形 `/api/statistics` 在 `:348` 有 `since <= until` 的 400 校验（≈4 行 + 2 条断言）。**短板**：`web/src/audit-view.jsx:129` 只发 `since`、不发 `until`，不是用户可见 bug。
+5. 统计页 `audioMissing` 不会回填：本机审计里 54 条百炼历史行本来就缺 `audioDurationSeconds`（05:20 那班只修「以后的记录」），要清掉得重跑合成或做一次历史数据迁移——涉及已落盘数据改写，须人拍板。

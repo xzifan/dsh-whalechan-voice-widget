@@ -40,8 +40,14 @@ export function parseChangelog(text, { limit = 8, maxItemChars = 1200 } = {}) {
     }
 
     const itemMatch = line.match(ITEM)
-    if (itemMatch && section) {
+    if (itemMatch) {
       closeItem()
+      // 历史版本（0.5.0 / 0.3.0 / 0.2.0）没有 ### 分节，条目直接挂在版本标题下。
+      // 惰性建一个默认分节把它们收进来，否则 closeItem() 因 section 为空而丢弃整条。
+      if (!section) {
+        section = { title: '变更', items: [] }
+        current.sections.push(section)
+      }
       item = [itemMatch[1]]
       continue
     }
@@ -55,6 +61,8 @@ export function parseChangelog(text, { limit = 8, maxItemChars = 1200 } = {}) {
   closeItem()
 
   return {
+    // 只有标题、一条内容都没收到的版本仍然不进 entries（空版本会让前端渲染出空分节）；
+    // total 记的是「有版本标题」的真实数量，所以两者在文件里存在空版本时会不相等。
     entries: entries.filter(entry => entry.sections.length > 0).slice(0, limit),
     total: entries.length,
   }

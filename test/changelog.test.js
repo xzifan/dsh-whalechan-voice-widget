@@ -86,6 +86,58 @@ test('空内容与非法输入都返回空结果，不抛错', () => {
   assert.deepEqual(parseChangelog('随便写点什么，没有版本标题'), { entries: [], total: 0 })
 })
 
+test('无 ### 分节的版本条目收进默认分节，空版本仍不下发', () => {
+  const { entries, total } = parseChangelog(`## [1.1.0] - 2026-01-02
+
+- 裸条目一
+  续行
+- 裸条目二
+
+## [1.0.0] - 2026-01-01
+
+## [0.9.0] - 2025-12-31
+
+### 修复
+
+- 正常条目
+`)
+  // 三个版本都在 total 里，但「只有标题没有内容」的 1.0.0 不进 entries
+  assert.equal(total, 3)
+  assert.deepEqual(
+    entries.map(e => e.version),
+    ['1.1.0', '0.9.0'],
+  )
+  assert.deepEqual(
+    entries[0].sections.map(s => s.title),
+    ['变更'],
+  )
+  assert.deepEqual(entries[0].sections[0].items, ['裸条目一 续行', '裸条目二'])
+})
+
+test('真实 CHANGELOG 里没有 ### 分节的历史版本不再被丢弃', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const text = await readFile(new URL('../CHANGELOG.md', import.meta.url), 'utf8')
+  // 期望条数从文件里的版本标题算，避免每发一个版本就要改这条断言。
+  const headings = text.split('\n').filter(line => /^##\s/.test(line))
+  const { entries, total } = parseChangelog(text, { limit: 50 })
+  assert.equal(total, headings.length)
+  assert.equal(entries.length, total)
+  assert.deepEqual(
+    entries.map(e => e.version),
+    headings.map(line => line.replace(/^##\s+\[?/, '').replace(/\].*$/, '').trim()),
+  )
+  const legacy = { '0.5.0': 7, '0.3.0': 6, '0.2.0': 4 }
+  for (const [version, count] of Object.entries(legacy)) {
+    const entry = entries.find(e => e.version === version)
+    assert.ok(entry, `${version} 必须出现在 entries 里`)
+    assert.deepEqual(
+      entry.sections.map(s => s.title),
+      ['变更'],
+    )
+    assert.equal(entry.sections[0].items.length, count)
+  }
+})
+
 test('真实 CHANGELOG 能被完整解析', async () => {
   const { readFile } = await import('node:fs/promises')
   const text = await readFile(new URL('../CHANGELOG.md', import.meta.url), 'utf8')
