@@ -2,6 +2,24 @@
 
 本轮工作的技术记录：做了什么、怎么验证的、还欠什么。发布记录由 `scripts/release.sh` 自动追加。
 
+## 2026-10-31 14:20 · 第 7 步取证：清单仍无可用条目，入 1 条（启动期音色初始化吞掉失败分类）
+
+- 并发保护：开工前无 `.release.lock`，已建 `.work.lock`（14:17），提交前删除。HEAD = `4482b86`，工作区干净。
+- 取活结果：`grep '^- \[ \]' BACKLOG.md` 只剩 5 条，全部不可动——`:34` ⛔ 阻塞待决策（husky + lint-staged，前置是 Prettier 大目录迁移要不要豁免 200 行）、`:46` 需人拍板（夜间冒烟接调度）、`:58` `[arch]` 架构决策（事件分发表 + 三层状态机）、`:60` 需先定口径归属（首帧延迟锚点）、`:61` 单独立项（真实停播时延）。按 J1 规则一条没动，转第 7 步。
+- 派 **2 个只读子代理**（禁止改/建/删文件、禁止 git 写操作）：一个从源码找「静默吞错 / 宣称成功但实际失败 / 分类丢失 / 测试锁住错误行为」，一个从本机 `voice-audit.jsonl` 与 `CHANGELOG.md` 的 `[Unreleased]` 宣称做对账取证。共拿到 6 个候选，**每条都回源码/日志自己复核过才采信**（子代理自述不算证据）。
+- 入清单的是「启动期自动设计音色失败把已分类的原因吞成『请检查声音配置后重试』」。复核确认：`src/core/voice-initialization.js:46` 的 catch 丢掉 `error.message`（`problem()` 在 `src/core/voice-design.js:76-88` 已拼好「百炼音色请求失败：配额或余额不足（HTTP 402，…）」）；`failureAdvice()` 全仓只有 `voice-presets.js:113,172` 两处调用，这条路径 0 命中；预设页对同一次失败会说「重试无效」，开局只说「请检查声音配置后重试」。选它的理由：改动最小（≈55 行、只改文案、状态码映射不动）、不需要产品决策、且是这条判据的第 4 个消费者（前三个 `voice-presets` / `voice-synthesis` / `voice-tool-bridge` 都已改）；上一班 WORKLOG 的「下次可做③」也独立点到同一处。
+- **未选**（证据都很硬，全部写进下方「下次可做」）：①`apply_voice` 确认窗竞态——我自己用 `jq` 核过：535 行日志里 `text:"apply_voice"` 共 2 条，**2/2 全 `failed` + `outcome:error`**；会话 `f63470cb` 的确认语「可以可以，就用这个声音。」落在失败行之后 **201 ms**（1793125956453 → 1793125956654），随后「嗯。」按 `voice-candidate.js:29` 的 `else pending = null` 把候选清空，41 s 后第二次 `apply_voice` 再失败（模型三次追问、用户明说过「你的声音没有应用上」）。修法要么放宽 `realtime-service.js:36` 的 1500 ms 确认窗、要么不再对未匹配话术清空候选——后者与 `VOICE_CONFIRMATION_RULES` 明写的「否定、犹豫、转话题都恢复原音色」直接冲突，**属产品决策**，本轮不进清单。②`designVoice` 第二步克隆失败会把第一步已创建的付费音色丢在账号里（`voice-design.js:127-139` 无 try/catch，`designVoiceId` 随栈帧消失；全仓无该路径用例）。③上游 `error` 里「会话已被关闭（180 秒无响应）」不触发 `closed`，死会话继续占并发额度（本机 10 条 `error` 里 4 条是这句、分布 4 个会话，其中 3 个会话该行就是最后一行）——但判定只能靠英文文案匹配，误判会关掉活会话，宜等新版 `code` 落库后按码判定。
+- 另外核到两条子代理没提的：①启动期自动设计失败**零审计**——`createVoiceInitialization` 的注入表（`src/core/service.js:242-245`）没有 `audit`，`grep -c audit src/core/voice-presets.js` = 0，这次付费调用失败在 `voice-audit.jsonl` 里不留任何行（对照 `service.js:210-216` 的合成路径有 completed/cancelled + `kind:error` 两条）；已写进条目「不要顺手加」，留给下一条。②`CHANGELOG [Unreleased]` 的 10 条宣称抽核全部真实落地（`voice-tool-bridge.js:171` 的 signal 条件透传、`audit-log.js:65-68` 的 `code` 白名单、`realtime-service.js:26/80/98` 的握手期队列、`:518` 的 `handshake_` 收尾都在）。本机审计日志 535 行全部产生于 10-29 之前，所以它只能证明「历史失败形态」，不能当新字段的证据。
+
+**验证**（本轮零源码改动，只核基线）
+
+- `npm test` → **447 pass / 0 fail**；`npm run test:web` → **109 pass / 0 fail**；`npm run format:check` → `All matched files use Prettier code style!`（新条目写进 BACKLOG 后仍绿：`proseWrap` 是 preserve，长行不会重排）。
+- `git status` 提交前只有 `BACKLOG.md` + `WORKLOG.md`。
+
+**欠**：新条目仍是 `- [ ]`，下一班可直接实现（≈55 行 / 2 文件、只改文案，不需产品决策）。
+
+**下次可做**：①新入的这条（启动期音色初始化分类）；②`apply_voice` 确认窗竞态（**需拍板**：放宽确认窗，还是不再对未匹配话术清空候选——后者与 `VOICE_CONFIRMATION_RULES` 冲突）；③`designVoice` 第二步失败遗弃付费音色（≈72 行 / 2 文件）；④「会话已被关闭」的 error 不触发 `closed`（≈48 行，宜按 `code` 判定）；⑤启动期自动设计补审计行（要动注入表与 `service.js` 接线）；⑥原有：事件轮询缺口既不提示也不补偿、`audio_too_large` 每帧重复上报且 `audio_backlog_dropped` 零审计、审计列筛选 keys 未含 `code`。
+
 ## 2026-10-31 13:45 · 原生工具接上会话取消信号（打断真的会停）
 
 - 条目：BACKLOG「原生工具丢掉会话取消信号」（上一班「下次可做」的第 ① 条，也是清单里第一个非阻塞项——另外 5 个 `- [ ]` 全是 `⛔ 阻塞待决策` / 需人拍板 / `[arch]` 架构决策 / 单独立项，按 J1 规则一条没动）。**未用规划子代理**——条目已精确到行号，改动是三处单点接线，无接口与事件字段变化。
