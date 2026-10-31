@@ -1738,3 +1738,17 @@
 - 本轮未 bump 版本、未 `npm pack`、未 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未动 `~/.dsh/AGENTS.md`。
 
 **下次可做**：①`src/core/conversation-judge.js:72` 把 `cancelled` 判成 `TOOL_FAILED` 硬错误、`:89` 在原生出声模式恒报 `TTS_MISSING`，与 `audit-log.js` 的「cancelled 不算失败」口径矛盾（≈30 行）；②`web/src/changelog-corner.jsx:19` 的 `error` 一旦置位就永不清除、关掉重开也不再请求（≈110 行，取数策略要下沉到 `web/src/lib/` 才测得到）；③qwen 合成的 `audioDurationSeconds` 54/54 全 null 而 Breeze 46/46 正常（先用真实响应确认 WAV 布局）；④`README.md:71-75` 的 Breeze 音色表仍写已废弃的 `voc_47j4uzfyuxqc`；⑤`package.json` 的 `files` 白名单零守卫（删掉 `dist` 或 `CHANGELOG.md` 时测试仍全绿）；⑥`/api/realtime/start` 第二次额度预检（并发中途挤入）的留痕，本轮按条目要求只记一处，可单独立条。
+
+## 2026-11-01 00:17 · BACKLOG 无可做条目：第 7 步取证，入条「质检器把打断判成工具硬错误」
+
+- 并发保护：开工前无 `.release.lock`；已建 `.work.lock`（00:17），收尾前删除。HEAD = `02ca8e4`，工作区干净。
+- 取活：`grep '^- \[ \]' BACKLOG.md` 共 **5** 条，全部是阻塞项（`:34` ⛔ 阻塞待决策、`:46` 需人拍板、`:58` `[arch]` 架构决策、`:60` 需先定口径归属、`:61` 单独立项），按 J1 规则一条没碰 → 走第 7 步（取证 + 入条，不实现）。
+- 基线复测（本轮无源码改动）：`npm test` → **455 pass / 0 fail**；`npm run test:web` → **110 pass / 0 fail**。
+- 候选来源：2 个只读子代理并行产出 6 条——一路读本机审计日志 + 运行时契约，一路比对 CHANGELOG 宣称与实现 + 找门禁零守卫。两路**各自独立**把同一条排在第一位，主代理再实读复核（`conversation-judge.js:23-93,115-132`、`audit-log.js:150-160`、`realtime-service.js:105-128,283-299`、`test/conversation-judge.test.js:95-120` 均亲手读过），并用两个探针脚本（`~/.hermes/cache/scratch/judge-probe{,2}.mjs`）按 turnId 重算 findings 直方图。
+- 实测数据（`npm run judge -- --since 30d --limit 200`，日志 `~/.dsh/storages/voice-workbench-preview/voice-audit.jsonl`）：86 回合 / error 28 / warn 9；findings 直方图 `TOOL_FAILED 15 / SESSION_ERROR 8 / TTS_MISSING 8 / EMPTY_RESPONSE 5 / CLAIM_WITHOUT_TOOL 1`；15 条 TOOL_FAILED 按 outcome 拆开是 **error 13 / cancelled 2**（两条都是 `synth_tts` 被用户打断）—— 这就是本条的硬证据：`conversation-judge.js:72` 只认 `ok|completed`，把用户打断算成硬错误，与 `audit-log.js:156-158`「`cancelled` 不算失败」的既定口径相反。
+- 入条：`BACKLOG.md` 的「需要产品决策」小节之前新增 1 条 `- [ ]`「会话质检器把用户打断判成工具硬错误」——≈60 行 / 2 个源码+测试文件，不改 findings 形状、不改 judge CLI 退出码契约、不涉及产品决策。
+- 取舍：选它是因为①两路独立取证都排第一，且**有本机可复算的数字**（15 条里 2 条是 cancelled），不是代码路径推导；②它是「同一条判据在质检器里抄了两份」的漂移源头（`:72` 两张词表 vs `:122` 三张），修完可断言两处同源；③改动集中在单文件 + 单测试文件，单轮可收口。未选的另外 5 条：`package.json` 的 `files` 白名单零守卫（删 `dist`/`CHANGELOG.md` 也全绿，装完才 404，≈90 行纯元测试）、`/api/audit` 反向时间区间静默返回 0 条而 `/api/statistics` 有 400 校验（≈31 行）、catalog 首次加载失败被空 `catch` 吞成「没有可用的工具执行服务」（≈40 行）、`changelog-corner.jsx:19` 的 `error` 置位后关掉重开也不重试（≈115 行，需先下沉到 `web/src/lib/`）、README 的 Breeze 中文音色仍写已废弃的 `voc_47j4uzfyuxqc`（≈25 行）。
+- **推翻一条旧线索的描述**：上一班 WORKLOG 记的「qwen 合成 `audioDurationSeconds` 54/54 全 null」，实读 `audit-log.js:99` 后确认——`null` 会被整键丢弃，所以现状是「键不存在」而不是「值为 null」；现象（bailian 54 条无该键、breeze 46 条有）成立，但归因要拿一次真实响应验 WAV 布局才能定，故不入条。
+- 本轮**未改任何源码与测试**：未 bump 版本、未 `npm pack`、未 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未动 `~/.dsh/AGENTS.md`。
+
+**下次可做**：①`package.json` 的 `files` 白名单补一条元测试（`dist/web` 是插件页静态根、`CHANGELOG.md` 是浮窗数据源，删任一条 `npm test`/`pack:check` 都不红，装到 profile 才白屏；≈90 行纯测试，零源码改动）；②`/api/audit` 反向时间区间补与 `/api/statistics` 同形的 400 校验（`service.js:348` 有、`:364` 没有，排障会把「查错区间」当成「确实没发生」；≈31 行）；③`web/src/main.jsx:66` 首次加载 catalog 的空 `catch` 吞掉失败，设置页据此断言「当前没有可用的工具执行服务」并静默清空 `enabled_tools`（≈40 行）；④`changelog-corner.jsx:19` 的 `error` 一旦置位永不清除、关掉重开也不再请求（CHANGELOG 已宣称该症状修复，实际只修了白名单入口；≈115 行，取数策略需先下沉到 `web/src/lib/` 才测得到）；⑤README 的 Breeze 中文音色行仍是已废弃的 `voc_47j4uzfyuxqc`（`src/core/breeze-voices.js` 已是 `voc_u3nxkd5578wc` / `voc_8yud7hz7c9q2`，改 1 行 + 元测试 ≈25 行）。
