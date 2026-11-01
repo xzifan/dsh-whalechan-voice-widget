@@ -276,3 +276,27 @@ test('error code is a first-class field: error rows only, malformed dropped, sea
   const reloaded = createAuditLog({path})
   assert.equal((await reloaded.query({kind: 'error'})).records[0].code, 'Throttling.AllocationQuota', '重启后仍能读回')
 })
+
+test('tool rows keep the tool name as a field of their own: clipped at 80, blank dropped, searchable, restart-stable', async t => {
+  assert.equal(sanitizeAuditRecord({kind: 'tool', tool: '  read  '}).tool, 'read')
+  for (const value of ['', '   ', undefined, null, 42, {}, ['x']])
+    assert.equal(sanitizeAuditRecord({kind: 'tool', tool: value}).tool, undefined, `${JSON.stringify(value)} 应被丢弃`)
+  assert.equal(sanitizeAuditRecord({kind: 'response', tool: 'read'}).tool, undefined, '只有 tool 行收这个字段')
+  assert.equal(Array.from(sanitizeAuditRecord({kind: 'tool', tool: '读'.repeat(120)}).tool).length, 80, '按码点截 80')
+
+  const { store, path } = await fixture(t)
+  await store.append({ kind: 'tool', sessionId: 's', status: 'failed', tool: 'read', outcome: 'error',
+    provider: 'bailian', model: 'realtime', text: 'read: 所在响应在工具完成前结束（failed）' })
+  const [record] = (await store.query({ kind: 'tool' })).records
+  assert.equal(record.tool, 'read')
+  // `text` 一个字都不许改：0.7.0 宣称的「提前结束的原因」仍靠它携带。
+  assert.equal(record.text, 'read: 所在响应在工具完成前结束（failed）')
+  assert.equal((await store.query({ search: 'read' })).total, 1)
+  const bytes = await readFile(path, 'utf8')
+  const [restarted] = (await createAuditLog({ path }).query({ kind: 'tool' })).records
+  assert.deepEqual(restarted, record, '重启后 tool 不得丢')
+  assert.equal(await readFile(path, 'utf8'), bytes, '重启读取不得改写文件')
+  // 名字单独可检索：text 里没有工具名的行也要能被命中
+  await store.append({ kind: 'tool', sessionId: 's', status: 'completed', tool: 'synth_tts', provider: 'bailian', model: 'realtime', text: 'TTS 已完成' })
+  assert.equal((await store.query({ search: 'synth_tts' })).total, 1, '全文检索要认 tool 字段')
+})

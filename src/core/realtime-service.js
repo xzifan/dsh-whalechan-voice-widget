@@ -133,7 +133,7 @@ export function createRealtimeSession({ settings, key, executeTool, emit, native
     // `exit_code:2`) cannot be rendered as plain "已完成".
     emit({ type: 'tool-end', ...call.context, name: call.name, ok: status === 'completed', status,
       outcome, ...(Number.isInteger(exitCode) ? { exitCode } : {}) })
-    audit('tool', call.context, status, { outcome, ...(detail ? { resultSummary: detail } : {}),
+    audit('tool', call.context, status, { tool: call.name, outcome, ...(detail ? { resultSummary: detail } : {}),
       ...(Number.isInteger(exitCode) ? { exitCode } : {}), text: redactError(`${call.name}${detail && status !== 'completed' ? ': ' + detail : ''}`) })
   }
   function invalidate(clearCandidate = false, interrupted = false) {

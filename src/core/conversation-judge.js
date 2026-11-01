@@ -66,7 +66,7 @@ export function extractTurns(records) {
       if (record.audioOutput === true) turn.audioOutput = true
     } else if (record.kind === 'tool') {
       turn.tools.push({
-        name: record.text || record.tool || 'unknown',
+        name: record.tool || record.text || 'unknown',
         outcome: record.outcome || record.status || 'unknown',
         status: record.status || 'unknown',
       })

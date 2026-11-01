@@ -91,6 +91,12 @@ export function sanitizeAuditRecord(input = {}, secrets = []) {
     const line = typeof summary === 'string' ? summary.replace(/\s+/g, ' ').trim() : ''
     if (line) record.resultSummary = Array.from(line).slice(0, 200).join('')
     if (Number.isInteger(input.exitCode) && Math.abs(input.exitCode) <= 255) record.exitCode = input.exitCode
+    // The tool name is a field of its own, not just the head of `text`: a failed
+    // call writes `name: reason` into `text`, so grouping by tool from `text`
+    // alone breaks the moment a row carries a reason.
+    const tool = typeof input.tool === 'string' ? sanitizeAuditValue(input.tool, secrets) : undefined
+    const toolName = typeof tool === 'string' ? tool.trim() : ''
+    if (toolName) record.tool = Array.from(toolName).slice(0, 80).join('')
   }
   record.usage = numericUsage(input.usage)
   record.usageAvailable = record.usage !== null
@@ -158,7 +164,7 @@ export function createAuditLog({ path, maxRecords = 2000, maxBytes = 10 * 1024 *
   const failedRecord = record => record.kind === 'error' || failedStatuses.has(record.status) || record.outcome === 'error'
   const searchableText = record => [
     record.text, record.id, record.sessionId, record.messageId, record.turnId, record.responseId, record.callId, record.role, record.provider, record.model, record.status, record.requestId,
-    record.outcome, record.code, record.resultSummary, record.exitCode === undefined ? '' : String(record.exitCode),
+    record.outcome, record.code, record.resultSummary, record.tool, record.exitCode === undefined ? '' : String(record.exitCode),
     record.voice === undefined ? '' : JSON.stringify(record.voice),
     record.usage == null ? '' : JSON.stringify(record.usage),
   ].filter(value => typeof value === 'string' && value).join('\n').toLowerCase()

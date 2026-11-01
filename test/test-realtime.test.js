@@ -946,3 +946,49 @@ test('源码守卫：connect() 的两条失败路径都必须经 connectionFaile
   assert.match(transport, /code: 'connection'/, "socket.on('error') 的审计要带 machine-readable code")
   assert.match(rejected, /code: 'handshake_' \+/, '握手被拒的审计要带上游状态码，而不是笼统的 connection')
 })
+
+test('tool 审计行自带工具名，text 仍原样携带提前结束的原因', async () => {
+  const FakeSocket = makeFakeSocket(), emitted = []
+  const session = createRealtimeSession({
+    settings: { ...realtimeDefaults(), use_tts_voice: false }, nativeTools: [readSchema], key: 'k',
+    executeTool: () => new Promise(() => {}), emit: e => emitted.push(e), WebSocketCtor: FakeSocket,
+  })
+  session.connect()
+  const socket = FakeSocket.instances[0]
+  socket.emitRaw('response.output_item.done', { item: { type: 'function_call', name: 'design_voice', call_id: 'call_name', arguments: '{}' } })
+  await new Promise(resolve => setTimeout(resolve, 10))
+  socket.emitRaw('response.done', { response: { status: 'failed' } })
+  await new Promise(resolve => setTimeout(resolve, 10))
+  const record = emitted.find(e => e.type === 'audit' && e.record.kind === 'tool' && e.record.callId === 'call_name').record
+  assert.equal(record.tool, 'design_voice')
+  // `text` 一个字都不许改（0.7.0 的「提前结束的工具要写明原因」靠它实现）。
+  assert.equal(record.text, 'design_voice: 所在响应在工具完成前结束（failed）')
+  session.dispose()
+})
+
+test('工具名一路穿过 sanitize 落进持久化审计：/api/audit 能读回 tool 字段', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'whale-rt-tool-field-'))
+  const keyFile = join(dir, 'test.env')
+  await writeFile(keyFile, 'DASHSCOPE_API_KEY=test-key')
+  const FakeSocket = makeFakeSocket()
+  const service = createService({ stateDir: dir }, {
+    realtimeWebSocket: FakeSocket,
+    resolveModelCredential: async provider => ({ key: 'test-key', source: 'provider', provider }),
+    catalog: async () => ({ tools: [readSchema], currentWorkspace: dir, toolExecutionAvailable: true }),
+    runTool: async () => ({ content: [{ type: 'text', text: '文件内容' }], exit_code: 0 }),
+  })
+  t.after(async () => { await service.dispose(); await rm(dir, { recursive: true, force: true }) })
+  const initial = (await service.handle('GET', '/api/config')).body.settings
+  const settings = { ...initial, enabled_tools: ['read'], tools_configured: true, workspace: dir, realtime: { ...initial.realtime, key_file: keyFile, instructions: 'Test', use_tts_voice: false } }
+  await service.handle('PUT', '/api/config', { settings })
+  const { sessionId } = (await service.handle('POST', '/api/realtime/start', { settings })).body
+  const socket = FakeSocket.instances[0]
+  socket.emitRaw('session.created', {})
+  socket.emitRaw('response.output_item.done', { item: { type: 'function_call', call_id: 'persisted', name: 'read', arguments: '{}' } })
+  socket.emitRaw('response.done', { response: { status: 'completed' } })
+  await new Promise(resolve => setTimeout(resolve, 20))
+  const [record] = (await service.handle('POST', '/api/audit', { sessionId, kind: 'tool' })).body.records
+  assert.equal(record.tool, 'read')
+  assert.equal(record.text, 'read')
+  assert.equal((await service.handle('POST', '/api/audit', { search: 'read' })).body.total >= 1, true)
+})

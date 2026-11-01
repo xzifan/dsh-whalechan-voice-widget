@@ -1917,3 +1917,16 @@
 - 入条：`BACKLOG.md` 末尾「需要产品决策」那组 bullet 之前新增 1 条 `- [ ]`「`kind:tool` 审计记录没有独立的工具名字段，`text` 被拼成『工具名: 错误正文』」——≈55 行 / 3 源码 + 2 测试文件，只新增一个可选字段，不改 `text` 语义（0.7.0 已宣称失败行会写明原因，靠的正是 `text` 拼 detail），接口与响应形状不变，不涉及产品决策。
 - **未选的 9 条**（本轮复核过、按可行性排序）：①质检器对同一回合的同一工具同一错误逐条计条（子代理实测 35 条发现里 5 条重复，改法是按名称+detail 归并 ≈5 行，语义上属「发现计数口径」）；②`TTS_MISSING` 对整场零合成会话逐回合报（8/9 条 warn 同源，需按会话归并）；③统计页「用量完整性」把 46 条 breeze 合成算成「用量未返回」（`audit-log.js:299-307` 把 synthesis 与 LLM 行并列计分母，改的是用户可见指标口径，最接近需拍板）；④`web/src/changelog-corner.jsx` 的 `error` 一旦置位永不清除（守卫含 `error`、全文无 `setError('')`），失败后关掉重开也不再请求——要测它得先把取数下沉到 `web/src/lib/`，≈110 行；⑤`web/src/main.jsx:66` 首载 `catalog` 的空 `catch` 把失败吞成「当前没有可用的工具执行服务」；⑥`src/core/service.js:133` 的 `settingsLoad` 缺观测式 `catch`（前两班已两次落榜：缺「真实发生」证据）；⑦`package.json` 的 `files` 白名单无元测试（前两班已落榜：纯测试、优先度低）；⑧README 的 Breeze 中文预设 ID 仍是已废弃的 `voc_47j4uzfyuxqc`（代码里是另两个 id）；⑨`src/core/audit-log.js:98` 的 `audioDurationSeconds` 不取整（46/46 条带浮点尾巴，被 `formatDuration` 的十分位盖住，零用户可见影响）。
 - 本轮未 bump 版本、未 `npm pack`、未 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未动 `~/.dsh/AGENTS.md`。
+
+## 2026-11-01 11:55 · J1 迭代：`kind:tool` 审计记录新增独立工具名字段
+
+- 并发保护：开工前无 `.release.lock`，本班建 `.work.lock`（11:17:38），收尾前删除。HEAD = `4906fab`，`git status --porcelain` 为空。
+- 取活：`grep '^- \[ \]' BACKLOG.md` 此时只剩 **1** 条可做（`kind:tool` 审计无独立工具名，`:126`），其余 5 条仍是阻塞项（`:34` ⛔、`:46` 需人拍板、`:58` `[arch]`、`:60` 需先定口径、`:61` 单独立项），未碰。
+- **用了只读规划子代理（2 个并行）**：一个出「逐文件插入位置 + 应补断言 + 变异方案」的拆解计划，一个只读盘点「谁会对新增字段变红」（键集整值比较、夹具位置、前端是否遍历字段）。两者都在自己的临时副本里先跑绿，主代理逐条实读复核后按清单落改——未采信任何自称成功的结论。
+- 规划纠正的 3 处条目预期：①基线是本轮实测的后端 **471** / 前端 **110**（不是条目旁的某个旧数）；②「会打破既有断言」不成立——全仓没有 tool 行的键集比较，两道键集护栏（`realtime-response-bookkeeping.test.js:56`、`voice-synthesis.test.js:55`）都在 response/synthesis 行，新字段只要按 `kind` 收窄就仍绿，所以防回归全靠新断言；③`voice-audit.test.js` 的写读-重启 `deepEqual` 只覆盖 `kind:'response'`，对 tool 行零覆盖。
+- 改动（3 源码 + 3 测试，churn 98 行）：`src/core/realtime-service.js` 的 `finishTool` 审计 payload 加 `tool: call.name`（`text` 拼接未动，0.7.0 的「提前结束要写明原因」仍靠它）；`src/core/audit-log.js` 在 `kind === 'tool'` 分支收 `tool`（脱敏 → `trim` → 按码点截 80 → 空值不写键，**不**放进通用白名单循环）并进 `searchableText`；`src/core/conversation-judge.js` 换序成 `record.tool || record.text || 'unknown'`（legacy 回落 `text`，既有夹具一条未改）。
+- 新增 4 条断言：`test/audit-log.test.js`（按 kind 收窄 / 截 80 / 空值丢弃 / 落盘重启 `deepEqual` 且文件字节不变 / `text` 原样 / `search:'synth_tts'` 命中 text 里无名字的行）、`test/conversation-judge.test.js`（四种来源一次比完 + `TOOL_FAILED` detail 已是裸 `read 返回 error`）、`test/test-realtime.test.js`（会话级 `tool`/`text` 同时成立；服务级走 `/api/realtime/start` → `/api/audit` 读回，证明字段穿过 sanitize 真的落盘）。
+- 变异验证 3 条各恰好红（cp 备份 → `patch` 改 → `node --test` → cp 还原并 `grep` 确认）：删 `tool:` 写入 → 2 红；judge 换回 `text || tool` → 1 红；`record.tool` 写成 `record.toolX` → 1 红。
+- 验收（全为实跑）：后端 **475 pass / 0 fail**（471 → 475）、前端 **110 pass / 0 fail**、`lint` 0 问题、`format:check` 全仓通过、`build` 成功（`dist/` 已 `git checkout`、新 hash 产物 `index-BCNzi94o.js` 移出仓库）。
+- 下次可做（本轮未动，按单轮一条纪律只记录）：①审计页详情/工具结果区加一行「工具名」（`web/src/audit-view.jsx:43-48`），本条只保证数据可读；②质检 `TOOL_FAILED` 的 detail 现在只剩裸名字，要保住原因得给 `turn.tools` 加 `reason` 字段并用 `text` 兜底；③「审计列筛选」白名单（`src/core/service.js` 的 `['text','provider','model','status','sessionId','messageId']`）仍不含 `tool`/`outcome`/`code`，按工具名筛要同时改白名单与前端列定义。
+- 本轮未 bump 版本、未 `npm pack`、未 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未动 `~/.dsh/AGENTS.md`。

@@ -272,3 +272,19 @@ test('limit 限制复核数量（控制成本）', async () => {
   assert.equal(judged.length, 2)
   assert.equal(calls, 2)
 })
+
+test('工具名优先取 tool 字段，legacy 行回落 text', () => {
+  const turns = extractTurns([
+    // 新行：text 带原因，名字在 tool
+    record({kind: 'tool', tool: 'read', status: 'failed', outcome: 'error', text: 'read: 所在响应在工具完成前结束（failed）', at: 10}),
+    // legacy 行：只有 text
+    record({kind: 'tool', text: 'web_search', outcome: 'completed', at: 11}),
+    // 只有 tool、没有 text
+    record({kind: 'tool', tool: 'design_voice', status: 'cancelled', at: 12}),
+    // 两者都没有
+    record({kind: 'tool', at: 13}),
+  ])
+  assert.deepEqual(turns[0].tools.map(t => t.name), ['read', 'web_search', 'design_voice', 'unknown'])
+  // 「是哪个工具坏了」恢复可读：detail 只剩裸名字，不再把整句报错当名字。
+  assert.equal(heuristicChecks(turns[0]).find(f => f.code === 'TOOL_FAILED').detail, 'read 返回 error')
+})
