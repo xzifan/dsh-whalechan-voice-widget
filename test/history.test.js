@@ -117,6 +117,51 @@ test('TTS dedup tolerates trailing whitespace but still demands shared identity'
   assert.equal(result.messages[0].text, '你好，主人。\n\n')
 })
 
+test('suppressed TTS rows hand their audio duration to the surviving reply', async t => {
+  const { log, path } = await fixture(t)
+  const rows = [
+    // The synthesis row sorts before the reply it belongs to on purpose: a
+    // duration written in place would never find its target.
+    { id: 'tts-first', kind: 'synthesis', messageId: 'm1', responseId: 'r1', text: '你好，主人。', audioDurationSeconds: 1.5 },
+    { id: 'reply', kind: 'response', messageId: 'm1', responseId: 'r1', text: '你好，主人。\n\n' },
+    // Whitespace-only difference is still the same sentence, so the duration travels.
+    { id: 'reply-2', kind: 'response', messageId: 'm2', responseId: 'r2', text: '换句了\n' },
+    { id: 'tts-2', kind: 'synthesis', responseId: 'r2', text: '换句了', audioDurationSeconds: 2.25 },
+    // Deduped without a duration: the reply must not gain a fabricated zero.
+    { id: 'reply-3', kind: 'response', messageId: 'm3', responseId: 'r3', text: '没有时长\n' },
+    { id: 'tts-3', kind: 'synthesis', messageId: 'm3', text: '没有时长' },
+    // Same sentence, different identity: neither bubble may inherit.
+    { id: 'reply-4', kind: 'response', messageId: 'm4', responseId: 'r4', text: '再说一遍\n' },
+    { id: 'tts-4', kind: 'synthesis', messageId: 'm5', responseId: 'r5', text: '再说一遍', audioDurationSeconds: 9 },
+    // A reply that already carries a duration keeps its own value.
+    { id: 'reply-5', kind: 'response', messageId: 'm6', responseId: 'r6', text: '自己带时长\n', audioDurationSeconds: 4 },
+    { id: 'tts-5', kind: 'synthesis', messageId: 'm6', text: '自己带时长', audioDurationSeconds: 7 },
+    // Two replies say the same sentence: the suppressed row belongs to the later
+    // one, so a text-only lookup would hand the duration to the wrong bubble.
+    { id: 'repeat-early', kind: 'response', messageId: 'm8', responseId: 'r8', text: '再来一次\n' },
+    { id: 'repeat-late', kind: 'response', messageId: 'm9', responseId: 'r9', text: '再来一次\n' },
+    { id: 'tts-late', kind: 'synthesis', messageId: 'm9', text: '再来一次', audioDurationSeconds: 3 },
+  ]
+  for (const [i, row] of rows.entries()) await log.append({ ...row, sessionId: 'a', at: i })
+  const result = await log.historyMessages({ sessionId: 'a' })
+  // Deduplication, ordering and the message count are untouched by the carry-over.
+  assert.deepEqual(result.messages.map(m => m.id), ['reply', 'reply-2', 'reply-3', 'reply-4', 'tts-4', 'reply-5', 'repeat-early', 'repeat-late'])
+  assert.equal(result.session.messageCount, 8)
+  const duration = id => result.messages.find(m => m.id === id).audioDurationSeconds
+  assert.equal(duration('reply'), 1.5)
+  assert.equal(duration('reply-2'), 2.25)
+  assert.equal('audioDurationSeconds' in result.messages.find(m => m.id === 'reply-3'), false)
+  assert.equal('audioDurationSeconds' in result.messages.find(m => m.id === 'reply-4'), false)
+  assert.equal(duration('tts-4'), 9)
+  assert.equal(duration('reply-5'), 4)
+  assert.equal('audioDurationSeconds' in result.messages.find(m => m.id === 'repeat-early'), false)
+  assert.equal(duration('repeat-late'), 3)
+  // The reply text itself is never rewritten (only the comparison normalizes).
+  assert.equal(result.messages[0].text, '你好，主人。\n\n')
+  const restarted = createAuditLog({ path })
+  assert.deepEqual(await restarted.historyMessages({ sessionId: 'a' }), result)
+})
+
 test('history preserves visibleRecords usage merging and handles missing legacy IDs and empty sessions', async t => {
   const { log } = await fixture(t)
   assert.deepEqual(await log.historySessions(), { sessions: [], total: 0 })

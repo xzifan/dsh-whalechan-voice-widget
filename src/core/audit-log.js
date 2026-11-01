@@ -339,6 +339,10 @@ export function createAuditLog({ path, maxRecords = 2000, maxBytes = 10 * 1024 *
   function historyView(sessionId, rows) {
     const responses = rows.filter(row => row.kind === 'response' && row.text?.trim())
     const messages = []
+    // A suppressed TTS row takes its spoken duration with it, and it may sort
+    // before the reply it belongs to — so collect it here and attach after the
+    // messages exist instead of writing it in place.
+    const suppressed = []
     for (const row of orderConversationRows(rows)) {
       if (row.kind === 'usage') continue
       if (!['tool', 'error'].includes(row.kind) && !row.text?.trim()) continue
@@ -347,7 +351,10 @@ export function createAuditLog({ path, maxRecords = 2000, maxBytes = 10 * 1024 *
       // The text itself is compared normalized so trailing upstream whitespace
       // cannot ship the same sentence as a second bubble.
       if (row.kind === 'synthesis' && responses.some(response => sameSpeech(response.text, row.text) &&
-        ((row.messageId && row.messageId === response.messageId) || (row.responseId && row.responseId === response.responseId)))) continue
+        ((row.messageId && row.messageId === response.messageId) || (row.responseId && row.responseId === response.responseId)))) {
+        if (typeof row.audioDurationSeconds === 'number') suppressed.push(row)
+        continue
+      }
       const kind = row.kind === 'transcription' ? 'user' : ['response', 'synthesis'].includes(row.kind) ? 'assistant' : row.kind
       const message = { id: clean(row.id), kind, role: kind === 'error' ? clean(row.role || 'system') : kind,
         text: clean(row.text || ''), at: row.at, status: clean(row.status) }
@@ -357,6 +364,14 @@ export function createAuditLog({ path, maxRecords = 2000, maxBytes = 10 * 1024 *
         if (row[key] !== undefined) message[key] = clean(row[key])
       }
       messages.push(message)
+    }
+    // Both bubbles are the same sentence (that is why the TTS row was dropped),
+    // so the duration belongs to the reply that survived; identity is still
+    // required, and a value already on the reply is never overwritten.
+    for (const row of suppressed) {
+      const target = messages.find(message => message.kind === 'assistant' && sameSpeech(message.text, row.text) &&
+        ((row.messageId && row.messageId === message.messageId) || (row.responseId && row.responseId === message.responseId)))
+      if (target && target.audioDurationSeconds === undefined) target.audioDurationSeconds = clean(row.audioDurationSeconds)
     }
     const dialogue = messages.filter(message => ['user', 'assistant'].includes(message.kind) && message.text.trim())
     const title = dialogue.find(message => message.kind === 'user')?.text || dialogue.find(message => message.kind === 'assistant')?.text || '语音会话'
