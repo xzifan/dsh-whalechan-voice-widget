@@ -199,7 +199,8 @@ test('readProviderKey：按协议优先级取值，缺文件或缺 key_file 一�
 
 test('源码守卫：service.js 只注入工厂，不再自带合成层', async () => {
   const source = await readFile(new URL('../src/core/service.js', import.meta.url), 'utf8')
-  assert.match(source, /import \{ createVoiceSynthesis \} from '\.\/voice-synthesis\.js'/)
+  // 允许与工厂一起导入别的导出（ttsProviderReady），但工厂必须来自这个模块。
+  assert.match(source, /import \{[^}]*createVoiceSynthesis[^}]*\} from '\.\/voice-synthesis\.js'/)
   assert.ok(!source.includes('async function synthVoiceLayer'), 'service.js 不应再定义 synthVoiceLayer')
   assert.ok(!source.includes('function voiceProfile'), 'service.js 不应再定义 voiceProfile')
   assert.ok(!source.includes('async function readProviderKey'), 'service.js 不应再定义 readProviderKey')

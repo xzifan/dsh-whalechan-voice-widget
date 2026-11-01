@@ -13,7 +13,7 @@ import { createAuditLog, sanitizeAuditRecord, numericUsage } from './audit-log.j
 import { parseChangelog } from './changelog.js'
 import { designVoice, synthesizeTts, synthesisFailureText, failureCode } from './voice-design.js'
 import { createVoiceToolBridge, breezeDisabled } from './voice-tool-bridge.js'
-import { createVoiceSynthesis } from './voice-synthesis.js'
+import { createVoiceSynthesis, ttsProviderReady } from './voice-synthesis.js'
 import { createVoiceInitialization } from './voice-initialization.js'
 import { readPersona, assembleRealtimeInstruction } from './persona.js'
 import { randomUUID } from 'node:crypto'
@@ -265,7 +265,9 @@ export function createService(config = {}, dependencies = {}) {
       const presetSnapshot = voicePresets.snapshot(snapshot)
       const native = dependencies.status?.() || {}
       const providers = await credentialStatuses(), bailian = providers.bailian
-      const voiceReady = snapshot.tts_voice_provider === 'qwen' ? bailian.ready : snapshot.tts_voice_provider === 'breeze' ? providers.breeze.ready : !!getTtsProfile({ tts_provider: snapshot.tts_voice_provider || 'qwen', tts_profiles: snapshot.tts_profiles })
+      // 就绪判据只在 ttsProviderReady 一处：这里判的必须是 settings 里的原始 provider id
+      // （voiceProfile() 的 provider 是审计标签，qwen 会被归一成 bailian，拿它判会恒为 false）。
+      const voiceReady = await ttsProviderReady({ provider: snapshot.tts_voice_provider || 'qwen', profiles: snapshot.tts_profiles, credentialStatuses: providers })
       const { provider, model, voice } = sanitizeAuditRecord({ kind: 'synthesis', ...voiceProfile(snapshot) })
       return { body: { settings: snapshot, voicePresets: presetSnapshot, breezeVoicePresets: [], credentials: { tts: voiceReady, bailian, providers, asr: false, chat: !!native.chat }, models: { tts: { provider, model, voice, ready: voiceReady } }, capabilities: { ...native } } }
     }
@@ -282,9 +284,7 @@ export function createService(config = {}, dependencies = {}) {
       // 轻量自检：只读本地状态，不发起上游请求、不返回凭据值。
       const providers = await credentialStatuses()
       const { provider, model, voice } = sanitizeAuditRecord({ kind: 'synthesis', ...voiceProfile(settings) })
-      const ttsReady = provider === 'qwen' ? !!providers.bailian?.ready
-        : provider === 'breeze' ? !!providers.breeze?.ready
-        : !!getTtsProfile({ tts_provider: provider, tts_profiles: settings.tts_profiles })
+      const ttsReady = await ttsProviderReady({ provider: settings.tts_voice_provider || 'qwen', profiles: settings.tts_profiles, credentialStatuses: providers })
       return { body: {
         ok: !disposed,
         version: PLUGIN_VERSION,

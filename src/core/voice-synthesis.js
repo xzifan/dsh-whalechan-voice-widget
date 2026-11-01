@@ -29,6 +29,26 @@ export async function readProviderKey(profile) {
   } catch { return '' }
 }
 
+// 托管凭据型提供方：合成时用宿主凭据而不是 profile 里的 key_file。
+const MANAGED_TTS_CREDENTIAL = { breeze: 'breeze', volcengine: 'volcengine' }
+
+// 与 synthVoiceLayer 的 503 判据同源（那里是 requireValue(profile.auth_type === 'none' || key)）：
+// 两处分叉就又会「ready 说就绪、合成必然 503」。
+// 注意不能只判断「profile 存不存在」——ttsProfiles() 无条件并进内置表、getTtsProfile() 对内置与
+// 任何已保存的 id 恒返回对象，那样这个判据就是个常量 true。
+export async function ttsProviderReady({ provider, profiles, credentialStatuses }) {
+  const id = typeof provider === 'string' && provider ? provider : 'qwen'
+  // qwen 的合成直接问 bailian 凭据，不经过任何 profile（voiceProfile() 也是这么归一成 bailian 的）。
+  if (id === 'qwen' || id === 'bailian') return !!credentialStatuses?.bailian?.ready
+  const profile = getTtsProfile({ tts_provider: id, tts_profiles: profiles })
+  if (!profile) return false // id 不存在时合成会 400，不能报就绪
+  // protocol 为 breeze-tts 的自定义 id 也走托管的 Breeze 凭据（与 synthVoiceLayer 同款）。
+  const managed = Object.hasOwn(MANAGED_TTS_CREDENTIAL, id) ? MANAGED_TTS_CREDENTIAL[id] : profile.protocol === 'breeze-tts' ? 'breeze' : null
+  if (managed) return !!credentialStatuses?.[managed]?.ready
+  if (profile.auth_type === 'none') return true
+  return !!(await readProviderKey(profile))
+}
+
 export function createVoiceSynthesis({ getSettings, credential, modelCredential, audit, fetcher = globalThis.fetch, requireValue }) {
   const s = () => getSettings()
 
