@@ -1905,3 +1905,15 @@
 - 本轮只改这一条：未 bump 版本、未 `npm pack`、未 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未动 `~/.dsh/AGENTS.md`。
 
 **下次可做**：①设置页把 `mimo` 当「旧版提供方」——`web/src/lib/voice-layer.js:28-32` 的 `VOICE_PROVIDERS` 只有 qwen/openai/breeze，而 `set_tts_provider` 允许 `mimo`，被语音切过去后整块编辑器不渲染、还显示「当前使用旧版提供方」；**前置**是要定 openai/mimo 的 `key_file` 在 UI 里怎么编辑（今天只有 breeze 有凭据编辑器），属 UI 能力决策。②`/api/models/check` 的 `!!getTtsProfile(` 与新判据仍是两套口径（前者只判 id 存在），将来要不要合并成一条也值得想。③`src/core/endpoint/index.js:64` 的 `smart-turn-onnx` 从未注册却被静默跳过（模块零调用方）。④`voice-presets.js:12,40` 的 `MAX_AUDIO_BYTES` 只扫 `audios`，`designs[].candidate.previewData` 无体积预算。⑤`audit-log.js:98` 的 `audioDurationSeconds` 不取整；`audit-log.js:60` 空串标识照收。
+
+## 2026-11-01 10:26 · 第 7 步取证：清单 5 条仍全阻塞，入 1 条（`kind:tool` 审计无独立工具名）
+
+- 并发保护：开工前无 `.release.lock`，本班建 `.work.lock`（10:17:47），收尾前删除。HEAD = `1514f72`，`git status --porcelain` 为空。
+- 取活：`grep '^- \[ \]' BACKLOG.md` 共 **5** 条，全部阻塞（`:34` ⛔ 阻塞待决策、`:46` 需人拍板、`:58` `[arch]` 架构决策、`:60` 需先定口径归属、`:61` 单独立项），按 J1 规则一条没碰、原样保留 → 走第 7 步（取证 + 入条，本轮不实现）。
+- 基线复测（本轮零源码改动）：`npm test` → **471 pass / 0 fail**；`npm run test:web` → **110 pass / 0 fail**。未跑 `npm run build`——没有任何源码或 `dist/` 改动，跑构建只会重写被跟踪的 `dist/`，那是发布脚本干净树前置条件会拦下的脏路径。
+- 候选来源：2 个只读子代理并行产出 **10** 条（一路查代码缺口、一路从本机审计日志取数，均要求只读、禁 git 写、禁重启、禁付费 API）。主代理逐条实读复核后才入条，未采信子代理结论。
+- 实读复核（全部亲手读过）：`src/core/realtime-service.js:136-137`、`src/core/audit-log.js:60,82,159`、`src/core/conversation-judge.js:65,69,94-97,112-114`、`src/core/service.js:343-370`、`web/src/audit-view.jsx:203`、`web/src/lib/audit.js`。
+- 实跑数据（自己用 `jq` 在真日志上重跑，不引用子代理数字）：`~/.dsh/storages/voice-workbench-preview/voice-audit.jsonl` **535** 行；`kind:tool` **168** 条（completed 153 / failed 13 / cancelled 2）；13 条失败里 **5 条 `text` 是裸工具名**、**8 条是「名称: 报错」**（`web_fetch:` ×4、`edit:` ×4）；`jq 'has("tool")'` 对 168 条全部为 false。另复核队列里的两条：`/api/statistics` 在 `service.js:348` 有 `since <= until` 校验而 `/api/audit`（`:364` 一带）确实没有；`tts.ready` 上一班已修，不再列入。
+- 入条：`BACKLOG.md` 末尾「需要产品决策」那组 bullet 之前新增 1 条 `- [ ]`「`kind:tool` 审计记录没有独立的工具名字段，`text` 被拼成『工具名: 错误正文』」——≈55 行 / 3 源码 + 2 测试文件，只新增一个可选字段，不改 `text` 语义（0.7.0 已宣称失败行会写明原因，靠的正是 `text` 拼 detail），接口与响应形状不变，不涉及产品决策。
+- **未选的 9 条**（本轮复核过、按可行性排序）：①质检器对同一回合的同一工具同一错误逐条计条（子代理实测 35 条发现里 5 条重复，改法是按名称+detail 归并 ≈5 行，语义上属「发现计数口径」）；②`TTS_MISSING` 对整场零合成会话逐回合报（8/9 条 warn 同源，需按会话归并）；③统计页「用量完整性」把 46 条 breeze 合成算成「用量未返回」（`audit-log.js:299-307` 把 synthesis 与 LLM 行并列计分母，改的是用户可见指标口径，最接近需拍板）；④`web/src/changelog-corner.jsx` 的 `error` 一旦置位永不清除（守卫含 `error`、全文无 `setError('')`），失败后关掉重开也不再请求——要测它得先把取数下沉到 `web/src/lib/`，≈110 行；⑤`web/src/main.jsx:66` 首载 `catalog` 的空 `catch` 把失败吞成「当前没有可用的工具执行服务」；⑥`src/core/service.js:133` 的 `settingsLoad` 缺观测式 `catch`（前两班已两次落榜：缺「真实发生」证据）；⑦`package.json` 的 `files` 白名单无元测试（前两班已落榜：纯测试、优先度低）；⑧README 的 Breeze 中文预设 ID 仍是已废弃的 `voc_47j4uzfyuxqc`（代码里是另两个 id）；⑨`src/core/audit-log.js:98` 的 `audioDurationSeconds` 不取整（46/46 条带浮点尾巴，被 `formatDuration` 的十分位盖住，零用户可见影响）。
+- 本轮未 bump 版本、未 `npm pack`、未 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未动 `~/.dsh/AGENTS.md`。
