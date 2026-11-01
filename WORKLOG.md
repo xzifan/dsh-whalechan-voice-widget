@@ -1930,3 +1930,14 @@
 - 验收（全为实跑）：后端 **475 pass / 0 fail**（471 → 475）、前端 **110 pass / 0 fail**、`lint` 0 问题、`format:check` 全仓通过、`build` 成功（`dist/` 已 `git checkout`、新 hash 产物 `index-BCNzi94o.js` 移出仓库）。
 - 下次可做（本轮未动，按单轮一条纪律只记录）：①审计页详情/工具结果区加一行「工具名」（`web/src/audit-view.jsx:43-48`），本条只保证数据可读；②质检 `TOOL_FAILED` 的 detail 现在只剩裸名字，要保住原因得给 `turn.tools` 加 `reason` 字段并用 `text` 兜底；③「审计列筛选」白名单（`src/core/service.js` 的 `['text','provider','model','status','sessionId','messageId']`）仍不含 `tool`/`outcome`/`code`，按工具名筛要同时改白名单与前端列定义。
 - 本轮未 bump 版本、未 `npm pack`、未 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未动 `~/.dsh/AGENTS.md`。
+
+## 2026-11-01 12:27 · J1 第 7 步：BACKLOG 清空后的取证入库（不实现）
+
+- 并发保护：开工前无 `.release.lock`，本班建 `.work.lock`（12:17:42），收尾前删除。HEAD = `c0b4208`，`git status --porcelain` 为空。
+- 取活：`grep '^- \[ \]' BACKLOG.md` 只剩 **5** 条，全部是阻塞类（`:34` ⛔ 阻塞待决策、`:46` 需人拍板、`:58` `[arch]`、`:60` 需先定口径归属、`:61` 单独立项），按 J1 规则一条不碰 → 走第 7 步：新增候选，本轮不实现。
+- **派了 2 个只读子代理**（一路查代码/测试缺口，一路只统计本机真实审计日志），各产出 3 条候选，共 6 条。主代理**没有采信任何自称结论**：`audioDurationSeconds` 的 100/154/46/0、去重 89（68 逐字 + 21 只差空白）、带时长 43（25+18）、受影响会话 17/38、视图里仅 1 场能显示秒数，全部用自己写的探针（`.hermes/cache/scratch/j1-b1/probe-*.mjs`，跑在真日志副本上）复算；`audit-log.js:342-357`、`web/src/history-view.jsx:11-27`、`test/history.test.js:58-125`、`service.js:128-140,340-372`、`tts-config.js:12-19`、`config-validation.js:28-40` 逐行实读。
+- **选入 BACKLOG**（`:128`，`- [ ]`）：「会话记录里被去重掉的 TTS 合成行把音频秒数一起带走了」。理由：唯一同时满足「本机真实数据可复算（43/100 条合成行、17/38 场会话）」「是上一轮 `sameSpeech` 归一后留下的直接尾巴，修它闭环」「≈35 行、只给既有消息补既有字段」「零接口与响应形状变化」「修完当场可验（重跑探针看 `historyMessages` 是否带秒数）」。**明确划在范围外**：自动 TTS 的 67 条 `auto-tts-` 工具行在会话页渲染成「工具调用」像调试日志——那属展示口径（产品决策），不塞进本条。
+- **未选的 5 条**（按可行性排序，已写进 BACKLOG 条目与本文备查）：①`settingsLoad` 缺观测式 `catch`（`service.js:133`）——本轮**首次拿到真实复现**（坏 JSON → 探针记录到 1 次 `unhandledRejection`，Node 默认 exit 1；旧值 `tts_voice_provider: 'minimax'` 走同一条路），后果最重、留作下一轮首选，但改的是进程启动期错误语义；②`startRealtimeMic` 在 `getUserMedia` 成功后失败会泄漏音频流（`realtime.js:511-548`，`main.jsx:218` 那时还拿不到 `rtMic.current`），真泄漏但≈79 行且要复刻三种 AudioContext 故障夹具；③`/api/audit` 缺 `since <= until` 校验（`service.js:364`，`/api/statistics` 的 `:348` 早有），边角输入校验；④审计详情不显示已落库的 `tool`/`requestId`/`language`（≈62 行，含给百炼合成补 `language` 的数据模型改动）；⑤填充音在回合未建立时合成、`turnId` 存空串（`filler-coordinator.js:7,50`，本机 1/38 场是只有一句填充音的幽灵会话），修法含全局空串规则、风险面更大。
+- 本轮**零代码改动**：只新增 BACKLOG 1 条 + 本 WORKLOG 段。验收实跑：后端 **475 pass / 0 fail**、前端 **110 pass / 0 fail**（与开工前一致）、`format:check` 全仓通过、`build` 成功（`dist/` 已 `git checkout`、新 hash 产物移出仓库）。
+- 下次可做（本轮未动）：①`settingsLoad` 观测缺失（上面未选①，已有真实复现证据，建议下一轮直接做）；②麦克风流泄漏（未选②）；③`/api/audit` 反向区间静默 200（未选③，1 行修复 + ≈26 行断言）；④审计详情缺 `tool`/`requestId`/`language`（未选④）；⑤填充音幽灵会话 + 空串标识（未选⑤）；⑥审计列筛选白名单仍不含 `tool`/`outcome`/`code`（`service.js:359`），按工具名筛要同时改白名单与前端列定义；⑦`conversation-judge` 的 `TOOL_FAILED` detail 现在只剩裸名字，要保住原因得给 `turn.tools` 加 `reason` 字段。
+- 本轮未 bump 版本、未 `npm pack`、未 tag/push、未 `dsh plugin add`、未重启 `dsh web`、未动 `~/.dsh/AGENTS.md`。
