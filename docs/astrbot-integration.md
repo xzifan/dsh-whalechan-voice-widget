@@ -212,3 +212,33 @@ else:
 - `Record` 对 wav 的强制转换、以及 QQ 侧 silk→mp3 的具体转码方，取决于所选协议端（NapCat / Lagrange）。
 
 要把"未验证"清零，最小一步是：装 SDK → 生成 `sdk` profile → 跑一条 `harness.run("你好")`，确认 stdio 链路通。
+
+## 八、QQ 接管（实测前提）
+
+本机 DSH 的 QQ 是**官方机器人接口**：`~/.dsh/profiles/web/cordis.patch.yml` 里的 `im-qqbot`，配置 `appId: '1905969666'` + appSecret（值不在此记录）。这带来一个关键分叉：
+
+| 路径 | 凭据 | 语音 | 代价 |
+| --- | --- | --- | --- |
+| **A. AstrBot `qq_official`** | 复用同一 appId/appSecret | ❌ 官方接口只收文字、图片 | 必须停掉 DSH 的 `im-qqbot`；同一 appId 不能两个客户端同时在线 |
+| **B. AstrBot `aiocqhttp` + NapCat** | 另起一个 QQ 号 | ✅ 支持语音（OneBot） | 多一个号 + 一个 NapCat 进程；个人号有风控风险 |
+
+**要语音就走 B**——AstrBot 的官方接口适配器不支持语音消息，`Record` 组件只在 OneBot 侧有效。
+
+A 的切换顺序（不能反）：AstrBot 先跑通 → 再在 `im-qqbot` 下加 `disabled: true` → 重启 `dsh web`。回滚就是删掉那行再重启。
+
+## 九、PoC 已实现
+
+插件与核心层在 `~/workspace/astrbot-dsh-bridge`（独立 git 仓库，`3acbc07`）：
+
+- `bridge.py`：umo → session 映射（带代数后缀，reset 会真的换会话）、同会话串行、按句切分、运行时崩溃重建一次；
+- `main.py`：AstrBot Star 插件，`asyncio.to_thread` 卸载同步 SDK，可选 TTS 回语音，`/dsh_reset`；
+- `tests/`：13 项单测；
+- `tools/smoke.py`：脱离 AstrBot 直接验证真实链路。
+
+实测输出（`sdk-minimal` + 猫娘人设）：
+
+```
+T1: 我是你的猫娘助手喵，有什么能帮你的吗喵？ | sid: astrbot-97716f462c05-1
+T2: 你上一条问我的是“你是谁？”，还要求我用一句话回答喵。 | sid: astrbot-97716f462c05-1
+same session: True
+```
