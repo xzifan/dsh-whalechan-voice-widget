@@ -207,3 +207,76 @@ test('delete_voice 的本地 400（无候选）不写审计', async () => {
   )
   assert.equal(h.audit.length, 0, '「没找到候选」不是上游失败，不该记成配额问题')
 })
+
+// --- design_voice：只有上游真的失败才留审计 ---------------------------------
+// 取消与本地入参拒绝一次上游请求都没发。以前它们被写成「上游返回 502 / 400」，
+// 于是同一个 callId 既有 invalidate() 写的 cancelled 工具行，又有一条 failed 审计，
+// 「只看失败」与统计页各 +1，质检还会把用户打断升成 SESSION_ERROR。
+const jsonResponse = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body })
+const designDispatch = (h, context, rt = { use_tts_voice: true }) =>
+  h.bridge.dispatchRealtimeTool('design_voice', { description: '温柔的女声' }, rt, new Set(['design_voice']), '/w', context, emptyVoiceState())
+
+test('design_voice 被取消时不写假的上游失败审计', async () => {
+  let fetchCalls = 0
+  const h = fixture({ fetch: async () => { fetchCalls += 1; throw new Error('不该发请求') } })
+  const controller = new AbortController()
+  controller.abort()
+  await assert.rejects(
+    designDispatch(h, { turnId: 'turn-1', sessionId: 's-1', signal: controller.signal }),
+    error => error.name === 'AbortError',
+  )
+  assert.equal(fetchCalls, 0)
+  assert.equal(h.audit.length, 0, '取消不是上游失败，工具行已由 invalidate() 记成 cancelled')
+})
+
+test('design_voice 在上游请求途中被取消（499）也不写审计', async () => {
+  const controller = new AbortController()
+  const h = fixture({ fetch: async () => { controller.abort(); throw new Error('aborted mid-flight') } })
+  await assert.rejects(
+    designDispatch(h, { turnId: 'turn-1', sessionId: 's-1', signal: controller.signal }),
+    error => error.status === 499 && /已取消/.test(error.message),
+  )
+  assert.equal(h.audit.length, 0)
+})
+
+test('design_voice 的本地入参拒绝（400）不写审计', async () => {
+  let fetchCalls = 0
+  const h = fixture({ fetch: async () => { fetchCalls += 1; return jsonResponse(200, { code: 'Success', output: {} }) } })
+  await assert.rejects(
+    h.bridge.dispatchRealtimeTool('design_voice', { description: '短' }, { use_tts_voice: true }, new Set(['design_voice']), '/w', { turnId: 'turn-1', sessionId: 's-1' }, emptyVoiceState()),
+    error => error.status === 400 && /4 到 500 字/.test(error.message),
+  )
+  assert.equal(fetchCalls, 0)
+  assert.equal(h.audit.length, 0, '描述太短是本地校验，不是上游 400')
+})
+
+test('design_voice 的上游失败仍恰好一条审计，带分类与码', async () => {
+  const h = fixture({ fetch: async () => jsonResponse(402, { code: 'Throttling.AllocationQuota', message: 'insufficient balance' }) })
+  await assert.rejects(
+    designDispatch(h, { turnId: 'turn-1', sessionId: 's-1' }),
+    error => error.status === 402 && /配额或余额不足/.test(error.message),
+  )
+  assert.equal(h.audit.length, 1)
+  assert.match(h.audit[0].text, /^Voice design failed \(HTTP 402, quota-or-balance, Throttling\.AllocationQuota\)$/)
+  assert.equal(h.audit[0].code, 'Throttling.AllocationQuota')
+})
+
+test('design_voice 的本地 502（上游成功但没给出候选声音）仍要留痕', async () => {
+  let fetchCalls = 0
+  const h = fixture({
+    fetch: async () => {
+      fetchCalls += 1
+      // 第一次是设计、第二次是把预览音克隆成实时音色：第二次故意不回 voice_id。
+      return fetchCalls === 1
+        ? jsonResponse(200, { code: 'Success', output: { voice_id: 'design-1', preview_audio: { data: 'AAAA' } } })
+        : jsonResponse(200, { code: 'Success', output: {} })
+    },
+  })
+  await assert.rejects(
+    designDispatch(h, { turnId: 'turn-1', sessionId: 's-1' }, { use_tts_voice: false }),
+    error => error.status === 502 && /未返回可用于实时会话的候选声音/.test(error.message),
+  )
+  assert.equal(fetchCalls, 2)
+  assert.equal(h.audit.length, 1, '上游确实成功过，但这次失败仍要能事后查到')
+  assert.match(h.audit[0].text, /^Voice design failed \(HTTP 502, upstream\)$/)
+})

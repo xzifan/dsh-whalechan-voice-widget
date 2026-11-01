@@ -21,6 +21,17 @@ export const voiceToolNames = new Set(DEFAULT_TOOLS)
 export function createVoiceToolBridge({ getSettings, persistSettings, credential, synthVoiceLayer, voiceProfile, runSingleTool, fetcher, audit, requireValue, RequestError }) {
   const s = () => getSettings()
 
+  // 取消与本地入参拒绝一次上游请求都没发，不该记成「上游返回 4xx/5xx」：
+  // 那会让同一个 callId 同时留下 cancelled 与 failed 两条互相矛盾的审计，
+  // 也会让会话质检把用户打断升成 SESSION_ERROR。刻意**不**按 `status === 502`
+  // 一刀切——上游已成功、只是本地没拿到可用的候选声音（design_voice 里那条
+  // `requireValue(... , 502)`）仍要留痕，所以只豁免 499 与本地 400。
+  function locallyRejected(error, context) {
+    if (context?.signal?.aborted) return true
+    if (Number(error?.status) === 499) return true
+    return error instanceof RequestError && Number(error?.status) === 400
+  }
+
   async function runVoiceTool(name, args, rt, context, voiceState) {
     context.signal?.throwIfAborted()
     // Breeze has no design/replication lifecycle; never route its tools back to Bailian.
@@ -156,6 +167,7 @@ export function createVoiceToolBridge({ getSettings, persistSettings, credential
   async function dispatchRealtimeTool(name, args, rt, allowedTools, workspace, context, voiceState) {
     if (voiceToolNames.has(name)) {
       try { return await runVoiceTool(name, args, rt, context, voiceState) } catch (error) {
+        if (locallyRejected(error, context)) throw error
         // The audit line must say *why* it failed: the model gets the same detail
         // in its output, and "only an HTTP code" is unactionable after the fact.
         if (name === 'design_voice' && s().tts_voice_provider !== 'breeze') await audit.append({ ...context, kind: 'error', provider: 'bailian', model: 'voice-enrollment', status: 'failed', text: `Voice design failed (${failureDetail(error)})`, code: failureCode(error), usage: null })
